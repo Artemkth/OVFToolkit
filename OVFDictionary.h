@@ -2,6 +2,7 @@
 //a self-checking dictionary of sorts for names of fields inside a file
 //requires recent version of compilers for good implementation of function signature macros
 //also requires c++17 support for lambdas and such
+#pragma once
 #include<array>
 //file with definitions for the interfaces
 #include"OVFHeader.h"
@@ -268,6 +269,7 @@ namespace VField{
     //end of validation!
     
     //Definition of interfaces
+    //can skip last check since there is no elements outside of the four arrays, guaranteed by assert above
     constexpr pType paramIndex(const OVFParameter& pname)
     {
         if(DictionaryHelpers::isElem(pname, FPParamList))
