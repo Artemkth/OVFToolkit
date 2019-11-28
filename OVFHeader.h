@@ -6,75 +6,8 @@
 //to save on clutter all the string interfaces should be defined through char*, saving data encoding-agnostic when possible
 //problems with system specific encoding should be handled elsewhere
 //only standard header cluttering output will be exception, which is everywhere anyway and has good integration
-#include<exception>
 
 namespace VField{
-    
-    //Class for a field, needs to scream when it is set multiple times, or being accessed unitialized
-    //just an intermediate container to keep things clean
-    //has to have everything defined in header since it is template class
-    template<typename T>
-    struct HeaderField{
-    private:
-        //internal telling if the value was set
-        bool Set{false};
-        //value storage, initialized using default constructor when aplicable
-        T value{};
-        
-    public:
-        //can be assigned a value
-        HeaderField operator=(const T& ref)
-        {
-            if(Set)
-                throw std::logic_error("HeaderField: Trying to reinitialise the field without resetting");
-            
-            value = ref;
-            Set = true;
-            
-            return *this;
-        }
-        //or constructed with one
-        constexpr HeaderField(const T& ref):value(ref), Set(true) {}
-        //otherwise start not set
-        constexpr HeaderField() = default;
-        
-        //set status getter
-        constexpr bool IsSet() const
-        {
-            return Set;
-        }
-        //conversion back to T, like when getting the value back
-        constexpr operator T () const
-        {
-            if(!Set)
-                throw std::logic_error("HeaderField: Reading unitialized field");
-            
-            return value;
-        }
-        
-        constexpr T getValue() const
-        {
-            if(!Set)
-                throw std::logic_error("HeaderField: Reading unitialized field");
-            
-            return value;
-        }
-        
-        constexpr bool operator==(const T& ref) const
-        {
-            if(!Set)
-                throw std::logic_error("HeaderField: Trying to compare with unitialized field");
-            
-            return value == ref;
-        }
-        
-        constexpr void reset()
-        {
-            Set = false;
-        }
-    };
-    
-    
     //OVF syntaxis dictionaries
     //parameter types
     enum class pType {
@@ -85,7 +18,6 @@ namespace VField{
     };
     
     //default variable types
-    //shame 
     template<pType>
     struct associatedType;
     template<>
@@ -145,14 +77,17 @@ namespace VField{
     //Header container+utilities class
     class OVFHeader{
     private:
-        //Is grid expected to be rectangular?
-        HeaderField<bool> isRect{};
         //class data in pimpl
         struct HeaderData;
         HeaderData * data{nullptr};
+        
     public:
+        //enum class with Mesh type
+        
         //c-tor and d-tor of header
         OVFHeader();
+        //doing the whole set
+        
         ~OVFHeader();
         //the one where version string is explicitly known beforehand, useful when parsing a file, to be defined outside
         OVFHeader(const char*);
@@ -161,9 +96,33 @@ namespace VField{
         //first common utils
         static pType paramType (const OVFParameter&);
         
-        //get a field from header
-        //delete ability to call it from anything but specified rules
-        template<typename T>
-        HeaderField<T>& operator[](const OVFParameter& pname) = delete;
+        //retrieve methods
+        const associatedType_t<pType::String> getString(const OVFParameter&) const;
+        const associatedType_t<pType::Uint> getUint(const OVFParameter&) const;
+        const associatedType_t<pType::Float> getFloat(const OVFParameter&) const;
+        
+        //universal retrieve
+        template<pType p>
+        const associatedType_t<p> get(const OVFParameter& ref) const
+        {
+            if (paramType(ref) != p)
+                throw std::logic_error("OVFHeader: Tried to retrieve a wrong type!");
+            
+            if constexpr(p == pType::String)
+                return getString(ref);
+            else if constexpr(p == pType::Uint)
+                return getUint(ref);
+            else if constexpr(p == pType::Float)
+                return getFloat(ref);
+        }
+        
+        //setters
+        void set(const OVFParameter&, const associatedType_t<pType::String>& );
+        void set(const OVFParameter&, const associatedType_t<pType::Uint>& );
+        void set(const OVFParameter&, const associatedType_t<pType::Float>& );
     };
+    
+    //delete implementation for 'Other' type, so compiler will throw an error
+    template<>
+    const associatedType_t<pType::Other> OVFHeader::get<pType::Other>(const OVFParameter& ref) const = delete;
 }
