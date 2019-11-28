@@ -1,13 +1,13 @@
 //file for implementing interfaces of 'OVFHeader.h'
 #include"OVFDictionary.h"
 #include<map>
-#include<exception>
 
 namespace VField{
     
     //Class for a field, needs to scream when it is set multiple times, or being accessed unitialized
     //just an intermediate container to keep things clean
     //has to have everything defined in header since it is template class
+    //has a lot of unused members now, but whatever
     template<typename T>
     struct HeaderField{
     private:
@@ -21,7 +21,7 @@ namespace VField{
         HeaderField operator=(const T& ref)
         {
             if(Set)
-                throw std::logic_error("HeaderField: Trying to reinitialise the field without resetting");
+                throw OVFHeader::overwrite_initialized("HeaderField::operator=: Trying to reinitialise the field without resetting");
             
             value = ref;
             Set = true;
@@ -42,7 +42,7 @@ namespace VField{
         constexpr operator T () const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Reading unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::operator T: Reading unitialized field");
             
             return value;
         }
@@ -50,7 +50,7 @@ namespace VField{
         constexpr T getValue() const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Reading unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::getValue; Reading unitialized field");
             
             return value;
         }
@@ -58,7 +58,7 @@ namespace VField{
         constexpr bool operator==(const T& ref) const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Trying to compare with unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::operator==: Trying to compare with unitialized field");
             
             return value == ref;
         }
@@ -66,7 +66,7 @@ namespace VField{
         constexpr bool operator==(const HeaderField& ref) const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Trying to compare with unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::operator==: Trying to compare with unitialized field");
             
             //will do the throw automatically from the function above
             return ref == this->value;
@@ -109,7 +109,7 @@ namespace VField{
         HeaderField operator=(const T* ref)
         {
             if(Set)
-                throw std::logic_error("HeaderField: Trying to reinitialise the field without resetting");
+                throw OVFHeader::overwrite_initialized("HeaderField::operator=: Trying to reinitialise the field without resetting");
             
             if(value != nullptr)
                 delete value;
@@ -154,7 +154,7 @@ namespace VField{
         constexpr operator T* () const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Reading unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::operator T: Reading unitialized field");
             
             return value;
         }
@@ -162,7 +162,7 @@ namespace VField{
         constexpr T* getValue() const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Reading unitialized field");
+                throw throw OVFHeader::read_unitialized("HeaderField::getValue; Reading unitialized field");
             
             return value;
         }
@@ -170,7 +170,7 @@ namespace VField{
         constexpr bool operator==(const T* ref) const
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Trying to compare with unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::operator==: Trying to compare with unitialized field");
             
             auto tmp = value;
             while(*tmp != '\0' && *ref != '\0')
@@ -183,7 +183,7 @@ namespace VField{
         constexpr bool operator==(const HeaderField& ref)
         {
             if(!Set)
-                throw std::logic_error("HeaderField: Trying to compare with unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::operator==: Trying to compare with unitialized field");
             
             return ref == value;
         }
@@ -225,7 +225,7 @@ namespace VField{
     {
         //internal storage of variables
         //map of string storing field headers
-        std::map<OVFParameter, HeaderField<associatedType_t<pType::String>>> stringFields{
+        std::map<OVFParameter, HeaderField<associatedType_t<pType::String>>> StringFields{
             formInsertionList<pType::String>(StringParamList)
         };
         //uint storing fields 
@@ -236,15 +236,18 @@ namespace VField{
         std::map<OVFParameter, HeaderField<associatedType_t<pType::Float>>> FPFields{
             formInsertionList<pType::Float>(FPParamList)
         };
+        //mesh type
+        HeaderField<MeshType> meshType{};
         
         //does nothing, but just to insure that there is c-tor
         HeaderData() = default;
         //method to reset all fields
         void reset()
         {
-            resetAll(stringFields);
+            resetAll(StringFields);
             resetAll(UINTFields);
             resetAll(FPFields);
+            meshType.reset();
         }
     };
     
@@ -259,4 +262,78 @@ namespace VField{
         if(data != nullptr)
             delete data;
     }
+    //copy c-tor
+    OVFHeader::OVFHeader(const OVFHeader& ref)
+    {
+        data = new HeaderData();
+        *data = *(ref.data);
+    }
+    OVFHeader OVFHeader::operator= (const OVFHeader& ref)
+    {
+        //impossible with a program flow, but doing it just in case
+        if(data != nullptr)
+            delete data;
+        data = new HeaderData();
+        *data = *(ref.data);
+        return *this;
+    }
+    //setters
+    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::String>& val)
+    {
+        if(paramType(param) != pType::String)
+            throw OVFHeader::wrong_type_request("OVFHeader::set called string setter with for a non-string parameter");
+        data->StringFields[param] = val;
+    }
+    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Uint>& val)
+    {
+        if(paramType(param) != pType::Uint)
+            throw OVFHeader::wrong_type_request("OVFHeader::set called string setter with for a non-UINT parameter");
+        data->UINTFields[param] = val;
+    }
+    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Float>& val)
+    {
+        if(paramType(param) != pType::Float)
+            throw OVFHeader::wrong_type_request("OVFHeader::set called string setter with for a non-floating point parameter");
+        data->FPFields[param] = val;
+    }
+    //check if a given field is set
+    bool OVFHeader::isSet(const OVFParameter& refP) const
+    {
+        switch(paramIndex(refP))
+        {
+            case(pType::String):
+                return data->StringFields[refP].IsSet();
+                break;
+            case(pType::Uint):
+                return data->UINTFields[refP].IsSet();
+                break;
+            case(pType::Float):
+                return data->FPFields[refP].IsSet();
+                break;
+            case(pType::Other):
+                if(refP == OVFParameter::Mtype)
+                {
+                    return data->meshType.IsSet();
+                    break;
+                }
+            default:
+                throw OVFHeader::wrong_type_request("OVFHeader::isSet: requested a 'Other' type param status.a");
+        }
+        //just to silence the compiler
+        //lambs are silent now
+        return false;
+    }
+    
+    //mesh type functions
+    OVFHeader::MeshType OVFHeader::getMeshType() const
+    {
+        return data->meshType;
+    }
+    void OVFHeader::setMesh(const MeshType& ref)
+    {
+        data->meshType = ref;
+    }
+    //reset function
+    void OVFHeader::reset()
+    {data->reset();};
 }

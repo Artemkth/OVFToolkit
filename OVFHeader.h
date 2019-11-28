@@ -5,7 +5,8 @@
 //OVF 2.0: https://math.nist.gov/oommf/doc/userguide12b3/userguide/OVF_2.0_format.html
 //to save on clutter all the string interfaces should be defined through char*, saving data encoding-agnostic when possible
 //problems with system specific encoding should be handled elsewhere
-//only standard header cluttering output will be exception, which is everywhere anyway and has good integration
+//only standard header cluttering output will be string, with exceptions included inside, which is everywhere anyway and has good integration
+#include<string>
 
 namespace VField{
     //OVF syntaxis dictionaries
@@ -38,7 +39,7 @@ namespace VField{
     template<>
     struct associatedType<pType::String>
     {
-        using type = char *;
+        using type = std::string;
     };
     template<pType p>
     using associatedType_t = typename associatedType<p>::type;
@@ -82,15 +83,56 @@ namespace VField{
         HeaderData * data{nullptr};
         
     public:
+        //exception classes
+        //can be caught by std::logic_error as well
+        class read_unitialized : public std::logic_error{
+        public:
+            explicit read_unitialized( const std::string& ref) : std::logic_error(ref)
+            {}
+            explicit read_unitialized( const char* ref) : std::logic_error(ref)
+            {}
+            read_unitialized(const read_unitialized&) = delete;
+            read_unitialized operator= (const read_unitialized&) = delete;
+        };
+        class overwrite_initialized : public std::logic_error{
+        public:
+            explicit overwrite_initialized( const std::string& ref) : std::logic_error(ref)
+            {}
+            explicit overwrite_initialized( const char* ref) : std::logic_error(ref)
+            {}
+            overwrite_initialized(const overwrite_initialized&) = delete;
+            overwrite_initialized operator= (const overwrite_initialized&) = delete;
+        };
+        class wrong_type_request : public std::logic_error{
+        public:
+            explicit wrong_type_request( const std::string& ref) : std::logic_error(ref)
+            {}
+            explicit wrong_type_request( const char* ref) : std::logic_error(ref)
+            {}
+            wrong_type_request(const wrong_type_request&) = delete;
+            wrong_type_request operator= (const wrong_type_request&) = delete;
+        };
+        
         //enum class with Mesh type
+        enum class MeshType {irregular, rectangular};
         
         //c-tor and d-tor of header
         OVFHeader();
         //doing the whole set
-        
         ~OVFHeader();
         //the one where version string is explicitly known beforehand, useful when parsing a file, to be defined outside
-        OVFHeader(const char*);
+        OVFHeader(const associatedType_t<pType::String>& ref) : OVFHeader()
+        {
+            set(OVFParameter::VersionString, ref);
+        }
+        //copy stuff
+        OVFHeader(const OVFHeader&);
+        OVFHeader operator=(const OVFHeader&);
+        //move stuff
+        OVFHeader(OVFHeader&& ref): data(ref.data)
+        {ref.data = nullptr;};
+        OVFHeader operator=(OVFHeader&& ref)
+        {data = ref.data; ref.data = nullptr; return *this;}
         
         //Public interfaces of the header
         //first common utils
@@ -102,11 +144,13 @@ namespace VField{
         const associatedType_t<pType::Float> getFloat(const OVFParameter&) const;
         
         //universal retrieve
+        //throws wrong type when trying to retrive wrong type or
+        //throws read_unitialized when trying to read non-initialized field
         template<pType p>
         const associatedType_t<p> get(const OVFParameter& ref) const
         {
             if (paramType(ref) != p)
-                throw std::logic_error("OVFHeader: Tried to retrieve a wrong type!");
+                throw wrong_type_request("OVFHeader::get: Tried to retrieve a wrong type!");
             
             if constexpr(p == pType::String)
                 return getString(ref);
@@ -116,10 +160,21 @@ namespace VField{
                 return getFloat(ref);
         }
         
+        //check if field was set method
+        bool isSet(const OVFParameter&) const;
+        
         //setters
+        //thows 'overwrite_initialized' logic_error exception when overwriting a field
         void set(const OVFParameter&, const associatedType_t<pType::String>& );
         void set(const OVFParameter&, const associatedType_t<pType::Uint>& );
         void set(const OVFParameter&, const associatedType_t<pType::Float>& );
+        
+        //mesh type
+        MeshType getMeshType() const;
+        void setMesh(const MeshType&);
+        
+        //reset function
+        void reset();
     };
     
     //delete implementation for 'Other' type, so compiler will throw an error
