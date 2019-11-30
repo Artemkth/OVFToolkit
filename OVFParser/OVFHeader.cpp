@@ -1,9 +1,9 @@
 //file for implementing interfaces of 'OVFHeader.h'
 #include"OVFDictionary.h"
 #include<map>
+#include<algorithm>
 
 namespace VField{
-    
     //Class for a field, needs to scream when it is set multiple times, or being accessed unitialized
     //just an intermediate container to keep things clean
     //has to have everything defined in header since it is template class
@@ -18,7 +18,7 @@ namespace VField{
         
     public:
         //can be assigned a value
-        HeaderField operator=(const T& ref)
+        HeaderField& operator=(const T& ref)
         {
             if(Set)
                 throw OVFHeader::overwrite_initialized("HeaderField::operator=: Trying to reinitialise the field without resetting");
@@ -29,7 +29,7 @@ namespace VField{
             return *this;
         }
         //or constructed with one
-        constexpr HeaderField(const T& ref):value(ref), Set(true) {}
+        constexpr explicit HeaderField(const T& ref):value(ref), Set(true) {}
         //otherwise start not set
         constexpr HeaderField() = default;
         
@@ -105,39 +105,47 @@ namespace VField{
         }
         
     public:
-        //can be assigned a value
-        HeaderField operator=(const T* ref)
+        //can be assigned a value, also allows for implicit conversions
+        HeaderField& operator=(const T* ref)
         {
             if(Set)
                 throw OVFHeader::overwrite_initialized("HeaderField::operator=: Trying to reinitialise the field without resetting");
-            
-            if(value != nullptr)
-                delete value;
-            value = copy(ref);
+            //doing it exception safe
+            auto new_value = copy(ref);
+            std::swap(value, new_value);
             Set = true;
+            
+            if(new_value != nullptr)
+                delete[] new_value;
             
             return *this;
         }
         //or constructed with one
-        HeaderField(const T* ref): Set(true) { value = copy(ref); }
+        explicit HeaderField(const T* ref): Set(true) { value = copy(ref); }
         //otherwise start not set
         constexpr HeaderField() = default;
         //d-tor
-        ~HeaderField() {if(value != nullptr) delete value;}
+        ~HeaderField() {if(value != nullptr) delete[] value;}
         //copy c-tor
         HeaderField(const HeaderField& ref):Set(ref.Set) {value = copy(ref.value);}
-        HeaderField operator= (const HeaderField& ref)
+        HeaderField& operator= (const HeaderField& ref)
         {
+            //done in self-assignment safe fashion
+            //in case of self assignment will just waste time doing another copy and deleting
+            T* new_val {nullptr };
+            if(ref.Set)
+                new_val = copy(ref.value);
+            std::swap(value, new_val);
             Set = ref.Set;
-            if(value != nullptr)
-                delete value;
-            value = copy(ref.value);
+            if(new_val != nullptr)
+                delete[] new_val;
+            
             return *this;
         }
         //and move c-tor
         HeaderField(HeaderField&& ref):Set(ref.Set), value(ref.value)
         { ref.value = nullptr; }
-        HeaderField operator= (HeaderField&& ref)
+        HeaderField& operator= (HeaderField&& ref)
         {
             Set = ref.Set;
             value = ref.value;
@@ -162,7 +170,7 @@ namespace VField{
         constexpr T* getValue() const
         {
             if(!Set)
-                throw throw OVFHeader::read_unitialized("HeaderField::getValue; Reading unitialized field");
+                throw OVFHeader::read_unitialized("HeaderField::getValue; Reading unitialized field");
             
             return value;
         }
@@ -241,6 +249,7 @@ namespace VField{
         
         //does nothing, but just to insure that there is c-tor
         HeaderData() = default;
+        HeaderData(const HeaderData&) = default;
         //method to reset all fields
         void reset()
         {
@@ -268,13 +277,14 @@ namespace VField{
         data = new HeaderData();
         *data = *(ref.data);
     }
-    OVFHeader OVFHeader::operator= (const OVFHeader& ref)
+    OVFHeader& OVFHeader::operator= (const OVFHeader& ref)
     {
+        auto data_copy = new HeaderData(*ref.data);
+        std::swap(data, data_copy);
         //impossible with a program flow, but doing it just in case
-        if(data != nullptr)
-            delete data;
-        data = new HeaderData();
-        *data = *(ref.data);
+        if(data_copy != nullptr)
+            delete data_copy;
+        
         return *this;
     }
     //setters
@@ -314,7 +324,6 @@ namespace VField{
                 if(refP == OVFParameter::Mtype)
                 {
                     return data->meshType.IsSet();
-                    break;
                 }
             default:
                 throw OVFHeader::wrong_type_request("OVFHeader::isSet: requested a 'Other' type param status.a");
@@ -337,3 +346,4 @@ namespace VField{
     void OVFHeader::reset()
     {data->reset();};
 }
+

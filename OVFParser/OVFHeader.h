@@ -1,4 +1,3 @@
-#pragma once
 //small toolkit for working with OVF files(not to be confused with extension, OVF files can be of all the different types like .oef, .obf, .omf, etc.)
 //rules for files were taken from specification on NIST website: https://math.nist.gov/oommf/doc/userguide12b3/userguide/Vector_Field_File_Format_OV.html
 //OVF 1.0: https://math.nist.gov/oommf/doc/userguide12b3/userguide/OVF_1.0_format.html
@@ -6,6 +5,7 @@
 //to save on clutter all the string interfaces should be defined through char*, saving data encoding-agnostic when possible
 //problems with system specific encoding should be handled elsewhere
 //only standard header cluttering output will be string, with exceptions included inside, which is everywhere anyway and has good integration
+#pragma once
 #include<string>
 
 namespace VField{
@@ -92,7 +92,7 @@ namespace VField{
             explicit read_unitialized( const char* ref) : std::logic_error(ref)
             {}
             read_unitialized(const read_unitialized&) = delete;
-            read_unitialized operator= (const read_unitialized&) = delete;
+            read_unitialized& operator= (const read_unitialized&) = delete;
         };
         class overwrite_initialized : public std::logic_error{
         public:
@@ -101,7 +101,7 @@ namespace VField{
             explicit overwrite_initialized( const char* ref) : std::logic_error(ref)
             {}
             overwrite_initialized(const overwrite_initialized&) = delete;
-            overwrite_initialized operator= (const overwrite_initialized&) = delete;
+            overwrite_initialized& operator= (const overwrite_initialized&) = delete;
         };
         class wrong_type_request : public std::logic_error{
         public:
@@ -110,7 +110,7 @@ namespace VField{
             explicit wrong_type_request( const char* ref) : std::logic_error(ref)
             {}
             wrong_type_request(const wrong_type_request&) = delete;
-            wrong_type_request operator= (const wrong_type_request&) = delete;
+            wrong_type_request& operator= (const wrong_type_request&) = delete;
         };
         
         //enum class with Mesh type
@@ -121,17 +121,17 @@ namespace VField{
         //doing the whole set
         ~OVFHeader();
         //the one where version string is explicitly known beforehand, useful when parsing a file, to be defined outside
-        OVFHeader(const associatedType_t<pType::String>& ref) : OVFHeader()
+        explicit OVFHeader(const associatedType_t<pType::String>& ref) : OVFHeader()
         {
             set(OVFParameter::VersionString, ref);
         }
         //copy stuff
         OVFHeader(const OVFHeader&);
-        OVFHeader operator=(const OVFHeader&);
+        OVFHeader& operator=(const OVFHeader&);
         //move stuff
         OVFHeader(OVFHeader&& ref): data(ref.data)
         {ref.data = nullptr;};
-        OVFHeader operator=(OVFHeader&& ref)
+        OVFHeader& operator=(OVFHeader&& ref)
         {data = ref.data; ref.data = nullptr; return *this;}
         
         //Public interfaces of the header
@@ -181,3 +181,4 @@ namespace VField{
     template<>
     const associatedType_t<pType::Other> OVFHeader::get<pType::Other>(const OVFParameter& ref) const = delete;
 }
+

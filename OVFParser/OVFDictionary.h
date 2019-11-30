@@ -45,6 +45,7 @@ namespace DictionaryHelpers{
         static constexpr bool value()
         {
             //what is a good hack without a bit of preprocessor mess
+            //checked to work with GCC versions of 6+ with godbolt
 #if defined(__clang__) || defined(__GNUC__)
             return isValid(__PRETTY_FUNCTION__);
 #elif defined(_MSC_VER)
