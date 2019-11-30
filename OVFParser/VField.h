@@ -14,7 +14,6 @@ namespace VField{
             //constructors and other general utility
             VField();
             ~VField();
-
             OVFHeader header{};
             //number of bytes of current internally stored data
             std::size_t curDataInternalSize() const;
@@ -40,14 +39,14 @@ namespace VField{
     };
     //templates for getting the internal array
     template<>
-    const float* getData<float>() const;
+    const float* VField::getData<float>() const;
     template<>
-    const double* getData<double>() const;
+    const double* VField::getData<double>() const;
 
     //template for getting a copy of internal array, changes to it will be not regarded
     template<>
-    float* getDataCopy<float>();
+    float* VField::getDataCopy<float>();
     template<>
-    double* getDataCopy<double>();
+    double* VField::getDataCopy<double>();
 }
 

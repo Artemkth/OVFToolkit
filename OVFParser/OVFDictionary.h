@@ -145,8 +145,8 @@ namespace DictionaryHelpers{
         for(auto it = array.begin(); it != array.end(); ++it)
             if(*it == value)
                 return true;
-            //return false if true hasn't been tripped
-            return false;
+        //return false if true hasn't been tripped
+        return false;
     }
     //predicate to check if two arrays intersect
     template<std::size_t n, std::size_t m>
@@ -158,8 +158,8 @@ namespace DictionaryHelpers{
         for(auto it = arr1.begin(); it != arr1.end(); ++it)
             if(isElem(*it, arr2))
                 return true;
-            //default return 'false'
-            return false;
+        //default return 'false'
+        return false;
     }
     //predicate to check for duplicates
     template<std::size_t n>
