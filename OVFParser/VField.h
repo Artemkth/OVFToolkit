@@ -14,9 +14,11 @@ namespace VField{
             //constructors and other general utility
             VField();
             ~VField();
-            OVFHeader header{};
+            OVFHeader Header{};
             //number of bytes of current internally stored data
             std::size_t curDataInternalSize() const;
+            //and number of data points
+            std::size_t curDataPoints() const;
             //is data present
             bool isDataPresent() const; 
             //clearing out the storage
@@ -24,19 +26,31 @@ namespace VField{
             
             //data access methods
             //setting data to whatever, 
-            void setData(float*, const std::size_t);
-            void setData(double*, const std::size_t);
+            void setData(float*, const std::size_t&);
+            void setData(double*, const std::size_t&);
+            //same but with a copy, indicated by pointer being constant
+            void setData(const float*, const std::size_t&);
+            void setData(const double*, const std::size_t&);
             //setting specific elements
-            void setPoint(const std::size_t, const float);
-            void setPoint(const std::size_t, const double);
+            void setPoint(const std::size_t&, const float&);
+            void setPoint(const std::size_t&, const double&);
 
             //get data
             template <typename T>
             const T* getData() const;
             //get a copy
             template <typename T>
-            T* getDataCopy();
+            T* getDataCopy() const;
+            //getting a data point method is redundant since you can do it on your own
+            
+            //interfaces for validation and deduction
+            //defined and realized in OVFGrammar.cpp!
+            bool isValid() const;
+            std::string ValidationReport() const;
+            void FieldDeduce();
     };
+    
+    //available specializations
     //templates for getting the internal array
     template<>
     const float* VField::getData<float>() const;
@@ -45,8 +59,9 @@ namespace VField{
 
     //template for getting a copy of internal array, changes to it will be not regarded
     template<>
-    float* VField::getDataCopy<float>();
+    float* VField::getDataCopy<float>() const;
     template<>
-    double* VField::getDataCopy<double>();
+    double* VField::getDataCopy<double>() const;
+    
 }
 

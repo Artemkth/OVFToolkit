@@ -1,7 +1,7 @@
 //File with 'constexpr' utilities for implementing compile-time parts of interfaces
 //a self-checking dictionary of sorts for names of fields inside a file
 //requires recent version of compilers for good implementation of function signature macros
-//also requires c++17 support for lambdas and such
+//also requires c++17 support for lambdas being useful for constexpr initialization and such
 #pragma once
 #include<array>
 //file with definitions for the interfaces
