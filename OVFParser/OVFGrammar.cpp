@@ -38,6 +38,7 @@ namespace VField{
     //tokenization regex
     //splits the string into expression separated by while spaces,
     //unless some part is taken in quotes, in which case it will be counted as a separate token
+    // \s*(".*?"|[^\s]+)(?:\s+|$)
     std::regex tokenRegex("^\\s*(\".*?\"|[^\\s]+)(?:\\s+|$)", commonFlags);
     
     std::size_t countTokens(std::string str, bool (*validateToken)(const std::string&) = [](const std::string&){return true;})
@@ -59,13 +60,15 @@ namespace VField{
     //and a method to check if grid is defined
     std::pair<bool, std::string> isGridDefined(const OVFHeader& ref)
     {
+        const std::string prefix = "Checking if grid was defined:\n";
+        
         if(!ref.isSet(OVFParameter::Mtype))
-            return {false, "Mesh type was not defined!"};
+            return {false, prefix+"Mesh type was not defined!"};
         
         if(ref.getMeshType() == OVFHeader::MeshType::irregular)
         {
             if(!ref.isSet(OVFParameter::Pcount) )
-                return {false, "In a file with with irregular mesh point count was not specified"};
+                return {false, prefix+"In a file with with irregular mesh point count was not specified"};
             return {true, ""};
         }
         
@@ -92,20 +95,28 @@ namespace VField{
             return {true, ""};
         
         //else form error message
-        std::string errMessage{"Following required parameters to define rectangular grid were not found:"};
+        std::string errMessage{prefix + "Following required parameters to define rectangular grid were not found:"};
         for(const auto& x: missingList)
         {
             errMessage += "\n\t";
-            errMessage += ParameterName(x) ;
+            errMessage += ParameterName(x);
         }
         return {false, errMessage};
+    }
+    //checking physical constrains, i.e. if values are sane
+    std::pair<bool, std::string> checkPhysicalConstraints(const OVFHeader& ref)
+    {
+        const std::string prefix = "Checking a sanity of physical values";
+        //TODO: finish
+        
+        return {true, ""};
     }
     
     //nothing is disallowed lol
     const std::array<validator, 0> OVF0Rules {};
     //then rules for OVF1
     const auto OVF1Rules = DictionaryHelpers::make_array<validator>(
-        [](const OVFHeader& ref) -> std::pair<bool, std::string> 
+        [](const OVFHeader& ref) -> std::pair<bool, std::string>
         {
             //check if all required field are present
             const auto RequiredParameters = DictionaryHelpers::make_array(
@@ -142,6 +153,7 @@ namespace VField{
         //check that the boundary list, if present, is a list of tripples of points
         [](const OVFHeader& ref) -> std::pair<bool, std::string> 
         {
+            const std::string prefix = "Checking if 'boundarylist' is ill-formed:\n";
             if(!ref.isSet(OVFParameter::Bound))
                 return {true, ""}; //nothing to check
             //get the boundary vertex list
@@ -149,12 +161,12 @@ namespace VField{
             //count how many tokens there are, validating if they are convertible to double
             auto cnt = countTokens(boundaryList, [](const std::string& ref){try{std::stod(ref);}catch(const std::logic_error& e){return false;} return true;});
             if( cnt == 0)
-                return{false, "A string in 'boundarylist' contains invalid tokens: \n\t" + boundaryList};
+                return{false, prefix + "A string in 'boundarylist' contains invalid tokens: \n\t" + boundaryList};
             if( cnt % 3 != 0)
-                return{false, "Bounding box vortex list should have tripplets of coordinates, " + std::to_string(cnt) + 
+                return{false, prefix + "Bounding box vortex list should have tripplets of coordinates, " + std::to_string(cnt) + 
                     " values were read in 'boundarylist': \n\t" + boundaryList};
             if( cnt < 12 )
-                return{false, "Not enough points to set a bounding volume, at least 4 vertices needed, got" + std::to_string(cnt/3) + 
+                return{false, prefix + "Not enough points to set a bounding volume, at least 4 vertices needed, got" + std::to_string(cnt/3) + 
                     " vortexes in 'boundarylist': \n\t" + boundaryList};
             
             return {true, ""};
@@ -199,28 +211,34 @@ namespace VField{
         //check if value units has correct number of tokens
         [](const OVFHeader& ref) -> std::pair<bool, std::string>
         {
+            const std::string prefix = "Checking if 'valueunits' are ill-formed:\n";
             //should not reach here normally
             if(!ref.isSet(OVFParameter::Vunit))
-                return {false, "Value units are not set yet"};
+                return {false, prefix + "Value units are not set yet"};
             if(!ref.isSet(OVFParameter::Vdim))
-                return {false, "Value dimensions are not set yet"};
+                return {false, prefix + "Value dimensions are not set yet"};
             std::size_t num {0};
             if((num = countTokens(ref.get<pType::String>(OVFParameter::Vunit))) != ref.get<pType::Uint>(OVFParameter::Vdim))
-                return {false, "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit)};
+                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit)};
             return {true, ""};
         },
         //check if value labels has correct number of tokens
         [](const OVFHeader& ref) -> std::pair<bool, std::string>
         {
+            const std::string prefix = "Checking if 'valuelabels' is ill-formed:\n";
             //should not reach here normally
             if(!ref.isSet(OVFParameter::Vlabels))
-                return {false, "Value labels are not set yet"};
+                return {false, prefix + "Value labels are not set yet"};
             if(!ref.isSet(OVFParameter::Vdim))
-                return {false, "Value dimensions are not set yet"};
+                return {false, prefix + "Value dimensions are not set yet"};
             std::size_t num {countTokens(ref.get<pType::String>(OVFParameter::Vlabels))};
             if(num != 1 && num != ref.get<pType::Uint>(OVFParameter::Vdim))
-                return {false, "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit)};
+                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit)};
             return {true, ""};
         }
     );
+    
+    //count expected number of points
+    //TODO: implement
+    std::size_t expectedValues();
 }
