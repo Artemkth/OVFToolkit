@@ -174,6 +174,39 @@ namespace DictionaryHelpers{
         }
         return false;
     }
+    
+    //Human-readable names of parameters
+    constexpr auto ParamNames = DictionaryHelpers::make_array
+    (
+     std::make_pair(VField::OVFParameter::Title, "Data title"),
+     std::make_pair(VField::OVFParameter::Mtype, "Mesh type"),
+     std::make_pair(VField::OVFParameter::VersionString, "Version string"),
+     std::make_pair(VField::OVFParameter::Desc, "Description string"),
+     std::make_pair(VField::OVFParameter::Munit, "Grid mesh units"),
+     std::make_pair(VField::OVFParameter::Vunit, "Vector field value units"),
+     std::make_pair(VField::OVFParameter::Vmult, "Vector field value multiplier"),
+     std::make_pair(VField::OVFParameter::Vlabels, "Vector field value labels"),
+     std::make_pair(VField::OVFParameter::Vdim, "Vector field dimension"),
+     std::make_pair(VField::OVFParameter::Bound, "Bounding frame vertices"),
+     std::make_pair(VField::OVFParameter::Xmin, "Minimal mesh 'x' value"),
+     std::make_pair(VField::OVFParameter::Ymin, "Minimal mesh 'y' value"),
+     std::make_pair(VField::OVFParameter::Zmin, "Minimal mesh 'z' value"),
+     std::make_pair(VField::OVFParameter::Xmax, "Maximal mesh 'x' value"),
+     std::make_pair(VField::OVFParameter::Ymax, "Maximal mesh 'y' value"),
+     std::make_pair(VField::OVFParameter::Zmax, "Maximal mesh 'z' value"),
+     std::make_pair(VField::OVFParameter::Vmin, "Minimal vector field absolute value"),
+     std::make_pair(VField::OVFParameter::Vmax, "Maximal vector field absolute value"),
+     std::make_pair(VField::OVFParameter::Pcount, "File point count"),
+     std::make_pair(VField::OVFParameter::Xbase, "Mesh initial 'x' value"),
+     std::make_pair(VField::OVFParameter::Ybase, "Mesh initial 'y' value"),
+     std::make_pair(VField::OVFParameter::Zbase, "Mesh initial 'z' value"),
+     std::make_pair(VField::OVFParameter::Xstep, "Mesh 'x' step"),
+     std::make_pair(VField::OVFParameter::Ystep, "Mesh 'y' step"),
+     std::make_pair(VField::OVFParameter::Zstep, "Mesh 'z' step"),
+     std::make_pair(VField::OVFParameter::Xnodes, "Mesh 'x' nodes"),
+     std::make_pair(VField::OVFParameter::Ynodes, "Mesh 'y' nodes"),
+     std::make_pair(VField::OVFParameter::Znodes, "Mesh 'z' nodes")
+    );
 }
 
 namespace VField{
@@ -280,5 +313,13 @@ namespace VField{
         else if(DictionaryHelpers::isElem(pname, StringParamList))
             return pType::String;
         return pType::Other;
+    }
+    
+    constexpr auto ParameterName(const OVFParameter& p)
+    {
+        for(const auto& x: DictionaryHelpers::ParamNames)
+            if(x.first == p)
+                return x.second;
+        return "Undefined type";
     }
 };
