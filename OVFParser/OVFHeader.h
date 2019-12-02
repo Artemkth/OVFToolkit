@@ -139,6 +139,7 @@ namespace VField{
         static pType paramType (const OVFParameter&);
         
         //retrieve methods
+        //const identifier is ignored unless associatedType_t is a c array, or c++ container like std::string
         const associatedType_t<pType::String> getString(const OVFParameter&) const;
         const associatedType_t<pType::Uint> getUint(const OVFParameter&) const;
         const associatedType_t<pType::Float> getFloat(const OVFParameter&) const;

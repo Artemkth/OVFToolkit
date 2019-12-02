@@ -9,11 +9,21 @@ namespace VField{
             //details of data storage thingie defined outside
             //data is stored internally as a single array of homogenious-type values
             struct StorageArray;
-            StorageArray *data;
+            StorageArray *data{nullptr};
         public:
             //constructors and other general utility
             VField();
+            explicit VField(const associatedType_t<pType::String>& version): VField()
+            {Header.set(OVFParameter::VersionString, version);}
             ~VField();
+            //copy and move c-tors
+            VField(const VField&);
+            VField& operator=(const VField&);
+            //I would like to move it move it lol
+            VField(VField&& ref): data(ref.data), Header(std::move(ref.Header))
+            {ref.data = nullptr;}
+            VField& operator=(VField&&);
+            
             OVFHeader Header{};
             //number of bytes of current internally stored data
             std::size_t curDataInternalSize() const;
@@ -47,7 +57,7 @@ namespace VField{
             //defined and realized in OVFGrammar.cpp!
             bool isValid() const;
             std::string ValidationReport() const;
-            void FieldDeduce();
+            void DeduceFields();
     };
     
     //available specializations
@@ -62,6 +72,4 @@ namespace VField{
     float* VField::getDataCopy<float>() const;
     template<>
     double* VField::getDataCopy<double>() const;
-    
 }
-
