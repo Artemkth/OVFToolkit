@@ -2,6 +2,7 @@
 #include"OVFDictionary.h"
 #include<map>
 #include<algorithm>
+#include<utility>
 
 namespace VField{
     //Class for a field, needs to scream when it is set multiple times, or being accessed unitialized
@@ -246,6 +247,9 @@ namespace VField{
         };
         //mesh type
         HeaderField<MeshType> meshType{};
+        //last check results
+        bool isValid{false};
+        std::string ValidationReport{};
         
         //does nothing, but just to insure that there is c-tor
         HeaderData() = default;
@@ -259,6 +263,26 @@ namespace VField{
             meshType.reset();
         }
     };
+    
+    //validation stuff
+    //Implemented in OVFGrammar.cpp!
+    extern std::pair<bool, std::string> ValidateHeader(const OVFHeader& ref);
+    //and interfaces declared
+    bool OVFHeader::validate()
+    {
+        const auto result = ValidateHeader(*this);
+        data->isValid = result.first;
+        data->ValidationReport = result.second;
+        return data->isValid;
+    }
+    bool OVFHeader::LastValidationResults() const
+    {
+        return data->isValid;
+    }
+    associatedType_t<pType::String> OVFHeader::LastValidationReport() const
+    {
+        return data->ValidationReport;
+    }
     
     //Header storage default c-tor
     OVFHeader::OVFHeader()

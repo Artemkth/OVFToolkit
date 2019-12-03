@@ -161,6 +161,20 @@ namespace DictionaryHelpers{
         //default return 'false'
         return false;
     }
+    //check if subset
+    template<std::size_t n, std::size_t m>
+    constexpr bool isSubset( const std::array<VField::OVFParameter, n>& arr1,
+                                   const std::array<VField::OVFParameter, m>& arr2 )
+    {
+        if(m > n)
+            return isSubset(arr2, arr1);
+        
+        for(auto it = arr1.begin(); it != arr1.end(); ++it)
+            if(!isElem(*it, arr2))
+                return false;
+        
+        return true;
+    }
     //predicate to check for duplicates
     template<std::size_t n>
     constexpr bool hasDuplicates(const std::array<VField::OVFParameter, n>& arr)
@@ -173,6 +187,32 @@ namespace DictionaryHelpers{
                     return true;
         }
         return false;
+    }
+    template<std::size_t n, std::size_t m>
+    constexpr bool countIntersect( const std::array<VField::OVFParameter, n>& arr1,
+                                   const std::array<VField::OVFParameter, m>& arr2 )
+    {
+        std::size_t intersect{ 0};
+        for(auto it = arr1.begin(); it != arr1.end(); ++it)
+            if(isElem(*it, arr2))
+                intersect++;
+        return intersect;
+    }
+    //array union
+    template<std::size_t n, std::size_t m>
+    constexpr auto join( const std::array<VField::OVFParameter, n>& arr1,
+                                   const std::array<VField::OVFParameter, m>& arr2 )
+    {
+        std::array<VField::OVFParameter, n+m> collector{};
+        auto cit = collector.begin();
+        for(auto it = arr1.begin(); it != arr1.end(); ++it)
+        {
+            *cit++ = *it;
+        }
+        for(auto it = arr2.begin(); it != arr2.end(); ++it)
+            *cit++ = *it;
+        
+        return collector;
     }
     
     //Human-readable names of parameters

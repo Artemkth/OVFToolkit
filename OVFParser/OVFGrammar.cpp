@@ -2,6 +2,7 @@
 #include<regex>
 #include<map>
 #include<vector>
+#include<cmath>
 #include"OVFDictionary.h"
 #include"VField.h"
 
@@ -69,9 +70,12 @@ namespace VField{
         {
             if(!ref.isSet(OVFParameter::Pcount) )
                 return {false, prefix+"In a file with with irregular mesh point count was not specified"};
-            return {true, ""};
+            if(ref.getUint(OVFParameter::Pcount) <= 0)
+                return {false, prefix+"Non-positive point count was specified for a irregular mesh"};
+            return {true, prefix + "SUCCESS"};
         }
         
+        //next check is for regular mesh parameters only
         const auto rectGridParameters = DictionaryHelpers::make_array(
             OVFParameter::Xbase,
             OVFParameter::Ybase,
@@ -90,9 +94,17 @@ namespace VField{
             if(!ref.isSet(x))
                 missingList.push_back(x);
         }
+        if(!ref.isSet(OVFParameter::VersionString))
+            missingList.push_back(OVFParameter::VersionString);
+        else
+        {
+            if(matchVersionString(ref.get<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF2)
+                if(!ref.isSet(OVFParameter::Vdim))
+                    missingList.push_back(OVFParameter::Vdim);
+        }
         
         if(missingList.size() == 0)
-            return {true, ""};
+            return {true, prefix + "SUCCESS"};
         
         //else form error message
         std::string errMessage{prefix + "Following required parameters to define rectangular grid were not found:"};
@@ -106,10 +118,83 @@ namespace VField{
     //checking physical constrains, i.e. if values are sane
     std::pair<bool, std::string> checkPhysicalConstraints(const OVFHeader& ref)
     {
-        const std::string prefix = "Checking a sanity of physical values";
-        //TODO: finish
+        const std::string prefix = "Checking a sanity of physical values: ";
+        std::vector<std::string> problems {};
+        //TODO: check into nuking 2 reduntant checks here, those are done before ruleset is called in order to get the version
+        if(!ref.isSet(OVFParameter::VersionString))
+            return{false, prefix+"\n\tVersion string was not set"};
+        //nothing to check for OVF v0.0
+        if(matchVersionString(ref.get<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF0)
+            return {true, prefix + "SUCCESS"};
+        //otherwise checking all the parameters
+        //first check is for parameters being limited
+        if constexpr(std::numeric_limits<associatedType<pType::Float>>::has_infinity ||
+                     std::numeric_limits<associatedType<pType::Float>>::has_quiet_NaN )
+        {
+            for(const auto& x: FPParamList)
+                if(ref.isSet(x))
+                {
+                    auto val = ref.getFloat(x);
+                    if(!std::isfinite(val))
+                        problems.push_back(std::string("Encountered a non-finite value '") + ParameterName(x) + "' = " +
+                        std::to_string(val) + "\n");
+                }
+        }
+        if constexpr(std::numeric_limits<associatedType<pType::Uint>>::has_infinity ||
+                     std::numeric_limits<associatedType<pType::Uint>>::has_quiet_NaN )
+        {
+            for(const auto& x: UINTParamList)
+                if(ref.isSet(x))
+                {
+                    auto val = ref.getUint(x);
+                    if(!std::isfinite(val))
+                        problems.push_back(std::string("Encountered a non-finite value '") + ParameterName(x) + "' = " +
+                        std::to_string(val) + "\n");
+                }
+        }
+        if(!isGridDefined(ref).first)
+        {
+            problems.push_back("Grid parameters were not defined!!");
+        }
+        else 
+        {
+            constexpr auto posDefined = DictionaryHelpers::make_array(
+                OVFParameter::Xnodes,
+                OVFParameter::Ynodes,
+                OVFParameter::Znodes,
+                OVFParameter::Xstep,
+                OVFParameter::Ystep,
+                OVFParameter::Zstep);
+            static_assert(!DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::join(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
+            //check if required params are positively defined
+            for(const auto& x: posDefined)
+            {
+                if(paramIndex(x) == pType::Uint)
+                {
+                    auto val = ref.getUint(x);
+                    if(val <= 0)
+                        problems.push_back(std::string("The value '") + ParameterName(x) + "' =" + std::to_string(val) + ", was not positively defined!");
+                }
+                else if(paramIndex(x) == pType::Float)
+                {
+                    auto val = ref.getUint(x);
+                    if(val <= 0)
+                        problems.push_back((std::string)"The value '" + ParameterName(x) + "' =" + std::to_string(val) + ", was not positively defined!");
+                }
+            }
+        }
         
-        return {true, ""};
+        if(problems.size() == 0)
+            return {true, prefix + "SUCCESS"};
+        
+        std::string accum { prefix};
+        for(const auto& x: problems)
+        {
+            accum += "\n\t";
+            accum += x;
+        }
+        
+        return {false, accum};
     }
     
     //nothing is disallowed lol
@@ -118,6 +203,7 @@ namespace VField{
     const auto OVF1Rules = DictionaryHelpers::make_array<validator>(
         [](const OVFHeader& ref) -> std::pair<bool, std::string>
         {
+            const std::string prefix = "Checking if all required fields were filled";
             //check if all required field are present
             const auto RequiredParameters = DictionaryHelpers::make_array(
                 OVFParameter::Title,
@@ -137,7 +223,7 @@ namespace VField{
                     missingList.push_back(x);
                 
             if(missingList.size() == 0)
-                return {true, ""};
+                return {true, prefix + "SUCCESS"};
             
             //else form error message
             std::string errMessage{"Following required parameters(for OVF 1.0) were not found:"};
@@ -155,7 +241,7 @@ namespace VField{
         {
             const std::string prefix = "Checking if 'boundarylist' is ill-formed:\n";
             if(!ref.isSet(OVFParameter::Bound))
-                return {true, ""}; //nothing to check
+                return {true, prefix + "SUCCESS"}; //nothing to check
             //get the boundary vertex list
             const std::string boundaryList { ref.get<pType::String>(OVFParameter::Bound)};
             //count how many tokens there are, validating if they are convertible to double
@@ -169,13 +255,14 @@ namespace VField{
                 return{false, prefix + "Not enough points to set a bounding volume, at least 4 vertices needed, got" + std::to_string(cnt/3) + 
                     " vortexes in 'boundarylist': \n\t" + boundaryList};
             
-            return {true, ""};
+            return {true, prefix + "SUCCESS"};
         }
     );
     //then rules for OVF2
     const auto OVF2Rules = DictionaryHelpers::make_array<validator>(
         [](const OVFHeader& ref) -> std::pair<bool, std::string> 
         {
+            const std::string prefix = "Checking if all required fields were filled";
             //check if all required field are present
             const auto RequiredParameters = DictionaryHelpers::make_array(
                 OVFParameter::Title,
@@ -196,7 +283,7 @@ namespace VField{
                     missingList.push_back(x);
                 
             if(missingList.size() == 0)
-                return {true, ""};
+                return {true, prefix + "SUCCESS"};
             
             //else form error message
             std::string errMessage{"Following required parameters(for OVF 1.0) were not found:"};
@@ -220,7 +307,7 @@ namespace VField{
             std::size_t num {0};
             if((num = countTokens(ref.get<pType::String>(OVFParameter::Vunit))) != ref.get<pType::Uint>(OVFParameter::Vdim))
                 return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit)};
-            return {true, ""};
+            return {true, prefix + "SUCCESS"};
         },
         //check if value labels has correct number of tokens
         [](const OVFHeader& ref) -> std::pair<bool, std::string>
@@ -234,11 +321,26 @@ namespace VField{
             std::size_t num {countTokens(ref.get<pType::String>(OVFParameter::Vlabels))};
             if(num != 1 && num != ref.get<pType::Uint>(OVFParameter::Vdim))
                 return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit)};
-            return {true, ""};
+            return {true, prefix + "SUCCESS"};
         }
     );
     
     //count expected number of points
-    //TODO: implement
-    std::size_t expectedValues();
+    std::size_t expectedValueCount(const OVFHeader& ref)
+    {
+        if(!isGridDefined(ref).first)
+            return 0u;
+        auto version = matchVersionString(ref.get<pType::String>(OVFParameter::VersionString));
+        if(version == OVFVersion::OVF0)
+            return 0u;
+        std::size_t dimensionality = ((ref.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
+                                     ((version == OVFVersion::OVF2) ? ref.getUint(OVFParameter::Vdim) : 3);
+        if(ref.getMeshType() == OVFHeader::MeshType::irregular)
+            return dimensionality * ref.getUint(OVFParameter::Pcount);
+        else
+            return dimensionality * ref.getUint(OVFParameter::Xnodes) * ref.getUint(OVFParameter::Ynodes) * ref.getUint(OVFParameter::Znodes);
+    }
+    
+    //header validator
+    //std::pair<bool,     
 }

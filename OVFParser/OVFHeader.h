@@ -176,6 +176,10 @@ namespace VField{
         
         //reset function
         void reset();
+        //validation function
+        bool validate();
+        bool LastValidationResults() const;
+        associatedType_t<pType::String> LastValidationReport() const;
     };
     
     //delete implementation for 'Other' type, so compiler will throw an error
