@@ -2,6 +2,7 @@
 #include"OVFDictionary.h"
 #include<map>
 #include<algorithm>
+#include<vector>
 #include<utility>
 
 namespace VField{
@@ -266,13 +267,13 @@ namespace VField{
     
     //validation stuff
     //Implemented in OVFGrammar.cpp!
-    extern std::pair<bool, std::string> ValidateHeader(const OVFHeader& ref);
+    extern std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref);
     //and interfaces declared
     bool OVFHeader::validate()
     {
         const auto result = ValidateHeader(*this);
-        data->isValid = result.first;
-        data->ValidationReport = result.second;
+        data->isValid = std::get<0>(result);
+        data->ValidationReport = std::get<1>(result);
         return data->isValid;
     }
     bool OVFHeader::LastValidationResults() const
