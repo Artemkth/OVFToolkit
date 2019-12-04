@@ -415,7 +415,7 @@ namespace VField{
                 data->StringFields[p].reset();
                 data->isChecked = false;
                 break;
-            case(pType::Other)
+            case(pType::Other):
                 if(p == OVFParameter::Mtype)
                 {
                     data->meshType.reset();
