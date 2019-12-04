@@ -44,7 +44,6 @@ namespace VField{
             //setting specific elements
             void setPoint(const std::size_t&, const float&);
             void setPoint(const std::size_t&, const double&);
-
             //get data
             template <typename T>
             const T* getData() const;
@@ -58,7 +57,8 @@ namespace VField{
             bool isAddressable() const;                                     //validate if there is enough information to traverse internal array
             bool isValid();                                                 //check if vector field is in spec
             std::string ValidationReport();                                 //full report of validation results, run validation if needed
-            bool DeduceFields(const OVFParameter&, bool UseDefault = false);//try to deduce a field from data already known
+            bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
+            std::string DeduceRecursively(const std::size_t& max_iter = 5); //try to deduce out all of the missing required fields
     };
     
     //available specializations

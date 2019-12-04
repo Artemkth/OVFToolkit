@@ -289,6 +289,7 @@ namespace VField{
     //unsigned integral fields
     constexpr auto UINTParamList = DictionaryHelpers::make_array (
             OVFParameter::Pcount,
+            OVFParameter::Vdim,
             OVFParameter::Xnodes,
             OVFParameter::Ynodes,
             OVFParameter::Znodes
@@ -301,7 +302,6 @@ namespace VField{
             OVFParameter::Desc,
             OVFParameter::Munit,
             OVFParameter::Vunit,
-            OVFParameter::Vdim,
             OVFParameter::Vlabels,
             OVFParameter::Bound
             );

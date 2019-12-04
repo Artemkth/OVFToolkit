@@ -396,6 +396,34 @@ namespace VField{
     }
     //reset function
     void OVFHeader::reset()
-    {data->reset();};
+    {data->reset();data->isChecked = false;};
+    
+    //unset a parameter
+    void OVFHeader::unset(const OVFParameter& p)
+    {
+        switch(paramIndex(p))
+        {
+            case(pType::Float):
+                data->FPFields[p].reset();
+                data->isChecked = false;
+                break;
+            case(pType::Uint):
+                data->UINTFields[p].reset();
+                data->isChecked = false;
+                break;
+            case(pType::String):
+                data->StringFields[p].reset();
+                data->isChecked = false;
+                break;
+            case(pType::Other)
+                if(p == OVFParameter::Mtype)
+                {
+                    data->meshType.reset();
+                    data->isChecked = false;
+                    break;
+                }
+                throw OVFHeader::wrong_type_request("OVFHeader::unset: trying to unset a non-field parameter");
+        }
+    }
 }
 

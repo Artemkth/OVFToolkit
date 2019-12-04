@@ -170,6 +170,9 @@ namespace VField{
         void set(const OVFParameter&, const associatedType_t<pType::Uint>& );
         void set(const OVFParameter&, const associatedType_t<pType::Float>& );
         
+        //unset a value
+        void unset(const OVFParameter&);
+        
         //mesh type
         MeshType getMeshType() const;
         void setMesh(const MeshType&);
