@@ -364,6 +364,7 @@ namespace VField{
     }
     
     //appending and adding unique elements
+    //returns a set of unique elements of u&v
     std::vector<OVFParameter> makeUnion(const std::vector<OVFParameter>& u, const std::vector<OVFParameter>& v)
     {
         std::vector<OVFParameter> accumulator{};
@@ -375,10 +376,44 @@ namespace VField{
                 accumulator.push_back(x);
         return accumulator;
     }
-    //header validator
+    //append unique values, skips the initial check
+    void appendUnique(std::vector<OVFParameter>& u, const std::vector<OVFParameter>& v)
+    {
+        for(const auto& x: v)
+            if(std::find(u.begin(), u.end(), x) == u.end())
+                u.push_back(x);
+    }
+    //full header validator
     std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref)
     {
-        //TODO implement
-        return{ true, "", {}};
+        bool valid {true};
+        std::string log{"Checking the header of a file:"};
+        std::vector<OVFParameter> problematicVars {};
+        if(!ref.isSet(OVFParameter::VersionString))
+            return{ false, log + " version string was not set, aborting!", {OVFParameter::VersionString}};
+        //else execute the correct ruleset
+        const auto version = matchVersionString(ref.get<pType::String>(OVFParameter::VersionString));
+        if(Ruleset.find(version) == Ruleset.end())
+            return{ false, log + " version reported does not have a ruleset implemented!", {OVFParameter::VersionString}};
+        //otherwise it is safe to execute ruleset
+        const auto& rules = Ruleset.at(version);
+        for(const auto& rule: rules)
+        {
+            auto checkResult = rule(ref);
+            valid &= std::get<0>(checkResult);
+            log = log + '\n' + std::get<1>(checkResult);
+            //no need to check for uniqueness before, initial array satisfies it by being empty
+            appendUnique(problematicVars, std::get<2>(checkResult));
+        }
+        return{ valid, log, problematicVars};
+    }
+    
+    //implementation of validator from VField itself, checks both header and data
+    bool VField::isValid() const
+    {
+        //first check our own header
+        const bool isHeaderValid = Header.validate();
+        //great if it is valid, but also need to check if data is there
+        //TODO return here after implementing isAddressable
     }
 }

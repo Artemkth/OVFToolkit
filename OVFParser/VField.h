@@ -55,9 +55,10 @@ namespace VField{
             
             //interfaces for validation and deduction
             //defined and realized in OVFGrammar.cpp!
-            bool isValid() const;
-            std::string ValidationReport() const;
-            void DeduceFields();
+            bool isAddressable() const;                                     //validate if there is enough information to traverse internal array
+            bool isValid();                                                 //check if vector field is in spec
+            std::string ValidationReport();                                 //full report of validation results, run validation if needed
+            bool DeduceFields(const OVFParameter&, bool UseDefault = false);//try to deduce a field from data already known
     };
     
     //available specializations

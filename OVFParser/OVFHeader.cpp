@@ -249,6 +249,7 @@ namespace VField{
         //mesh type
         HeaderField<MeshType> meshType{};
         //last check results
+        bool isChecked{false};
         bool isValid{false};
         std::string ValidationReport{};
         
@@ -271,17 +272,19 @@ namespace VField{
     //and interfaces declared
     bool OVFHeader::validate()
     {
+        if(data->isChecked)
+            return data->isValid;
+        //else do a legit check
         const auto result = ValidateHeader(*this);
         data->isValid = std::get<0>(result);
         data->ValidationReport = std::get<1>(result);
+        data->isChecked = true;
         return data->isValid;
     }
-    bool OVFHeader::LastValidationResults() const
+    const associatedType_t<pType::String> OVFHeader::ValidationReport()
     {
-        return data->isValid;
-    }
-    associatedType_t<pType::String> OVFHeader::LastValidationReport() const
-    {
+        if(!data->isChecked)
+            validate();
         return data->ValidationReport;
     }
     
@@ -318,18 +321,21 @@ namespace VField{
         if(paramType(param) != pType::String)
             throw OVFHeader::wrong_type_request("OVFHeader::set called string setter with for a non-string parameter");
         data->StringFields[param] = val;
+        data->isChecked = false;
     }
     void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Uint>& val)
     {
         if(paramType(param) != pType::Uint)
             throw OVFHeader::wrong_type_request("OVFHeader::set called string setter with for a non-UINT parameter");
         data->UINTFields[param] = val;
+        data->isChecked = false;
     }
     void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Float>& val)
     {
         if(paramType(param) != pType::Float)
             throw OVFHeader::wrong_type_request("OVFHeader::set called string setter with for a non-floating point parameter");
         data->FPFields[param] = val;
+        data->isChecked = false;
     }
     //check if a given field is set
     bool OVFHeader::isSet(const OVFParameter& refP) const
@@ -357,6 +363,25 @@ namespace VField{
         //lambs are silent now
         return false;
     }
+    //getters
+    const associatedType_t<pType::String> OVFHeader::getString(const OVFParameter& param) const
+    {
+        if(paramType(param) != pType::String)
+            throw OVFHeader::wrong_type_request("OVFHeader::get called string setter with for a non-string parameter");
+        return data->StringFields.at(param);
+    }
+    const associatedType_t<pType::Uint> OVFHeader::getUint(const OVFParameter& param) const
+    {
+        if(paramType(param) != pType::Uint)
+            throw OVFHeader::wrong_type_request("OVFHeader::get called UINT setter with for a non-UINT parameter");
+        return data->UINTFields.at(param);
+    }
+    const associatedType_t<pType::Float> OVFHeader::getFloat(const OVFParameter& param) const
+    {
+        if(paramType(param) != pType::Float)
+            throw OVFHeader::wrong_type_request("OVFHeader::get called floating point setter with for a non-fp parameter");
+        return data->FPFields.at(param);
+    }
     
     //mesh type functions
     OVFHeader::MeshType OVFHeader::getMeshType() const
@@ -366,6 +391,8 @@ namespace VField{
     void OVFHeader::setMesh(const MeshType& ref)
     {
         data->meshType = ref;
+        //invalidating a checked status
+        data->isChecked = false;
     }
     //reset function
     void OVFHeader::reset()
