@@ -207,7 +207,7 @@ namespace VField{
     
     
     //first for the field of class
-    pType paramType (const OVFParameter& param)
+    pType OVFHeader::paramType (const OVFParameter& param)
     {
         return paramIndex(param);
     }
