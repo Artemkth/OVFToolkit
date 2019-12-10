@@ -1049,8 +1049,7 @@ namespace VField{
             }
             case(pType::Other):
             {
-                throw OVFHeader::wrong_type_request("VField::DeduceField: tried to call a function for a non-field parameter type 'Other'");
-                break;
+                return false;
             }
         }
         

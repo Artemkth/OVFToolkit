@@ -6,6 +6,25 @@ namespace VField{
     //asserting floating point type byte sizes to be compatible with those defined in OVF file standard
     static_assert(sizeof(float) == 4, "Incompatible float type");
     static_assert(sizeof(double) == 8, "Incompatible double type");
+    
+    template<typename T, typename U>
+    inline void emplace_copy(T** dest, const U* data, const std::size_t size)
+    {
+        //if copy size is 0 cleanup destination and set pointer to nullptr
+        if(size == 0)
+        {
+            delete[] *dest;
+            *dest = nullptr;
+            return;
+        }
+        static_assert(std::is_convertible<U,T>::value, "Trying to do the conversion of incompatible types!");
+        T* buffer = new T[size];
+        std::copy_n(data, size, buffer);
+
+        std::swap(*dest, buffer);
+        //delete old data now stored in buffer
+        delete[] buffer;
+    }
         
     struct VField::StorageArray
     {
@@ -17,16 +36,10 @@ namespace VField{
         //purgin the data
         inline void clear()
         {
-            if(farray != nullptr)
-            {
-                delete[] farray;
-                farray = nullptr;
-            }
-            if(darray != nullptr)
-            {
-                delete[] darray;
-                darray = nullptr;
-            }
+            delete[] farray;
+            farray = nullptr;
+            delete[] darray;
+            darray = nullptr;
         }
         //is there some data?
         inline bool isEmpty() const
@@ -34,29 +47,16 @@ namespace VField{
             return farray == nullptr && darray == nullptr;
         }
         //c-tors
-        StorageArray() = default; //fine with initializing everything to nullptr
+        constexpr StorageArray() = default; //fine with initializing everything to nullptr
         StorageArray(const StorageArray& ref):StorageArray()
         {
             storSize = ref.storSize;
-            if( storSize != 0)
-            {
-                //farray and darray are set to nullptr by default constructor
-                //weekly exception safe, if needed add unique_ptr code later
-                if( ref.farray != nullptr)
-                {
-                    auto ndata = new float[storSize];
-                    std::copy_n(ref.farray, storSize, ndata);
-                    
-                    farray = ndata;
-                }
-                if( ref.darray != nullptr)
-                {
-                    auto ndata = new double[storSize];
-                    std::copy_n(ref.darray, storSize, ndata);
-                    
-                    darray = ndata;
-                }
-            }
+            //farray and darray are set to nullptr by default constructor
+            //weekly exception safe, if needed add unique_ptr code later
+            if( ref.farray != nullptr)
+                emplace_copy(&farray, ref.farray, storSize);
+            if( ref.darray != nullptr)
+                emplace_copy(&darray, ref.darray, storSize);
         }
         //conversion constructors, eat up the pointer
         template<typename T>
@@ -74,9 +74,8 @@ namespace VField{
                     darray = data;
                 else
                 {
-                    auto buffer = new double[storSize];
-                    std::copy_n( data, storSize, buffer);
-                    darray = buffer;
+                    //else convert data to 'double' and nuke it!
+                    emplace_copy(&darray, data, length);
                     delete[] data;
                 }
             }
@@ -84,81 +83,38 @@ namespace VField{
         
         StorageArray& operator= (const StorageArray& ref)
         {
-            if (storSize != 0)
-            {
-                if( ref.farray != nullptr)
-                {
-                    auto ndata = new float[storSize];
-                    std::copy_n(ref.farray, storSize, ndata);
-                    std::swap(farray, ndata);
-                    
-                    if( ndata != nullptr)
-                        delete[] ndata;
-                }
-                if( ref.darray != nullptr)
-                {
-                    auto ndata = new double[storSize];
-                    std::copy_n(ref.darray, storSize, ndata);
-                    std::swap(darray, ndata);
-                    
-                    if( ndata != nullptr)
-                        delete[] ndata;
-                }
-            }
+            if( ref.farray != nullptr)
+                emplace_copy(&farray, ref.farray, ref.storSize);
+            if( ref.darray != nullptr)
+                emplace_copy(&darray, ref.darray, ref.storSize);
+            //only copies new size if emplacing a copy was succesfull
+            storSize = ref.storSize;
             return *this;
         }
-        StorageArray(StorageArray&& ref): StorageArray()
-        {
-            storSize = ref.storSize;
-            if(ref.farray != nullptr)
-            {
-                farray = ref.farray;
-                ref.farray = nullptr;
-            }
-            if(ref.darray != nullptr)
-            {
-                darray = ref.darray;
-                ref.darray = nullptr;
-            }
-        }
-        StorageArray& operator= (StorageArray&& ref)
-        {
-            clear();
-            storSize = ref.storSize;
-            if(ref.farray != nullptr)
-            {
-                farray = ref.farray;
-                ref.farray = nullptr;
-            }
-            if(ref.darray != nullptr)
-            {
-                darray = ref.darray;
-                ref.darray = nullptr;
-            }
-            return *this;
-        }
+        StorageArray(StorageArray&& ref) = default;
+        StorageArray& operator= (StorageArray&& ref) = default;
         ~StorageArray()
         {
             clear();
         }
         //also a convert method to swap between representations
         inline void convert();
-        
+
         template<typename T>
         inline T* makeCopy() const;
     };
-    
+
     //specialization for floats
     template<>
-    VField::StorageArray::StorageArray<float>(float* data, const std::size_t& length): StorageArray()
+        VField::StorageArray::StorageArray<float>(float* data, const std::size_t& length): StorageArray()
     {
-        storSize = length;
         if (data == nullptr)
             return;
-        
+        storSize = length;
+
         farray = data;
     }
-    
+
     void VField::StorageArray::convert()
     {
         //hurray if empty, nothing to do
@@ -167,35 +123,31 @@ namespace VField{
         //else start doing work
         if(farray != nullptr)
         {
-            auto buffer = new double[storSize];
-            std::copy_n(farray, storSize, buffer);
-            
+            auto buffer = makeCopy<double>();
+
             *this = std::move(StorageArray(buffer, storSize));    
         }
         if(darray != nullptr)
         {
-            auto buffer = new float[storSize];
-            std::copy_n(darray, storSize, buffer);
-            
+            auto buffer = makeCopy<float>();
+
             *this = std::move(StorageArray(buffer, storSize));
         }
-        //CAUTION: both being non-null would result in memory leak
-        //TODO: insert a c assert here
     }
-    
+
     std::size_t VField::curDataInternalSize() const
     {
         if( data -> farray != nullptr)
             return sizeof(float);
         if( data -> darray != nullptr)
             return sizeof(double);
-        throw OVFHeader::read_unitialized("VField::curDataInternalSize: unitialized");
+        return 0;
     }
     std::size_t VField::curDataPoints() const
     {
         return data -> storSize;
     }
-    
+
     bool VField::isDataPresent() const
     {
         return !( data -> isEmpty() );
@@ -222,14 +174,14 @@ namespace VField{
     {
         static_assert(std::is_floating_point<T>::value, "StorageArray::makeCopy is only compatible with floating point type");
         if(isEmpty())
-            throw OVFHeader::read_unitialized("VField::getDataCopy: Trying to read non-initialized data");
+            return nullptr;
         T* buffer = new T[storSize];
         if(farray != nullptr)
             std::copy_n( farray, storSize, buffer);
-        if(darray != nullptr)
+        else if(darray != nullptr)
             std::copy_n( farray, storSize, buffer);
         
-        return buffer;  
+        return buffer;
     }
     
     //data access methods
@@ -248,19 +200,15 @@ namespace VField{
     template<>
     const float* VField::getData<float>() const
     {
-        if(data -> isEmpty())
-            throw OVFHeader::read_unitialized("VField::getData: Trying to read non-initialized data");
-        if(data -> farray == nullptr)
-            throw OVFHeader::read_unitialized("VField::getData<float>: trying to read the data in wrong type");
+        if(data -> farray == nullptr && data -> darray != nullptr)
+            throw std::logic_error("VField::getData<float>: trying to read the data in wrong type");
         return data -> farray;
     }
     template<>
     const double* VField::getData<double>() const
     {
-        if(data -> isEmpty())
-            throw OVFHeader::read_unitialized("VField::getData: Trying to read non-initialized data");
-        if(data -> farray == nullptr)
-            throw OVFHeader::read_unitialized("VField::getData<double>: trying to read the data in wrong type");
+        if(data -> farray == nullptr && data -> darray !=nullptr)
+            throw std::logic_error("VField::getData<double>: trying to read the data in wrong type");
         return data -> darray;
     }
     
@@ -290,34 +238,32 @@ namespace VField{
     template<typename T, typename U>
     constexpr void conv_assign(T* arr, const std::size_t& pos, const U& val)
     {
-        static_assert(std::is_floating_point_v<T> && std::is_floating_point_v<U>, "conv_assign called with a non floating point type");
+        static_assert(std::is_convertible<U, T>::value, "conv_assign called with a non-convertible argument");
         arr[pos] = static_cast<T>(val);
     }
     //here we go
     //look into templating this stuff
-    void VField::setPoint(const std::size_t& pos, const float& val)
+    bool VField::setPoint(const std::size_t& pos, const float& val)
     {
-        if( data -> isEmpty() )
-            throw OVFHeader::read_unitialized("VField::setPoint: trying to change a point of non-initialized vector field");
-        if( pos >= data -> storSize )
-            throw std::logic_error("VField::setPoint: accessing field out of array bounds");
+        if( data -> isEmpty() || pos >= data -> storSize )
+            return false;
         
         if( data -> farray != nullptr)
             conv_assign(data -> farray, pos, val);
-        if( data -> darray != nullptr)
+        else if( data -> darray != nullptr)
             conv_assign(data -> darray, pos, val);
+        return true;
     }
-    void VField::setPoint(const std::size_t& pos, const double& val)
+    bool VField::setPoint(const std::size_t& pos, const double& val)
     {
-        if( data -> isEmpty() )
-            throw OVFHeader::read_unitialized("VField::setPoint: trying to change a point of non-initialized vector field");
-        if( pos >= data -> storSize )
-            throw std::logic_error("VField::setPoint: accessing field out of array bounds");
+        if( data -> isEmpty() || pos >= data -> storSize )
+            return false;
         
         if( data -> farray != nullptr)
             conv_assign(data -> farray, pos, val);
-        if( data -> darray != nullptr)
+        else if( data -> darray != nullptr)
             conv_assign(data -> darray, pos, val);
+        return true;
     }
     //constructors and such again
     VField::VField(const VField& ref): Header(ref.Header)
@@ -325,25 +271,21 @@ namespace VField{
         auto buffer = new StorageArray(*ref.data);
         std::swap(data, buffer);
         
-        if(buffer != nullptr)
-            delete buffer;
+        delete buffer;
     }
     VField& VField::operator= (const VField& ref)
     {
         auto buffer = new StorageArray(*ref.data);
         std::swap(data, buffer);
         
-        if(buffer != nullptr)
-            delete buffer;
-        
+        delete buffer;
+        Header = ref.Header;
         return *this;
     }
-    VField& VField::operator= (VField&& ref)
+    //implementation of iterator creators
+    template<typename T>
+    VField::VFieldIterator<T> VField::begin<T> ()
     {
-        std::swap(data, ref.data);
-        //ref.data will be cleaned up by ref's destructor
-        Header = std::move(ref.Header);
-        
-        return *this;
     }
 }
+

@@ -167,15 +167,15 @@ namespace VField{
         return false;
     }
     //getters
-    const associatedType_t<pType::String> OVFHeader::getString(const OVFParameter& param) const
+    const associatedType_t<pType::String>& OVFHeader::getString(const OVFParameter& param) const &
     {
         return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[param]).value();
     }
-    const associatedType_t<pType::Uint> OVFHeader::getUint(const OVFParameter& param) const
+    const associatedType_t<pType::Uint>& OVFHeader::getUint(const OVFParameter& param) const &
     {
         return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[param]).value();
     }
-    const associatedType_t<pType::Float> OVFHeader::getFloat(const OVFParameter& param) const
+    const associatedType_t<pType::Float>& OVFHeader::getFloat(const OVFParameter& param) const &
     {
         return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[param]).value();
     }
