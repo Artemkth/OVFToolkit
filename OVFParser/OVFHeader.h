@@ -15,7 +15,7 @@ namespace VField{
         Other,//for service fields and such
         Uint,//storing in std::size_t
         Float,//storing in double
-        String//storing in char*
+        String//storing in std::string
     };
     
     //default variable types
@@ -83,36 +83,6 @@ namespace VField{
         HeaderData * data{nullptr};
         
     public:
-        //exception classes
-        //can be caught by std::logic_error as well
-        class read_unitialized : public std::logic_error{
-        public:
-            explicit read_unitialized( const std::string& ref) : std::logic_error(ref)
-            {}
-            explicit read_unitialized( const char* ref) : std::logic_error(ref)
-            {}
-            read_unitialized(const read_unitialized&) = delete;
-            read_unitialized& operator= (const read_unitialized&) = delete;
-        };
-        class overwrite_initialized : public std::logic_error{
-        public:
-            explicit overwrite_initialized( const std::string& ref) : std::logic_error(ref)
-            {}
-            explicit overwrite_initialized( const char* ref) : std::logic_error(ref)
-            {}
-            overwrite_initialized(const overwrite_initialized&) = delete;
-            overwrite_initialized& operator= (const overwrite_initialized&) = delete;
-        };
-        class wrong_type_request : public std::logic_error{
-        public:
-            explicit wrong_type_request( const std::string& ref) : std::logic_error(ref)
-            {}
-            explicit wrong_type_request( const char* ref) : std::logic_error(ref)
-            {}
-            wrong_type_request(const wrong_type_request&) = delete;
-            wrong_type_request& operator= (const wrong_type_request&) = delete;
-        };
-        
         //enum class with Mesh type
         enum class MeshType {irregular, rectangular};
         
@@ -151,7 +121,7 @@ namespace VField{
         const associatedType_t<p> get(const OVFParameter& ref) const
         {
             if (paramType(ref) != p)
-                throw wrong_type_request("OVFHeader::get: Tried to retrieve a wrong type!");
+                throw std::logic_error("OVFHeader::get: Tried to retrieve a wrong type!");
             
             if constexpr(p == pType::String)
                 return getString(ref);
@@ -162,7 +132,7 @@ namespace VField{
         }
         
         //check if field was set method
-        bool isSet(const OVFParameter&) const;
+        bool isSet(const OVFParameter&) const noexcept;
         
         //setters
         //thows 'overwrite_initialized' logic_error exception when overwriting a field
@@ -171,7 +141,7 @@ namespace VField{
         void set(const OVFParameter&, const associatedType_t<pType::Float>& );
         
         //unset a value
-        void unset(const OVFParameter&);
+        void unset(const OVFParameter&) noexcept;
         
         //mesh type
         MeshType getMeshType() const;

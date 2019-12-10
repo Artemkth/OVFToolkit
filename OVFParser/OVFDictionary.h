@@ -2,6 +2,8 @@
 //a self-checking dictionary of sorts for names of fields inside a file
 //requires recent version of compilers for good implementation of function signature macros
 //also requires c++17 support for lambdas being useful for constexpr initialization and such
+//TODO: look into upgrading for c++20 constexpr algorithms
+//and constexpr string/vector
 #pragma once
 #include<array>
 //file with definitions for the interfaces
@@ -120,6 +122,24 @@ namespace DictionaryHelpers{
         //casts of parameters
         static constexpr auto firstParam { static_cast<VField::OVFParameter>(minVal)};
         static constexpr auto lastParam { static_cast<VField::OVFParameter>(maxVal)};
+        //iterator for counting
+        class OVFParamIterator
+        {
+        private:
+            intType val{};
+        public:
+            constexpr explicit OVFParamIterator(const intType& vval = minVal): val(vval) {}
+            constexpr const VField::OVFParameter operator*() const
+            {return static_cast<VField::OVFParameter>(val);}
+            constexpr OVFParamIterator& operator++()
+            {val++; return *this;}
+            constexpr OVFParamIterator operator++(int)
+            {auto old = *this; ++(*this); return old;} 
+        };
+        static constexpr OVFParamIterator begin()
+        {return OVFParamIterator(minVal);}
+        static constexpr OVFParamIterator end()
+        {return OVFParamIterator(maxVal + 1u);}
     };
     
     //test instantiation
@@ -134,7 +154,7 @@ namespace DictionaryHelpers{
     constexpr auto make_array(T&& ...vals)
     {
         return std::array<
-        typename std::decay<typename std::common_type<T...>::type>::type, sizeof...(T)> {std::forward<T>(vals)...};
+            typename std::decay<typename std::common_type<T...>::type>::type, sizeof...(T)> {std::forward<T>(vals)...};
     }
     
     //predicate to check if object is element in some container
@@ -142,8 +162,8 @@ namespace DictionaryHelpers{
     template<std::size_t n>
     constexpr bool isElem(const VField::OVFParameter& value, const std::array<VField::OVFParameter, n>& array)
     {
-        for(auto it = array.begin(); it != array.end(); ++it)
-            if(*it == value)
+        for(const auto& x: array )
+            if(x == value)
                 return true;
         //return false if true hasn't been tripped
         return false;
@@ -155,8 +175,8 @@ namespace DictionaryHelpers{
     {
         //properly it would have been better to chose smaller one first, to decrease number of function calls
         //but constexpr should be inlined anyway resulting in same number of comparisons
-        for(auto it = arr1.begin(); it != arr1.end(); ++it)
-            if(isElem(*it, arr2))
+        for(const auto& x: arr1)
+            if(isElem(x, arr2))
                 return true;
         //default return 'false'
         return false;
@@ -169,8 +189,8 @@ namespace DictionaryHelpers{
         if(m > n)
             return isSubset(arr2, arr1);
         
-        for(auto it = arr1.begin(); it != arr1.end(); ++it)
-            if(!isElem(*it, arr2))
+        for(const auto& x: arr1)
+            if(!isElem(x, arr2))
                 return false;
         
         return true;
@@ -179,26 +199,26 @@ namespace DictionaryHelpers{
     template<std::size_t n>
     constexpr bool hasDuplicates(const std::array<VField::OVFParameter, n>& arr)
     {
-        for(auto it = arr.begin(); it != arr.end(); it++)
+        for(auto it = arr.begin(); it != arr.end(); ++it)
         {
-            auto it2 = it + 1;
-            while(it2 != arr.end())
-                if(*it2++ == *it)
+            for(auto it2 = it + 1; it2 != arr.end(); ++it2)
+                if(*it2 == *it)
                     return true;
         }
         return false;
     }
     template<std::size_t n, std::size_t m>
-    constexpr bool countIntersect( const std::array<VField::OVFParameter, n>& arr1,
+    constexpr std::size_t countIntersect( const std::array<VField::OVFParameter, n>& arr1,
                                    const std::array<VField::OVFParameter, m>& arr2 )
     {
         std::size_t intersect{ 0};
-        for(auto it = arr1.begin(); it != arr1.end(); ++it)
-            if(isElem(*it, arr2))
+        for(const auto& x: arr1)
+            if(isElem(x, arr2))
                 intersect++;
         return intersect;
     }
-    //array union
+
+    //array joining 
     template<std::size_t n, std::size_t m>
     constexpr auto join( const std::array<VField::OVFParameter, n>& arr1,
                                    const std::array<VField::OVFParameter, m>& arr2 )
@@ -213,6 +233,17 @@ namespace DictionaryHelpers{
             *cit++ = *it;
         
         return collector;
+    }
+    template<typename... T>
+    constexpr auto makeUnion(const T& ...params)
+    {
+        //static_assert((!hasDuplicates(params) && ...), "One of the arguments had a duplicate");
+        constexpr std::size_t totCount {(params.size() + ... + 0)}; //unary form not would exclude the case with empty pack!
+
+        std::array<VField::OVFParameter, totCount> ret {};
+        auto it = ret.begin();
+        ([&]()->void{for(const auto& x: params) *it++ = x;}(), ...);  
+        return ret;
     }
     
     //Human-readable names of parameters
@@ -255,17 +286,20 @@ namespace VField{
         struct DictionaryHelpers::Helper<static_cast<DictionaryHelpers::intType>(OVFParameter::Invalid)>;
     
     // define the parameter 'universe'
+    // in c++20 can switch to constexpr vector which also uses iterator initializing
     constexpr std::array<OVFParameter, ParamInfo::count> ParamUniverse{
         //lambda to fill the array out
         //WARNING: only works with c++17!
         //can be made to work with c++14 with definign a function to fill manually 
         []() -> auto {
             std::array<OVFParameter, ParamInfo::count> accumulator {};
+            auto param = ParamInfo::begin();
             for(auto it = accumulator.begin(); it != accumulator.end(); ++it)
-                *it = static_cast<OVFParameter>( ParamInfo::minVal + it - accumulator.begin() );
+                *it = *(param++);
             return accumulator;
         } ()
     };
+    static_assert(ParamUniverse[0] == ParamInfo::firstParam, "Checking for error by 1");
     
     //Warning: user defined syntaxis lists:
     //first floating point ones
@@ -360,6 +394,7 @@ namespace VField{
         for(const auto& x: DictionaryHelpers::ParamNames)
             if(x.first == p)
                 return x.second;
-        return "Undefined type";
+        return "Undefined token";
     }
 };
+
