@@ -423,6 +423,26 @@ namespace VField{
         
         return true;
     }
+    //return dimensionality
+    inline std::size_t VField::pntDimension() const noexcept
+    {
+        if(!isAddressable())
+            return 0u;
+        auto version = matchVersionString(Header.get<pType::String>(OVFParameter::VersionString));
+        return ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
+               ((version == OVFVersion::OVF2) ? Header.getUint(OVFParameter::Vdim) : 3);
+    }
+    //return number of points and such
+    std::size_t VField::pntCount() const noexcept
+    {
+        if(!isAddressable())
+            return 0u;
+
+        if(Header.getMeshType() == OVFHeader::MeshType::irregular)
+            return Header.getUint(OVFParameter::Pcount);
+        else
+            return Header.getUint(OVFParameter::Xnodes) * Header.getUint(OVFParameter::Ynodes) * Header.getUint(OVFParameter::Znodes);
+    }
     
     //implementation of validator from VField itself, checks both header and data
     bool VField::isValid()

@@ -1,6 +1,8 @@
 #include<algorithm>
 #include<type_traits>
 #include"VField.h"
+#include<optional>
+#include<variant>
 
 namespace VField{
     //asserting floating point type byte sizes to be compatible with those defined in OVF file standard
@@ -283,9 +285,78 @@ namespace VField{
         return *this;
     }
     //implementation of iterator creators
-    template<typename T>
-    VField::VFieldIterator<T> VField::begin<T> ()
+    template<> VField::VFieldIterator<float> VField::begin<float> ()
     {
+        if(!isAddressable())
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> farray == nullptr)
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+        return VField::VFieldIterator<float>(data -> farray, pntCount(), pntDimension());
+    }
+    template<> VField::VFieldIterator<double> VField::begin<double> ()
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> darray == nullptr)
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+        return VField::VFieldIterator<double>(data -> darray, pntCount(), pntDimension());
+    }
+    template<> VField::ConstVFieldIterator<double> VField::begin<double> () const
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> darray == nullptr)
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+        return VField::ConstVFieldIterator<double>(data -> darray, pntCount(), pntDimension());
+    }
+    template<> VField::ConstVFieldIterator<float> VField::begin<float> () const
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> farray == nullptr)
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+        return VField::ConstVFieldIterator<float>(data -> farray, pntCount(), pntDimension());
+    }
+    //and same for end
+    template<> VField::VFieldIterator<float> VField::end<float> ()
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> farray == nullptr)
+            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
+        return VField::VFieldIterator<float>(data -> farray + data -> storSize, pntCount(), pntDimension());
+    }
+    template<> VField::VFieldIterator<double> VField::end<double> ()
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> darray == nullptr)
+            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
+        return VField::VFieldIterator<double>(data -> darray + data -> storSize, pntCount(), pntDimension());
+    }
+    template<> VField::ConstVFieldIterator<double> VField::end<double> () const
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> darray == nullptr)
+            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
+        return VField::ConstVFieldIterator<double>(data -> darray + data -> storSize, pntCount(), pntDimension());
+    }
+    template<> VField::ConstVFieldIterator<float> VField::end<float> () const
+    {
+        if(!isAddressable())
+            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+
+        if (data -> farray == nullptr)
+            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
+        return VField::ConstVFieldIterator<float>(data -> farray + data -> storSize, pntCount(), pntDimension());
     }
 }
 

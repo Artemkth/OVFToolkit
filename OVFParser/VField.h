@@ -59,6 +59,10 @@ namespace VField{
             std::string ValidationReport();                                 //full report of validation results, run validation if needed
             bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
             std::string DeduceRecursively(const std::size_t& max_iter = 5); //try to deduce out all of the missing required fields
+            
+            //checking dimensions of internal data
+            std::size_t pntCount() const noexcept;
+            std::size_t pntDimension() const noexcept;
 
             //serialization using custom iterators
             template<typename T>
@@ -74,6 +78,12 @@ namespace VField{
             VFieldIterator<T> end();
             template<typename T>
             ConstVFieldIterator<T> end() const;
+            template<typename T>
+            inline ConstVFieldIterator<T> cbegin() const
+            {return begin<T>();}
+            template<typename T>
+            inline ConstVFieldIterator<T> cend() const
+            {return end<T>();}
 
             template<typename T>
             class ConstVFieldIterator{ 
@@ -88,7 +98,7 @@ namespace VField{
                     data(ref), pntCount(pcnt), pntDimension(pdim)
                 {} 
             public:
-                ConstVFieldIterator() = delete;
+                ConstVFieldIterator();
                 ~ConstVFieldIterator() = default;
                 //now to iterating, yay!
                 ConstVFieldIterator& operator++() noexcept
