@@ -90,16 +90,19 @@ namespace VField{
             private:
                 using indexType = associatedType_t<pType::Uint>;
                 //addressing bounds
-                const indexType pntCount{};
-                const indexType pntDimension{};
+                indexType pntCount{};
+                indexType pntDimension{};
                 //iterator position
                 T* data {nullptr};
-                explicit ConstVFieldIterator(T* ref, const indexType& pcnt, const indexType& pdim): 
-                    data(ref), pntCount(pcnt), pntDimension(pdim)
+                const VField* parent {nullptr};
+                explicit ConstVFieldIterator(VField* par, T* ref, const indexType& pcnt, const indexType& pdim): 
+                    parent(par), data(ref), pntCount(pcnt), pntDimension(pdim)
                 {} 
             public:
-                ConstVFieldIterator();
+                ConstVFieldIterator(const VField* ref = nullptr): parent(ref) {}
                 ~ConstVFieldIterator() = default;
+                ConstVFieldIterator(const ConstVFieldIterator&) = default;
+                ConstVFieldIterator& operator= (const ConstVFieldIterator&) = default;
                 //now to iterating, yay!
                 ConstVFieldIterator& operator++() noexcept
                 {data+=pntDimension; return *this;}
@@ -118,7 +121,11 @@ namespace VField{
                 friend ConstVFieldIterator operator-(ConstVFieldIterator it, const std::size_t step) noexcept
                 {it-=step; return it;}
                 long int operator-(const ConstVFieldIterator& ref) const noexcept 
-                {return  (data - ref.data)/pntDimension;};
+                {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;};
+                bool operator == (const ConstVFieldIterator& ref) const noexcept
+                {if(parent != ref.parent) return false; return data == ref.data;}
+                bool operator != (const ConstVFieldIterator& ref) const noexcept
+                {if(parent != ref.parent) return true; return data != ref.data;}
                 //dereferencing stuff
                 const T* operator*() const noexcept                           //dereferencing a list of points
                 { return data; }
@@ -136,17 +143,21 @@ namespace VField{
             private:
                 using indexType = associatedType_t<pType::Uint>;
                 //addressing bounds
-                const indexType pntCount{};
-                const indexType pntDimension{};
+                indexType pntCount{};
+                indexType pntDimension{};
                 //iterator position
                 T* data {nullptr};
-                explicit VFieldIterator(T* ref, const indexType& pcnt, const indexType& pdim): 
-                    data(ref), pntCount(pcnt), pntDimension(pdim)
+                const VField* parent {nullptr};
+                explicit VFieldIterator(const VField* par,T* ref, const indexType& pcnt, const indexType& pdim): 
+                    parent(par), data(ref), pntCount(pcnt), pntDimension(pdim)
                 {} 
             public:
-                VFieldIterator() = delete;
+                VFieldIterator(const VField* ref = nullptr): parent(ref) {}
                 ~VFieldIterator() = default;
+                VFieldIterator(const VFieldIterator&) = default;
+                VFieldIterator& operator= (const VFieldIterator&) = default;
 
+                //now to iterating, yay!
                 VFieldIterator& operator++() noexcept
                 {data+=pntDimension; return *this;}
                 VFieldIterator operator++(int) noexcept
@@ -164,10 +175,15 @@ namespace VField{
                 friend VFieldIterator operator-(VFieldIterator it, const std::size_t step) noexcept
                 {it-=step; return it;}
                 long int operator-(const VFieldIterator& ref) const noexcept 
-                {return  (data - ref.data)/pntDimension;};
+                {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;};
+                bool operator == (const VFieldIterator& ref) const noexcept
+                {if(parent != ref.parent) return false; return data == ref.data;}
+                bool operator != (const VFieldIterator& ref) const noexcept
+                {if(parent != ref.parent) return true; return data != ref.data;}
+                //dereferencing stuff
 
                 operator ConstVFieldIterator<T>() const noexcept
-                { return ConstVFieldIterator(data, pntCount, pntDimension); }
+                { return ConstVFieldIterator(parent, data, pntCount, pntDimension); }
 
                 T* operator*() noexcept                           //dereferencing a list of points
                 { return data; }

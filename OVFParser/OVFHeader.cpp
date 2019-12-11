@@ -151,14 +151,14 @@ namespace VField{
         switch(paramIndex(refP))
         {
             case(pType::String):
-                return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[refP]) == std::nullopt;
+                return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[refP]) != std::nullopt;
             case(pType::Uint):
-                return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[refP]) == std::nullopt;
+                return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[refP]) != std::nullopt;
             case(pType::Float):
-                return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[refP]) == std::nullopt;
+                return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[refP]) != std::nullopt;
             case(pType::Other):
                 if(refP == OVFParameter::Mtype)
-                    return data->meshType == std::nullopt;
+                    return data->meshType != std::nullopt;
             default:
                 return false;
         }

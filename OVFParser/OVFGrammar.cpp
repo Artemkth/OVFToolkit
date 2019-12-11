@@ -579,6 +579,65 @@ namespace VField{
         return sqrt(ret);
     }
     
+    //limits for a point
+    inline sub_pair_t<pType::Float> coordMin( const VField& ref, const std::size_t& coordIndex)
+    {
+        //first check if data is accessible, rule doesn't work without it
+        if(!ref.isAddressable() || coordIndex > 2)
+            return {false, 0.};
+        if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
+        {
+            switch(coordIndex){
+                case(0):
+                    return {true, ref.Header.getFloat(OVFParameter::Xbase) - ref.Header.getFloat(OVFParameter::Xstep)/2};
+                case(1):
+                    return {true, ref.Header.getFloat(OVFParameter::Ybase) - ref.Header.getFloat(OVFParameter::Ystep)/2};
+                case(2):
+                    return {true, ref.Header.getFloat(OVFParameter::Zbase) - ref.Header.getFloat(OVFParameter::Zstep)/2};
+                default:
+                    return {false, 0.};
+            }
+        }
+
+        //else need to calculate it for non-rectangular grid :'(
+        if(!ref.Header.isSet(OVFParameter::VersionString))
+            return {false, 0};
+        if(ref.curDataInternalSize() == 4)
+            return {true, std::min_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2) {return arr1[coordIndex] < arr2[coordIndex]; })[coordIndex]};
+        else if(ref.curDataInternalSize() == 8)
+            return {true, std::min_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2) {return arr1[coordIndex] < arr2[coordIndex]; })[coordIndex]};
+        return{false, 0};
+    }
+
+    inline sub_pair_t<pType::Float> coordMax( const VField& ref, const std::size_t& coordIndex)
+    {
+        //first check if data is accessible, rule doesn't work without it
+        if(!ref.isAddressable() || coordIndex > 2)
+            return {false, 0.};
+        if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
+        {
+            switch(coordIndex){
+                case(0):
+                    return {true, ref.Header.getFloat(OVFParameter::Xbase) + ref.Header.getFloat(OVFParameter::Xstep) * (0.5 + ref.Header.getUint(OVFParameter::Xnodes))};
+                case(1):
+                    return {true, ref.Header.getFloat(OVFParameter::Ybase) + ref.Header.getFloat(OVFParameter::Ystep) * (0.5 + ref.Header.getUint(OVFParameter::Ynodes))};
+                case(2):
+                    return {true, ref.Header.getFloat(OVFParameter::Zbase) + ref.Header.getFloat(OVFParameter::Zstep) * (0.5 + ref.Header.getUint(OVFParameter::Znodes))};
+                default:
+                    return {false, 0.};
+            }
+        }
+
+        //else need to calculate it for non-rectangular grid :'(
+        if(!ref.Header.isSet(OVFParameter::VersionString))
+            return {false, 0};
+        if(ref.curDataInternalSize() == 4)
+            return {true, std::max_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2) {return arr1[coordIndex] > arr2[coordIndex]; })[coordIndex]};
+        else if(ref.curDataInternalSize() == 8)
+            return {true, std::max_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2) {return arr1[coordIndex] > arr2[coordIndex]; })[coordIndex]};
+        return{false, 0};
+    }
+    
     const std::map< OVFParameter, sub_func_t<pType::Float> > FPDeduction{
         //TODO: look into templating those!
         {
@@ -600,33 +659,12 @@ namespace VField{
                 const std::size_t offset {
                     static_cast<std::size_t>(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular ? 0 : 3)
                 };
-                const std::size_t vCount {
-                    ref.curDataPoints()
-                };
+
                 if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    //get the first point
-                    minVal = norm(data + offset, val_dim);
-                    for(std::size_t addr = val_dim + 2 * offset; addr < vCount; addr += (val_dim + offset))
-                    {
-                        auto val = norm(data + addr, val_dim);
-                        if(val < minVal)
-                            minVal = val;
-                    }
-                }
+                    return {true, norm(*std::min_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2){return norm(arr1+offset, val_dim) < norm(arr2+offset, val_dim);}) + offset, val_dim)};
                 else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    minVal = norm(data + offset, val_dim);
-                    for(std::size_t addr = val_dim + 2 * offset; addr < vCount; addr += (val_dim + offset))
-                    {
-                        auto val = norm(data + addr, val_dim);
-                        if(val < minVal)
-                            minVal = val;
-                    }
-                }                
-                return {true, minVal};
+                    return {true, norm(*std::min_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2){return norm(arr1+offset, val_dim) < norm(arr2+offset, val_dim);}) + offset, val_dim)};
+                return {false, minVal};
             }
         },
         {
@@ -648,295 +686,47 @@ namespace VField{
                 const std::size_t offset {
                     static_cast<std::size_t>(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular ? 0 : 3)
                 };
-                const std::size_t vCount {
-                    ref.curDataPoints()
-                };
                 if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    //get the first point
-                    maxVal = norm(data + offset, val_dim);
-                    for(std::size_t addr = val_dim + 2 * offset; addr < vCount; addr += (val_dim + offset))
-                    {
-                        auto val = norm(data + addr, val_dim);
-                        if(val > maxVal)
-                            maxVal = val;
-                    }
-                }
+                    return {true, norm(*std::max_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2){return norm(arr1+offset, val_dim) > norm(arr2+offset, val_dim);}) + offset, val_dim)};
                 else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    maxVal = norm(data + offset, val_dim);
-                    for(std::size_t addr = val_dim + 2 * offset; addr < vCount; addr += (val_dim + offset))
-                    {
-                        auto val = norm(data + addr, val_dim);
-                        if(val > maxVal)
-                            maxVal = val;
-                    }
-                }                
-                return {true, maxVal};
+                    return {true, norm(*std::max_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2){return norm(arr1+offset, val_dim) > norm(arr2+offset, val_dim);}) + offset, val_dim)};
+                return {false, maxVal};
             }
         },
         {
             OVFParameter::Xmin,
             [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Uint> minVal{};
-                //first check if data is accessible, rule doesn't work without it
-                if(!ref.isAddressable())
-                    return {false, minVal};
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
-                    return {true, ref.Header.getFloat(OVFParameter::Xbase) - ref.Header.getFloat(OVFParameter::Xstep)/2};
-                
-                //else need to calculate it for non-rectangular grid :'(
-                if(!ref.Header.isSet(OVFParameter::VersionString))
-                    return {false, minVal};
-                std::size_t dim {3};
-                if( matchVersionString(ref.Header.getString(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
-                const std::size_t pcount{
-                    ref.Header.getUint(OVFParameter::Pcount)
-                };
-                if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    minVal = *(data + 0);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 0);
-                        if(val < minVal)
-                           minVal = val; 
-                    }
-                }
-                else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    minVal = *(data + 0);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 0);
-                        if(val < minVal)
-                           minVal = val; 
-                    }
-                }
-                return{true, minVal};
+                return coordMin(ref, 0);
             }
         },
         {
             OVFParameter::Ymin,
             [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Uint> minVal{};
-                if(!ref.isAddressable())
-                    return {false, minVal};
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
-                    return {true, ref.Header.getFloat(OVFParameter::Ybase) - ref.Header.getFloat(OVFParameter::Ystep)/2};
-                
-                if(!ref.Header.isSet(OVFParameter::VersionString))
-                    return {false, minVal};
-                std::size_t dim {3};
-                if( matchVersionString(ref.Header.getString(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
-                const std::size_t pcount{
-                    ref.Header.getUint(OVFParameter::Pcount)
-                };
-                if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    minVal = *(data + 1);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 1);
-                        if(val < minVal)
-                           minVal = val; 
-                    }
-                }
-                else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    minVal = *(data + 1);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 1);
-                        if(val < minVal)
-                           minVal = val; 
-                    }
-                }
-                return{true, minVal};
+                return coordMin(ref, 1);
             }
         },
         {
             OVFParameter::Zmin,
             [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Uint> minVal{};
-                //first check if data is accessible, rule doesn't work without it
-                if(!ref.isAddressable())
-                    return {false, minVal};
-                //getting the value is trivial for rectangular grids
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
-                    return {true, ref.Header.getFloat(OVFParameter::Zbase) - ref.Header.getFloat(OVFParameter::Zstep)/2};
-                
-                if(!ref.Header.isSet(OVFParameter::VersionString))
-                    return {false, minVal};
-                std::size_t dim {3};
-                if( matchVersionString(ref.Header.getString(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
-                const std::size_t pcount{
-                    ref.Header.getUint(OVFParameter::Pcount)
-                };
-                if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    minVal = *(data + 2);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 2);
-                        if(val < minVal)
-                           minVal = val; 
-                    }
-                }
-                else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    minVal = *(data + 2);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 2);
-                        if(val < minVal)
-                           minVal = val; 
-                    }
-                }
-                return{true, minVal};
+                return coordMin(ref, 2);
             }
         },
         {
             OVFParameter::Xmax,
             [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Uint> maxVal{};
-                //first check if data is accessible, rule doesn't work without it
-                if(!ref.isAddressable())
-                    return {false, maxVal};
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
-                    return {true, ref.Header.getFloat(OVFParameter::Xbase) + ref.Header.getFloat(OVFParameter::Xstep) * (0.5 + ref.Header.getUint(OVFParameter::Xnodes))};
-                
-                //else need to calculate it for non-rectangular grid :'(
-                if(!ref.Header.isSet(OVFParameter::VersionString))
-                    return {false, maxVal};
-                std::size_t dim {3};
-                if( matchVersionString(ref.Header.getString(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
-                const std::size_t pcount{
-                    ref.Header.getUint(OVFParameter::Pcount)
-                };
-                if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    maxVal = *(data + 0);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 0);
-                        if(val > maxVal)
-                           maxVal = val; 
-                    }
-                }
-                else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    maxVal = *(data + 0);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 0);
-                        if(val > maxVal)
-                           maxVal = val; 
-                    }
-                }
-                return{true, maxVal};
+                return coordMax(ref, 0);
             }
         },
         {
             OVFParameter::Ymax,
             [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Uint> maxVal{};
-                //first check if data is accessible, rule doesn't work without it
-                if(!ref.isAddressable())
-                    return {false, maxVal};
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
-                    return {true, ref.Header.getFloat(OVFParameter::Ybase) + ref.Header.getFloat(OVFParameter::Ystep) * (0.5 + ref.Header.getUint(OVFParameter::Ynodes))};
-                
-                //else need to calculate it for non-rectangular grid :'(
-                if(!ref.Header.isSet(OVFParameter::VersionString))
-                    return {false, maxVal};
-                std::size_t dim {3};
-                if( matchVersionString(ref.Header.getString(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
-                const std::size_t pcount{
-                    ref.Header.getUint(OVFParameter::Pcount)
-                };
-                if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    maxVal = *(data + 1);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 1);
-                        if(val > maxVal)
-                           maxVal = val; 
-                    }
-                }
-                else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    maxVal = *(data + 1);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 1);
-                        if(val > maxVal)
-                           maxVal = val; 
-                    }
-                }
-                return{true, maxVal};
+                return coordMax(ref, 1);
             }
         },
         {
             OVFParameter::Zmax,
             [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Uint> maxVal{};
-                //first check if data is accessible, rule doesn't work without it
-                if(!ref.isAddressable())
-                    return {false, maxVal};
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
-                    return {true, ref.Header.getFloat(OVFParameter::Zbase) + ref.Header.getFloat(OVFParameter::Zstep) * (0.5 + ref.Header.getUint(OVFParameter::Znodes))};
-                
-                //else need to calculate it for non-rectangular grid :'(
-                if(!ref.Header.isSet(OVFParameter::VersionString))
-                    return {false, maxVal};
-                std::size_t dim {3};
-                if( matchVersionString(ref.Header.getString(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
-                const std::size_t pcount{
-                    ref.Header.getUint(OVFParameter::Pcount)
-                };
-                if(ref.curDataInternalSize() == 4)
-                {
-                    auto data = ref.getData<float>();
-                    maxVal = *(data + 2);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 2);
-                        if(val > maxVal)
-                           maxVal = val; 
-                    }
-                }
-                else if(ref.curDataInternalSize() == 8)
-                {
-                    auto data = ref.getData<double>();
-                    maxVal = *(data + 2);
-                    for(std::size_t i = 1; i < pcount; i++)
-                    {
-                        auto val = *(data + (3+dim) * i + 2);
-                        if(val > maxVal)
-                           maxVal = val; 
-                    }
-                }
-                return{true, maxVal};
+                return coordMax(ref, 2);
             }
         }
     };
