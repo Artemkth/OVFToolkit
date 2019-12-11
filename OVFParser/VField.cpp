@@ -292,7 +292,7 @@ namespace VField{
 
         if (data -> farray == nullptr)
             throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<float>(data -> farray, pntCount(), pntDimension());
+        return VField::VFieldIterator<float>(this, data -> farray, pntCount(), pntDimension());
     }
     template<> VField::VFieldIterator<double> VField::begin<double> ()
     {
@@ -301,7 +301,7 @@ namespace VField{
 
         if (data -> darray == nullptr)
             throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<double>(data -> darray, pntCount(), pntDimension());
+        return VField::VFieldIterator<double>(this, data -> darray, pntCount(), pntDimension());
     }
     template<> VField::ConstVFieldIterator<double> VField::begin<double> () const
     {
@@ -310,7 +310,7 @@ namespace VField{
 
         if (data -> darray == nullptr)
             throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<double>(data -> darray, pntCount(), pntDimension());
+        return VField::ConstVFieldIterator<double>(this, data -> darray, pntCount(), pntDimension());
     }
     template<> VField::ConstVFieldIterator<float> VField::begin<float> () const
     {
@@ -319,7 +319,7 @@ namespace VField{
 
         if (data -> farray == nullptr)
             throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<float>(data -> farray, pntCount(), pntDimension());
+        return VField::ConstVFieldIterator<float>(this, data -> farray, pntCount(), pntDimension());
     }
     //and same for end
     template<> VField::VFieldIterator<float> VField::end<float> ()
@@ -329,7 +329,7 @@ namespace VField{
 
         if (data -> farray == nullptr)
             throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<float>(data -> farray + data -> storSize, pntCount(), pntDimension());
+        return VField::VFieldIterator<float>(this, data -> farray + data -> storSize, pntCount(), pntDimension());
     }
     template<> VField::VFieldIterator<double> VField::end<double> ()
     {
@@ -338,7 +338,7 @@ namespace VField{
 
         if (data -> darray == nullptr)
             throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<double>(data -> darray + data -> storSize, pntCount(), pntDimension());
+        return VField::VFieldIterator<double>(this, data -> darray + data -> storSize, pntCount(), pntDimension());
     }
     template<> VField::ConstVFieldIterator<double> VField::end<double> () const
     {
@@ -347,7 +347,7 @@ namespace VField{
 
         if (data -> darray == nullptr)
             throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<double>(data -> darray + data -> storSize, pntCount(), pntDimension());
+        return VField::ConstVFieldIterator<double>(this, data -> darray + data -> storSize, pntCount(), pntDimension());
     }
     template<> VField::ConstVFieldIterator<float> VField::end<float> () const
     {
@@ -356,7 +356,7 @@ namespace VField{
 
         if (data -> farray == nullptr)
             throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<float>(data -> farray + data -> storSize, pntCount(), pntDimension());
+        return VField::ConstVFieldIterator<float>(this, data -> farray + data -> storSize, pntCount(), pntDimension());
     }
 }
 

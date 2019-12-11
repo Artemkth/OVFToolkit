@@ -221,5 +221,33 @@ namespace VField{
                 }
         }
     }
+    //interfaces through bracket operator
+    template<> associatedType_t<pType::Uint>& OVFHeader::operator[]<associatedType_t<pType::Uint>> (const OVFParameter& p) & noexcept
+    {
+        if(!isSet(p))
+        {
+            associatedType_t<pType::Uint> defValue{};
+            set(p, defValue);
+        }
+        return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[p]).value();
+    }
+    template<> associatedType_t<pType::Float>& OVFHeader::operator[]<associatedType_t<pType::Float>> (const OVFParameter& p) & noexcept
+    {
+        if(!isSet(p))
+        {
+            associatedType_t<pType::Float> defValue{};
+            set(p, defValue);
+        }
+        return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).value();
+    }
+    template<> associatedType_t<pType::String>& OVFHeader::operator[]<associatedType_t<pType::String>> (const OVFParameter& p) & noexcept
+    {
+        if(!isSet(p))
+        {
+            associatedType_t<pType::String> defValue{};
+            set(p, defValue);
+        }
+        return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[p]).value();
+    }
 }
 

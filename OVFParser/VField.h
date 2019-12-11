@@ -33,6 +33,9 @@ namespace VField{
             bool isDataPresent() const; 
             //clearing out the storage
             void clearData();
+            //initialize it empty
+            template<typename T>
+            void initData(const std::size_t& );
             
             //data access methods
             //setting data to whatever, 
@@ -86,7 +89,7 @@ namespace VField{
             {return end<T>();}
 
             template<typename T>
-            class ConstVFieldIterator{ 
+            class ConstVFieldIterator{
             private:
                 using indexType = associatedType_t<pType::Uint>;
                 //addressing bounds
@@ -95,7 +98,7 @@ namespace VField{
                 //iterator position
                 T* data {nullptr};
                 const VField* parent {nullptr};
-                explicit ConstVFieldIterator(VField* par, T* ref, const indexType& pcnt, const indexType& pdim): 
+                explicit ConstVFieldIterator(const VField* par, T* ref, const indexType& pcnt, const indexType& pdim): 
                     parent(par), data(ref), pntCount(pcnt), pntDimension(pdim)
                 {} 
             public:
@@ -216,4 +219,14 @@ namespace VField{
     template<> VField::VFieldIterator<double> VField::end<double> (); 
     template<> VField::ConstVFieldIterator<float> VField::end<float> () const; 
     template<> VField::ConstVFieldIterator<double> VField::end<double> () const; 
+    //instantiation of empty data setter
+    template<> void VField::initData<float>(const std::size_t& size)
+    {
+        setData(new float[size], size);
+    }
+    template<> void VField::initData<double>(const std::size_t& size)
+    {
+        setData(new double[size], size);
+    }
 }
+

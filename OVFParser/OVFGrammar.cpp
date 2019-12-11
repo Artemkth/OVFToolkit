@@ -695,39 +695,27 @@ namespace VField{
         },
         {
             OVFParameter::Xmin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                return coordMin(ref, 0);
-            }
+            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMin(ref, 0); }
         },
         {
             OVFParameter::Ymin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                return coordMin(ref, 1);
-            }
+            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMin(ref, 1); }
         },
         {
             OVFParameter::Zmin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                return coordMin(ref, 2);
-            }
+            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMin(ref, 2); }
         },
         {
             OVFParameter::Xmax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                return coordMax(ref, 0);
-            }
+            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMax(ref, 0); }
         },
         {
             OVFParameter::Ymax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                return coordMax(ref, 1);
-            }
+            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMax(ref, 1); }
         },
         {
             OVFParameter::Zmax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                return coordMax(ref, 2);
-            }
+            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMax(ref, 2); }
         }
     };
     const std::map< OVFParameter, sub_func_t<pType::Uint> > UINTDeduction{
@@ -758,6 +746,7 @@ namespace VField{
     //using rulesets given:
     //Deduction:    FPDeduction     UINTDeduction       StringDeduction
     //defaults:     FPDefaults      UINTDefaults        StringDefaults
+        
     bool VField::DeduceField(const OVFParameter& p, bool UseDefault)
     {        
         switch(paramIndex(p))
