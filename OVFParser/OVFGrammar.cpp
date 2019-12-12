@@ -423,25 +423,33 @@ namespace VField{
         
         return true;
     }
+    //and same for weekly addressable, i.e. there is enough data to traverse internal array, but it ends abruptly
+    bool VField::isWeaklyAddressable() const
+    {
+        if(!Header.isSet(OVFParameter::VersionString))
+            return false;
+        auto version = matchVersionString(Header.get<pType::String>(OVFParameter::VersionString));
+        if(curDataPoints() == 0 || version == OVFVersion::Unknown || !Header.isSet(OVFParameter::Mtype) || (version == OVFVersion::OVF2 && !Header.isSet(OVFParameter::Vdim)) )
+            return false;
+        const auto dim = ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
+                         ((version == OVFVersion::OVF1) ? 3 : Header.getUint(OVFParameter::Vdim));
+        return curDataPoints() % dim == 0;
+    }
     //return dimensionality
     inline std::size_t VField::pntDimension() const noexcept
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             return 0u;
         auto version = matchVersionString(Header.get<pType::String>(OVFParameter::VersionString));
         return ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
-               ((version == OVFVersion::OVF2) ? Header.getUint(OVFParameter::Vdim) : 3);
+               ((version == OVFVersion::OVF1) ? 3 : Header.getUint(OVFParameter::Vdim));
     }
     //return number of points and such
     std::size_t VField::pntCount() const noexcept
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             return 0u;
-
-        if(Header.getMeshType() == OVFHeader::MeshType::irregular)
-            return Header.getUint(OVFParameter::Pcount);
-        else
-            return Header.getUint(OVFParameter::Xnodes) * Header.getUint(OVFParameter::Ynodes) * Header.getUint(OVFParameter::Znodes);
+        return curDataPoints() / pntDimension(); //guaranteed to have 0 remainder
     }
     
     //implementation of validator from VField itself, checks both header and data

@@ -136,6 +136,20 @@ namespace VField{
             *this = std::move(StorageArray(buffer, storSize));
         }
     }
+    
+    //outside conversion
+    template<> void VField::convert<float>()
+    {
+        if(!isDataPresent() || data->farray == nullptr)
+            return;
+        data->convert();
+    }
+    template<> void VField::convert<double>()
+    {
+        if(!isDataPresent() || data->darray == nullptr)
+            return;
+        data->convert();
+    }
 
     std::size_t VField::curDataInternalSize() const
     {

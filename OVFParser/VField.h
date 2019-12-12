@@ -53,11 +53,14 @@ namespace VField{
             //get a copy
             template <typename T>
             T* getDataCopy() const;
-            //getting a data point method is redundant since you can do it on your own
-            
+            //convert to specified type 
+            template <typename T>
+            void convert();
+
             //interfaces for validation and deduction
             //defined and realized in OVFGrammar.cpp!
             bool isAddressable() const;                                     //validate if there is enough information to traverse internal array
+            bool isWeaklyAddressable() const;                               //validate if there is *just* enough information to traverse internal array
             bool isValid();                                                 //check if vector field is in spec
             std::string ValidationReport();                                 //full report of validation results, run validation if needed
             bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
@@ -228,5 +231,8 @@ namespace VField{
     {
         setData(new double[size], size);
     }
+    //instantiation of conversions
+    template<> void VField::convert<float>();
+    template<> void VField::convert<double>();
 }
 
