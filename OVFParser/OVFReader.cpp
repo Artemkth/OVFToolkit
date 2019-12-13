@@ -122,8 +122,15 @@ namespace VField{
     static_assert(sizeof(1.0) == sizeof(double), "Double literals function unexpectedly");
     //and just for kicks
     static_assert(sizeof(1.0f) == sizeof(float), "Fload literals function unexpectedly");
+
+    //shared flags
+    constexpr auto commonFlags = std::regex_constants::icase |          //ignore case while matching
+                                 std::regex_constants::ECMAScript |
+                                 std::regex_constants::optimize;        //optimize for speed, slower construction
     
     //and then regex generators
-    
+    constexpr std::regex regexToken(const std::string& token)
+    {
+    }
 }
 
