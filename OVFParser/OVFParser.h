@@ -36,9 +36,9 @@ namespace VField{
         //general file i/o methods
         //basic read/write
         //read a file, prefetch indicated that only positions for data should be recovered
-        bool read(const std::string&, bool prefetch = true) noexcept;
+        bool read(const pathType&, bool prefetch = true) noexcept;
         //write a file from data present
-        bool write(const std::string&) const noexcept;   //doesn't change internals, only changes host FS stuff
+        bool write(const pathType&) const noexcept;   //doesn't change internals, only changes host FS stuff
         
         //number of segments from the file
         //data access
