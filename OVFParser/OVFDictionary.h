@@ -331,7 +331,6 @@ namespace VField{
     //string fields
     constexpr auto StringParamList = DictionaryHelpers::make_array (
             OVFParameter::VersionString,
-            OVFParameter::Comment,
             OVFParameter::Title,
             OVFParameter::Desc,
             OVFParameter::Munit,
@@ -346,6 +345,7 @@ namespace VField{
             OVFParameter::Segcnt,
             OVFParameter::Mtype,
             OVFParameter::Empty,
+            OVFParameter::Comment,
             OVFParameter::Unknown,
             OVFParameter::Invalid
             );

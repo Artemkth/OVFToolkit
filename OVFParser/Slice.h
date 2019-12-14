@@ -45,5 +45,9 @@ namespace VField{
                          const pos_type& end_   = slice_pnt::end,
                          T stride_ = 1 ) noexcept: begin(begin_), end(end_), stride(stride_)
         {}
+        constexpr bool operator== (const slice& ref) const
+        {return begin == ref.begin && end == ref.end && stride == ref.stride; }
+        constexpr bool operator!= (const slice& ref) const
+        {return !(*this == ref);}
     };
 }

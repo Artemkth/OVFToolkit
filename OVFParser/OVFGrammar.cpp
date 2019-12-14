@@ -249,6 +249,7 @@ namespace VField{
             
             return {true, prefix + "SUCCESS", {}};
         }
+        //TODO: implement checking for version string having same mesh type specified!
     };
     //then rules for OVF2
     const auto OVF2Rules = std::vector<validator>{
@@ -381,6 +382,7 @@ namespace VField{
             //no need to check for uniqueness before, initial array satisfies it by being empty
             appendUnique(problematicVars, std::get<2>(checkResult));
         }
+        //TODO: add verification that header has the same mesh type as file title for OVF1!
         return{ valid, log, problematicVars};
     }
     

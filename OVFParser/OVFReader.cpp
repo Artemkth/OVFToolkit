@@ -7,10 +7,13 @@
 #include<array>
 #include<regex>
 #include<algorithm>
+#include<execution>
 #include<optional>
 #include"OVFParser.h"
 #include"OVFVersion.h"
 #include"OVFDictionary.h"
+//boost endian conversion library setup
+#include<boost/endian/conversion.hpp>
 
 namespace VField{
     //first internal data of OVFReader
@@ -201,13 +204,13 @@ namespace VField{
     template<> inline std::optional<associatedType_t<pType::String>> ParseToken<pType::String>(const std::string& str)
     { return str; }
 
+    constexpr std::size_t BadBlockMax {5};
     //reading from file
     bool VFieldFile::read( const pathType& path, bool prefetch) noexcept
     {
         //reset the log
         clearLog();
 
-        constexpr std::size_t BadBlockMax {5};
         constexpr std::array<OVFParameter, 5> TopLevelTags{
             OVFParameter::Open,
             OVFParameter::Close,
@@ -216,7 +219,7 @@ namespace VField{
             OVFParameter::Comment
         }; 
         //first try to open the file
-        std::ifstream file(path);
+        std::ifstream file(path, std::ios_base::binary);//TODO: check if opening it as binary from the start messes with getline
         if(!file.good())
         {
             logMessage((std::string)"VFieldFile::read: Error opening a file: " + path);
@@ -416,7 +419,7 @@ namespace VField{
         {
             logMessage("VFieldFile::read: Too many invalid lines in a row, suspending further output");
             logMessage((std::string)"VFieldFile::read: Block of bad lines ended at line #" +
-                    std::to_string(line_cnt));
+                    std::to_string(line_cnt) + " (EOF)");
         }
         //bad bit error is handled inside the loop, reaching here necesarily means that EOF occured
         if( SegmentOpened || WaitingForData )
@@ -429,6 +432,259 @@ namespace VField{
         return data -> log == "";
     }
 
-    //helper method to set a field
+    //reading 
+    std::string readHeader(std::istream& file, std::size_t& line_cnt, OVFHeader& head)
+    {
+        constexpr auto ValidParams = DictionaryHelpers::makeUnion(UINTParamList, FPParamList, StringParamList);
+        constexpr auto AllowedOtherParams = DictionaryHelpers::make_array(
+                    OVFParameter::Open,
+                    OVFParameter::Close,
+                    OVFParameter::Mtype,
+                    OVFParameter::Empty,
+                    OVFParameter::Comment
+                );
+
+        std::string log{""};
+        std::string buffer{""};
+        std::getline(file, buffer);
+        if(!file.good() || !std::regex_match(buffer, regexTokenValue("Begin", "Header")) )
+            return "readHeader: failed to find beginning of the header!";
+
+        //otherwise start the main loop
+        std::size_t BadLineCnt{0};
+        while(file.good())
+        {
+            std::getline(file, buffer); line_cnt++;
+            if(!file)
+            {
+                if(log != "") log += "\n";
+                log += (std::string)"readHeader: " + ((file.rdstate()&std::ios_base::badbit)? "Unr" : "R") +
+                       "ecoverable error occured while reading line #" + std::to_string(line_cnt) + "aborting!";
+                return log; 
+            }
+
+            //first check if value is a normal value type
+            std::smatch res;
+            auto it = std::find_if(std::execution::seq, ValidParams.begin(), ValidParams.end(), 
+                                   [&](const OVFParameter& p){return std::regex_match(buffer, res, TokenMap.at(p));});
+            if(it != ValidParams.end())
+            {
+                //handling:
+                //first check if parameter is already set
+                if(head.isSet(*it) && *it != OVFParameter::Desc)
+                {
+                    if(log != "") log+= "\n";
+                    log += (std::string)"readHeader: found a duplicate value of type: " + ParameterName(*it) +
+                        "at line #" + std::to_string(line_cnt) + ", ignoring!";
+                    continue;
+                }
+                //else set the value
+                switch(paramIndex(*it))
+                {
+                case(pType::Uint):
+                    {
+                        auto pval = ParseToken<pType::Uint>(res[1].str());
+                        if(pval == std::nullopt)
+                        {
+                            if(log != "") log+= "\n";
+                            log+= (std::string)"readHeader: Error occured while parsing the unsigned integer token: \"" +
+                                ParameterName(*it) + "\" at line #" + std::to_string(line_cnt)+ ", line content:\n" + buffer;
+                            break;
+                        }
+                        head.set(*it, pval.value());
+                    }
+                    break;
+                case(pType::Float):
+                    {
+                        auto pval = ParseToken<pType::Float>(res[1].str());
+                        if(pval == std::nullopt)
+                        {
+                            if(log != "") log+= "\n";
+                            log+= (std::string)"readHeader: Error occured while parsing the floating point token: \"" +
+                                ParameterName(*it) + "\" at line #" + std::to_string(line_cnt)+ ", line content:\n" + buffer;
+                            break;
+                        }
+                        head.set(*it, pval.value());
+                    }
+                    break;
+                case(pType::String):
+                    if(*it == OVFParameter::Desc)
+                    {
+                        head.operator[]<std::string>(OVFParameter::Desc) += "\n";
+                        head.operator[]<std::string>(OVFParameter::Desc) += res[1].str();
+                        break;
+                    }
+                    head.set(*it, res[1].str());
+                default:
+                    break;
+                }
+                continue;
+            }
+
+            //else try to match for one of the allowed other parameters
+            it = std::find_if(std::execution::seq, AllowedOtherParams.begin(), AllowedOtherParams.end(),
+                    [&](const OVFParameter& p){return std::regex_match(buffer, res, TokenMap.at(p));});
+
+            if(it == AllowedOtherParams.end())
+            {
+                if(log != "") log += "\n";
+                log+=(std::string)"readHeader: Encountered unexpected line # " + 
+                        std::to_string(line_cnt) + ": ";
+                if(++BadLineCnt < BadBlockMax) //truncate output if bad lines come one after another(like misalinged reading frame)
+                {
+                   log+= "\n"; 
+                   log+=(std::string)"\t" + buffer.substr(0, 20) + "...";
+                }
+            }
+            
+            if( BadLineCnt != 0)
+            {
+                if( BadLineCnt >= BadBlockMax )
+                {
+                    log+= "\nreadHeader: Too many invalid lines in a row, suspending further output";
+                    log+= "\nreadHeader: Block of bad lines ended at line #" +
+                            std::to_string(line_cnt - 1);
+                }
+                BadLineCnt = 0;
+            }
+            //else can again switch on a type of parameter
+            switch(*it)
+            {
+            case(OVFParameter::Open):
+                if(log != "") log += "\n";
+                log+= (std::string)"readHeader: opening a section prematurely at a line #" + std::to_string(line_cnt) +
+                    ":\n" + buffer;
+                break;
+            case(OVFParameter::Close):
+                if(std::regex_match(buffer, regexTokenValue("End", "Header")))
+                {
+                    if( BadLineCnt >= BadBlockMax )
+                    {
+                        log+="VFieldFile::read: Too many invalid lines in a row, suspending further output";
+                        log+=(std::string)"VFieldFile::read: Block of bad lines ended at line #" +
+                            std::to_string(line_cnt) + " (end of header)";
+                    }
+                    return log; //successfully finished reading the header
+                }
+                //else it is an error and should be reported
+                if(log != "") log += "\n";
+                log+= (std::string)"readHeader: found premature close of a section at line #" + std::to_string(line_cnt) +
+                    ":\n" + buffer;
+            case(OVFParameter::Mtype):
+                if(head.isSet(OVFParameter::Mtype))
+                {
+                    if(log != "") log += "\n";
+                    log+= (std::string)"readHeader: Trying to redefine mesh type at line #" + std::to_string(line_cnt);
+                    break;
+                }
+                if(std::regex_match(buffer, regexTokenValue("Meshtype", "rectangular")))
+                    head.setMesh(OVFHeader::MeshType::rectangular);
+                else if(std::regex_match(buffer, regexTokenValue("Meshtype", "irregular")))
+                    head.setMesh(OVFHeader::MeshType::irregular);
+                else
+                { if (log != "") log+= "\n"; log += (std::string)"readHeader: Invalid mesh type token was passed at line #" +
+                    std::to_string(line_cnt) + ": \"" + res[1].str() + "\"";}
+                break;
+            default://skip comments and empty lines
+                break;
+            }
+        }
+        if( BadLineCnt >= BadBlockMax )
+        {
+            log+="VFieldFile::read: Too many invalid lines in a row, suspending further output";
+            log+=(std::string)"VFieldFile::read: Block of bad lines ended at line #" +
+                    std::to_string(line_cnt) + " (EOF)";
+        }
+        return log;
+    }
+
+    //and then for the cream of the crop, header reader!
+    //test constants
+    template<typename T>
+    constexpr T TestVal;
+    
+    template<> constexpr float TestVal<float> = 1234567.0f;
+    template<> constexpr double TestVal<double> = 123456789012345.0;
+    
+    //main method
+    std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, bool& prefetch)
+    {
+        auto version = (out.Header.isSet(OVFParameter::VersionString))? 
+            matchVersionString(out.Header.getString(OVFParameter::VersionString)) : OVFVersion::Unknown; 
+        std::string dataHeader {""};
+        std::getline(file, dataHeader);
+        if(!file)
+            return "readData: unexpected error occured while reading file";
+        // next check if data header is valid
+        std::smatch match;
+        if(!std::regex_match(dataHeader, match, regexTokenValue("Begin","Data*\\s+(binary\\s+(4|8)|text)")))
+            return (std::string)"readData: Ill formed data begin line: \"" + dataHeader + "\"";
+        bool isBinary = !std::regex_match(dataHeader, regexTokenValue("Begin", "Data\\s+text"));
+        std::size_t internalSize = isBinary? ParseToken<pType::Uint>(match[4].str()).value() : 8; // guaranteed to have value from previous lines
+        const auto DataBeginPos {file.tellg()};
+        //next peek if data is ending at expected position
+        const std::size_t advertisedDim {out.pntDimension()};
+        const std::size_t advertisedCnt {out.pntCount()};
+        auto endRegex = regexTokenValue("Begin", (std::string)"" + (isBinary? 
+                    ((std::string)"binary\\s+" + std::to_string(internalSize)) : "text"));
+        //seeking to expected end
+        if(advertisedDim * advertisedCnt != 0)
+        {
+            if(isBinary)
+                file.ignore( (advertisedDim * advertisedCnt + 1)  * internalSize / sizeof(std::istream::char_type) );
+            else
+                for(std::size_t i = 0; i < advertisedCnt && file.good(); i++)
+                    file.ignore( std::numeric_limits<std::streamsize>::max(), '\n');
+        }
+        if(!file.good())
+            return "readData: reached the end of file searching for the end of data section!";
+        auto DataEndPos {file.tellg()};
+        std::string closingString{""};
+        std::getline(file, closingString);
+        std::string log {""};
+        if(!std::regex_match(closingString, regexTokenValue("End","Data")))
+        {
+            //if didn't got a correct line have to reseek manually
+            file.seekg(DataBeginPos);
+            while(file.good())
+            {
+                file.ignore( std::numeric_limits<std::streamsize>::max(), '#'); //seek until next line
+                if(!file.good())
+                    return "readData: reached the end of file searching for end of data manually :'(";
+                file.unget(); //push # back into stream
+                DataEndPos = file.tellg();
+                std::getline(file, closingString);
+                if(std::regex_match(closingString, regexTokenValue("End", "Data")))
+                    break;
+                if(!file.good())
+                    return "readData: reached the end of file searching for end of data manually ";
+            }
+            log = "Found the end of data manually";
+        }
+        if(!std::regex_match(closingString, endRegex)) //stricter check
+        {
+            if(log != "") log += "\n";
+            log = (std::string)"readData: failed strict check of data type in closing section, got: " + closingString;
+        }
+        if(slice == VFieldFile::slice_type() && advertisedDim == 0)
+        {
+            if(log !="") log+= "\n";
+            log += "readData: Cannot read a slice without properly-defined dimension";
+            return log;
+        }
+        const auto AfterDataEnd {file.tellg()};
+
+        if(!prefetch)
+        {
+            file.seekg(DataBeginPos);
+            //actual reading of data
+            auto [begin, end, stride] = translateSlice(out, slice); //hurray for structural binding
+            if(end < begin) std::swap(begin, end);
+            //TODO: IMPLEMENT
+            file.seekg(DataEndPos);
+        }
+
+        return log;
+    }
 }
 
