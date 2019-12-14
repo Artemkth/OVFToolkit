@@ -183,6 +183,21 @@ namespace VField{
     //declaration of templated parse method
     template<pType p>
     inline std::optional<associatedType_t<p>> ParseToken(const std::string&);
+    //specialisations for reading
+    template<> inline std::optional<associatedType_t<pType::Uint>> ParseToken<pType::Uint>(const std::string& str)
+    {
+        try{ return stoul(str); }
+        catch(const std::logic_error& e)
+        { return std::nullopt; }
+    }
+    template<> inline std::optional<associatedType_t<pType::Float>> ParseToken<pType::Float>(const std::string& str)
+    {
+        try{ return stod(str); }
+        catch(const std::logic_error& e)
+        { return std::nullopt; }
+    }
+    template<> inline std::optional<associatedType_t<pType::String>> ParseToken<pType::String>(const std::string& str)
+    { return str; }
 
     //reading from file
     bool VFieldFile::read( const pathType& path, bool prefetch) noexcept
@@ -284,6 +299,7 @@ namespace VField{
                         logMessage((std::string)"\t" + buffer);
                     }
                     seg_cnt = segCntParse.value();
+                    SegCntDefined = true;
                 }
                 break;
             case(OVFParameter::Open):
@@ -403,8 +419,12 @@ namespace VField{
         //bad bit error is handled inside the loop, reaching here necesarily means that EOF occured
         if( SegmentOpened || WaitingForData )
             logMessage("VFieldFile::read: File ended unexpectedly");
+        if( data -> segments.size() != seg_cnt)
+            logMessage((std::string)"VFieldFile::read: Got an unexpected number of segments from file: " +
+                    std::to_string(data -> segments.size()) + " instead of expected:" +
+                    (SegCntDefined? std::to_string(seg_cnt) : "undefined"));
 
-        return log == "";
+        return data -> log == "";
     }
 }
 
