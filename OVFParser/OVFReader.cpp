@@ -15,8 +15,8 @@ namespace VField{
     struct VFieldFile::FileData
     {
         //segment storage
-        //                      field        data begin pos      data size
-        std::vector<std::tuple<VField, std::ifstream::pos_type, std::size_t>>
+        //                      field             data begin pos                data size
+        std::vector<std::tuple<VField, std::optional<std::ifstream::pos_type>, std::size_t>>
             segments{};
         //and the log storage
         std::string log{""};
@@ -85,7 +85,7 @@ namespace VField{
         try{
             //checking for exception since VField can be pretty large
             data->segments.insert(data->segments.begin() + it.pos,
-                    {ref, std::ifstream::pos_type(), ref.pntCount()});
+                    {ref, std::nullopt, ref.pntCount()});
         }catch (const std::exception& e) {
             logMessage("VFieldFile::insert: trouble inserting at position: "+ std::to_string(it.pos)+
                     ", exception was: " + e.what());
@@ -174,11 +174,11 @@ namespace VField{
     };
 
     //forward declarations of main functions
-    //function to read the header, stops after reaching '# End: Header'
-    //returns the header and a log file
-    std::pair<OVFHeader, std::string> readHeader(std::istream&);
-    //read the data beginning with data header and ending all the way at '# End: Data'
-    std::pair<std::size_t, std::string> readData(std::istream&, VField&, const VFieldFile::slice_type&);
+    //function to read the header, stops after reaching '# End: Header', stream is kept at just after end header line
+    //returns the header and a log file, second argument is a line counter to be incremented
+    std::string readHeader(std::istream&, std::size_t&, OVFHeader&);
+    //read the data beginning with data header and ending all the way at '# End: Data', bool variable to tell if it is just a prefetch 
+    std::string readData(std::istream&, VField&, const VFieldFile::slice_type&, bool&);
 
     //declaration of templated parse method
     template<pType p>
@@ -187,6 +187,9 @@ namespace VField{
     //reading from file
     bool VFieldFile::read( const pathType& path, bool prefetch) noexcept
     {
+        //reset the log
+        clearLog();
+
         constexpr std::size_t BadBlockMax {5};
         constexpr std::array<OVFParameter, 5> TopLevelTags{
             OVFParameter::Open,
@@ -286,7 +289,82 @@ namespace VField{
             case(OVFParameter::Open):
                 //much harder here, have to first decide what to call 
                 //have to switch between opening of segment, data or header
-                //TODO: finish!
+                if(std::regex_match(buffer, regexTokenValue("Begin", "Segment")) )
+                {
+                    if(SegmentOpened)
+                    {
+                        logMessage((std::string)"VFieldFile::read: Duplicated opening of section encountered at line #" + 
+                                std::to_string(line_cnt) + ", ignoring!");
+                        break;
+                    }
+                    SegmentOpened = true;
+                }
+                else if(std::regex_match(buffer, regexTokenValue("Begin", "Header")) )
+                {
+                    if(!SegmentOpened)
+                        logMessage((std::string)"VFieldFile::read: Found a segment header outside a segment on line #" +
+                                std::to_string(line_cnt));
+                    if(WaitingForData)
+                        logMessage((std::string)"VFieldFile::read: Duplicate segment header on line #" + 
+                                std::to_string(line_cnt));
+                    //in either case read and start waiting for data
+                    data -> 
+                        segments.push_back({ VField(version),
+                                             std::nullopt,
+                                             0u });
+                    //rewind back 1 line
+                    file.seekg(pos);
+                    //and read the header
+                    auto log = readHeader(file, line_cnt, std::get<0>(data -> segments.back()).Header);
+                    if(log != "")
+                        logMessage("VFieldFile::read: Errors encountered while reading a Header ending at line #" +
+                                std::to_string(line_cnt) + ":\n" + log);
+                    WaitingForData = true;
+                }
+                else if(std::regex_match(buffer, regexTokenValue("Begin", "Data")) )
+                {
+                    if(!SegmentOpened)
+                    {
+                        logMessage((std::string)"VFieldFile::read: Found a segment data outside a segment on line #" +
+                                std::to_string(line_cnt) + ", opening a new segment with empty header.");
+                        SegmentOpened = true;
+                        //open a new segment with empty header
+                        data -> 
+                            segments.push_back({ VField(version),
+                                                 std::nullopt,
+                                                 0u });
+                    }
+                    else if(!WaitingForData) // == !WaitingForData && SegmentOpened, missed header, or a duplicate data segment
+                    {
+                        logMessage((std::string)"VFieldFile::read: Unexpected segment data on line #" + 
+                                std::to_string(line_cnt));
+                        //now need to distinguish from having read a header and having a duplicated data
+                        data -> 
+                            segments.push_back({ VField(version),
+                                                 std::nullopt,
+                                                 0u });
+                    }
+                    //rewind back 1 line
+                    file.seekg(pos); 
+                    std::get<1>(data -> segments.back()) = pos;
+                    auto log = readData(
+                            file,
+                            std::get<0>(data -> segments.back()),
+                            VFieldFile::slice_type(),
+                            prefetch
+                        );
+                    if(log != "")
+                        logMessage("VFieldFile::read: Errors encountered while reading Data at line #" +
+                                std::to_string(line_cnt) + ":\n" + log);
+                    line_cnt++; //increment line counter for end line after data
+                }
+                else
+                {
+                    logMessage((std::string)"VFieldFile::read: Encountered unknown section token on line #" + 
+                            std::to_string(line_cnt) + " :");
+                    logMessage(buffer);
+                }
+                break;
             case(OVFParameter::Close):
                 {
                     if(std::regex_match(buffer, regexTokenValue("Begin","segment")))
@@ -296,6 +374,13 @@ namespace VField{
                         else
                             logMessage((std::string)"VFieldFile::read: Unexpected statement at a line #" +
                                     std::to_string(line_cnt) + "continuing");
+                        if(WaitingForData)
+                        {
+                            logMessage(
+                               (std::string)"VFieldFile::read: Was expecting data section, got abrupt section ending at line #"+
+                               std::to_string(line_cnt) + "instead!");
+                            WaitingForData = false;
+                        }
                     }
                     else //in case when it is either data or header, which should be handled in respective functions
                     {
@@ -315,8 +400,11 @@ namespace VField{
             logMessage((std::string)"VFieldFile::read: Block of bad lines ended at line #" +
                     std::to_string(line_cnt));
         }
+        //bad bit error is handled inside the loop, reaching here necesarily means that EOF occured
+        if( SegmentOpened || WaitingForData )
+            logMessage("VFieldFile::read: File ended unexpectedly");
 
-        return false;
+        return log == "";
     }
 }
 

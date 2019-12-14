@@ -42,8 +42,8 @@ namespace VField{
 
         //constructors
         constexpr slice( const pos_type& begin_ = slice_pnt::begin,
-                             const pos_type& end_   = slice_pnt::end,
-                             T& stride_ = 1 ) noexcept: begin(begin_), end(end_), stride(stride_)
+                         const pos_type& end_   = slice_pnt::end,
+                         T stride_ = 1 ) noexcept: begin(begin_), end(end_), stride(stride_)
         {}
     };
 }
