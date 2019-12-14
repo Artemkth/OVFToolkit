@@ -9,6 +9,8 @@
 #include<algorithm>
 #include<optional>
 #include"OVFParser.h"
+#include"OVFVersion.h"
+#include"OVFDictionary.h"
 
 namespace VField{
     //first internal data of OVFReader
@@ -421,10 +423,12 @@ namespace VField{
             logMessage("VFieldFile::read: File ended unexpectedly");
         if( data -> segments.size() != seg_cnt)
             logMessage((std::string)"VFieldFile::read: Got an unexpected number of segments from file: " +
-                    std::to_string(data -> segments.size()) + " instead of expected:" +
+                    std::to_string(data -> segments.size()) + " instead of expected: " +
                     (SegCntDefined? std::to_string(seg_cnt) : "undefined"));
 
         return data -> log == "";
     }
+
+    //helper method to set a field
 }
 
