@@ -14,6 +14,7 @@
 #include"OVFDictionary.h"
 //boost endian conversion library setup
 #include<boost/endian/conversion.hpp>
+#include<cstdint>
 
 namespace VField{
     //first internal data of OVFReader
@@ -183,7 +184,7 @@ namespace VField{
     //returns the header and a log file, second argument is a line counter to be incremented
     std::string readHeader(std::istream&, std::size_t&, OVFHeader&);
     //read the data beginning with data header and ending all the way at '# End: Data', bool variable to tell if it is just a prefetch 
-    std::string readData(std::istream&, VField&, const VFieldFile::slice_type&, bool&);
+    std::string readData(std::istream&, VField&, const VFieldFile::slice_type&, std::size_t&, bool&);
 
     //declaration of templated parse method
     template<pType p>
@@ -372,6 +373,7 @@ namespace VField{
                             file,
                             std::get<0>(data -> segments.back()),
                             VFieldFile::slice_type(),
+                            std::get<2>(data -> segments.back()),
                             prefetch
                         );
                     if(log != "")
@@ -607,7 +609,8 @@ namespace VField{
     template<> constexpr double TestVal<double> = 123456789012345.0;
     
     //main method
-    std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, bool& prefetch)
+    //TODO: implement OVF0 reading at some point
+    std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, std::size_t& cnt, bool& prefetch)
     {
         auto version = (out.Header.isSet(OVFParameter::VersionString))? 
             matchVersionString(out.Header.getString(OVFParameter::VersionString)) : OVFVersion::Unknown; 
@@ -624,14 +627,16 @@ namespace VField{
         const auto DataBeginPos {file.tellg()};
         //next peek if data is ending at expected position
         const std::size_t advertisedDim {out.pntDimension()};
-        const std::size_t advertisedCnt {out.pntCount()};
+        const std::size_t advertisedCnt {(cnt != 0 && advertisedDim != 0)? cnt/advertisedDim : out.pntCount()};
         auto endRegex = regexTokenValue("Begin", (std::string)"" + (isBinary? 
                     ((std::string)"binary\\s+" + std::to_string(internalSize)) : "text"));
         //seeking to expected end
-        if(advertisedDim * advertisedCnt != 0)
+        if((advertisedDim * advertisedCnt != 0) || cnt !=0 ) 
         {
+            std::size_t pnts = cnt;
+            if(pnts == 0) pnts = advertisedCnt * advertisedDim;
             if(isBinary)
-                file.ignore( (advertisedDim * advertisedCnt + 1)  * internalSize / sizeof(std::istream::char_type) );
+                file.ignore( (pnts + 1)  * internalSize / sizeof(std::istream::char_type) );
             else
                 for(std::size_t i = 0; i < advertisedCnt && file.good(); i++)
                     file.ignore( std::numeric_limits<std::streamsize>::max(), '\n');
@@ -642,7 +647,9 @@ namespace VField{
         std::string closingString{""};
         std::getline(file, closingString);
         std::string log {""};
-        if(!std::regex_match(closingString, regexTokenValue("End","Data")))
+        if(std::regex_match(closingString, regexTokenValue("End","Data")))
+            cnt = advertisedDim * advertisedCnt;
+        else
         {
             //if didn't got a correct line have to reseek manually
             file.seekg(DataBeginPos);
@@ -660,6 +667,20 @@ namespace VField{
                     return "readData: reached the end of file searching for end of data manually ";
             }
             log = "Found the end of data manually";
+            if( isBinary)
+                cnt = (DataEndPos - DataBeginPos)/internalSize - 1; //last constant for test value
+            else//is text
+            {
+                cnt = 0;
+                file.seekg(DataBeginPos);
+                while(file.tellg() < DataEndPos && file.good())
+                {
+                    file.ignore( std::numeric_limits<std::streamsize>::max(), '\n');
+                    cnt++;
+                }
+                cnt *= advertisedDim;
+                file.ignore( std::numeric_limits<std::streamsize>::max(), '\n');
+            }
         }
         if(!std::regex_match(closingString, endRegex)) //stricter check
         {
@@ -679,12 +700,182 @@ namespace VField{
             file.seekg(DataBeginPos);
             //actual reading of data
             auto [begin, end, stride] = translateSlice(out, slice); //hurray for structural binding
+            if(advertisedDim * advertisedCnt != cnt) //if had to adjust  
+            {
+                if(slice.begin == slice_pnt::end)
+                    begin = std::min(cnt/advertisedDim, begin);
+                if(slice.end == slice_pnt::end)
+                    end = std::min(cnt/advertisedDim, end);
+            }
             if(end < begin) std::swap(begin, end);
-            //TODO: IMPLEMENT
-            file.seekg(DataEndPos);
+            if(end == begin) 
+            {
+                file.seekg(AfterDataEnd);
+                return log; //nothing to import, EZ
+            }
+            const bool importWhole {slice == VFieldFile::slice_type()};
+            if(isBinary)
+            {
+                if(internalSize == 4)
+                {
+                    float test{};
+                    file>>test;
+                    if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
+                        (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
+                        boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(&test));
+                        //WARNING: causes warning in gcc :'(
+                    if(test != TestVal<float>)
+                    {
+                        if(log!="") log += "\n";
+                        log+= "readData: binary data (4-byte) has a wrong test magic number!";
+                        return log;
+                    }
+                    //then seek the first value
+                    file.ignore(begin * sizeof(float) / sizeof(std::istream::char_type));
+                    const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
+                    auto buffer = new float[importDepth];
+                    file.read(reinterpret_cast<std::istream::char_type*>(buffer), 
+                              importDepth * sizeof(float)/sizeof(std::istream::char_type));
+                    if(!file.good())
+                    {
+                        if(log != "") log += "";
+                        log+= "readData: Unexpected end of data";
+                        return log;
+                    }
+                    if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
+                        (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
+                        for(std::size_t i =0; i < importDepth; i++)
+                            boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(buffer + i));
+                    if(stride != 1)
+                    {
+                        auto res = new float[importDepth / stride];
+                        for(std::size_t i = 0; i < importDepth / stride / advertisedDim; i++)
+                            for(std::size_t j = 0; j < advertisedDim; j++)
+                                res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
+                        std::swap(res, buffer);
+                        delete[] res;
+                        out.setData(buffer, importDepth / stride);
+                        return log;
+                    }
+                    out.setData(buffer, importDepth);
+                    return log; 
+                }
+                if(internalSize == 8)
+                {
+                    double test{};
+                    file>>test;
+                    if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
+                        (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
+                        boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(&test));
+                    if(test != TestVal<double>)
+                    {
+                        if(log!="") log += "\n";
+                        log+= "readData: binary data (4-byte) has a wrong test magic number!";
+                        return log;
+                    }
+                    //then seek the first value
+                    file.ignore(begin * sizeof(double) / sizeof(std::istream::char_type));
+                    const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
+                    auto buffer = new double[importDepth];
+                    file.read(reinterpret_cast<std::istream::char_type*>(buffer), 
+                              importDepth * sizeof(double)/sizeof(std::istream::char_type));
+                    if(!file.good())
+                    {
+                        if(log != "") log += "";
+                        log+= "readData: Unexpected end of data";
+                        return log;
+                    }
+                    if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
+                        (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
+                        for(std::size_t i =0; i < importDepth; i++)
+                            boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(buffer + i));
+                    if(stride != 1)
+                    {
+                        auto res = new double[importDepth / stride];
+                        for(std::size_t i = 0; i < importDepth / stride / advertisedDim; i++)
+                            for(std::size_t j = 0; j < advertisedDim; j++)
+                                res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
+                        std::swap(res, buffer);
+                        delete[] res;
+                        out.setData(buffer, importDepth / stride);
+                        return log;
+                    }
+                    out.setData(buffer, importDepth);
+                    return log; 
+                }
+            }
+            else //data is in text format
+            {
+
+                if(advertisedDim == 0)
+                {
+                    if(log != "") log+= "\n";
+                    log += "readData: Text data import is impossible without known dimension, stopping!";
+                    return log;
+                }
+
+                std::string line{""};
+                const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
+                auto buffer = new double[importDepth];
+                //main loop implementation here
+                std::size_t line_cnt{0};
+                const std::regex tokenizer ("^\\s*([^\\s]+)(?:\\s+|$)", std::regex_constants::ECMAScript |
+                                                                        std::regex_constants::optimize);
+                while(file.good())
+                {
+                    //first skip forward to beginning of data
+                    std::size_t skip_cnt {begin};
+                    while(skip_cnt != 0 && file.good())
+                    { file.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); skip_cnt--;}
+                    std::getline(file, line);
+                    if(!file)
+                    {
+                        if(log != "") log += "\n";
+                        log += "readData: Unexpected file read error!";
+                        delete[] buffer;
+                        return log;
+                    }
+                    std::size_t count {0};
+                    std::smatch sm;
+                    while(std::regex_search(line, sm, tokenizer))
+                    {
+                        auto val = ParseToken<pType::Float>(sm[1].str());
+                        if(val == std::nullopt)
+                            break;
+                        buffer[line_cnt * advertisedDim + count++] = val.value();
+                        line = sm.suffix();
+                    }
+                    if(count != advertisedDim - 1)
+                    {
+                        if( log != "" ) log+= "\n";
+                        log += (std::string)"readData: Unexpected number of values on line #"
+                               +std::to_string(line_cnt);
+                        delete[] buffer;
+                        return log;
+                    }
+                    if(line_cnt == importDepth/advertisedDim) //TODO: check for error by 1 later
+                        break;
+                }
+                if(stride != 1)
+                {
+                    auto res = new double[importDepth / stride];
+                    for(std::size_t i = 0; i < importDepth / stride / advertisedDim; i++)
+                        for(std::size_t j = 0; j < advertisedDim; j++)
+                            res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
+                    std::swap(res, buffer);
+                    delete[] res;
+                    out.setData(buffer, importDepth / stride);
+                    return log;
+                }
+                out.setData(buffer, importDepth);
+                return log; 
+            }
+            file.seekg(AfterDataEnd);
         }
 
         return log;
     }
+
+    //and now more high-level interfaces
 }
 
