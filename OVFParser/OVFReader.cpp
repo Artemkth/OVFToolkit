@@ -821,6 +821,7 @@ namespace VField{
                 std::size_t line_cnt{0};
                 const std::regex tokenizer ("^\\s*([^\\s]+)(?:\\s+|$)", std::regex_constants::ECMAScript |
                                                                         std::regex_constants::optimize);
+                //TODO: check if comments are allowed
                 while(file.good())
                 {
                     //first skip forward to beginning of data
