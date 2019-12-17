@@ -44,16 +44,16 @@ namespace VField{
         //data access
         std::size_t cntSegments() const noexcept;
         //next two throw if index is outside of array, and force reading the file if prefetch == true
-        VField& operator[] (const std::size_t& )  noexcept;
-        VField&& operator[] (const std::size_t& ) const noexcept;
+        VField& operator[] (const std::size_t& );
+        VField operator[] (const std::size_t& ) const noexcept;
         //you can free internal storage by yourself if needed to, since you have the explicit access
         bool isFetched(const std::size_t& ) const noexcept;
         
         //slice read operations
         //first slice along the internal point count, array returned is only weakly addressable
-        VField&& readSlice(const std::size_t&, const slice_type&) const noexcept;
+        VField readSlice(const std::size_t&, const slice_type&) const noexcept;
         //and then same for slice along mesh of rectangular grid, returns a valid field
-        VField&& readSlice(const std::size_t& sliceN, 
+        VField readSlice(const std::size_t& sliceN, 
                            const slice_type& xslice,
                            const slice_type& yslice,
                            const slice_type& zslice) const noexcept;
@@ -68,7 +68,7 @@ namespace VField{
             //dereference into a VField object, read file if prefetch was true
             VField& operator* ()
             { return (*parent)[pos]; }
-            VField&& slice( const slice_type& Slice)
+            VField slice( const slice_type& Slice)
             { return parent -> readSlice(pos, Slice); }
 
             FieldIterator& operator++()

@@ -184,7 +184,7 @@ namespace VField{
     //returns the header and a log file, second argument is a line counter to be incremented
     std::string readHeader(std::istream&, std::size_t&, OVFHeader&);
     //read the data beginning with data header and ending all the way at '# End: Data', bool variable to tell if it is just a prefetch 
-    std::string readData(std::istream&, VField&, const VFieldFile::slice_type&, std::size_t&, bool&);
+    std::string readData(std::istream&, VField&, const VFieldFile::slice_type&, std::size_t&, bool);
 
     //declaration of templated parse method
     template<pType p>
@@ -610,7 +610,7 @@ namespace VField{
     
     //main method
     //TODO: implement OVF0 reading at some point
-    std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, std::size_t& cnt, bool& prefetch)
+    std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, std::size_t& cnt, bool prefetch)
     {
         auto version = (out.Header.isSet(OVFParameter::VersionString))? 
             matchVersionString(out.Header.getString(OVFParameter::VersionString)) : OVFVersion::Unknown; 
@@ -878,5 +878,67 @@ namespace VField{
     }
 
     //and now more high-level interfaces
+    VField& VFieldFile::operator[] (const std::size_t& index) 
+    {
+        auto& [field, pos, size] = data->segments.at(index);
+        if(pos == std::nullopt && size == 0)
+        {
+            logMessage("VFieldFile::operator[]:  during prefetch phase no data was found!");
+            return field;
+        }
+        if(field.isDataPresent())
+            return field;
+
+        //else read the data and return that
+        std::ifstream file(fPath, std::ios_base::binary);
+        file.seekg(pos.value());
+        if(!file.good())
+        {
+            logMessage("VFieldFile::operator[]: error opening file!");
+            return field;
+        }
+        auto log = readData(file, field, VFieldFile::slice_type(), size, false); 
+        if(log != "")
+        {
+            logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
+            logMessage(log);
+        }
+        return field;
+    }
+    VField VFieldFile::operator[] (const std::size_t& index) const noexcept
+    {
+        //first, check if index is OOB
+        if(index >= data->segments.size())
+        {
+            logMessage("VFieldFile::operator[]: index out of range!");
+            return {};
+        }
+        //then check the element
+        auto [field, pos, size] = data->segments[index];
+        if(pos == std::nullopt && size == 0)
+        {
+            logMessage("VFieldFile::operator[]:  during prefetch phase no data was found!");
+            return std::move(field);
+        }
+        if(field.isDataPresent())
+            return std::move(field);
+
+        //else read the data and return that
+        std::ifstream file(fPath, std::ios_base::binary);
+        file.seekg(pos.value());
+        if(!file.good())
+        {
+            logMessage("VFieldFile::operator[]: error opening file!");
+            return std::move(field);
+        }
+        auto log = readData(file, field, VFieldFile::slice_type(), size, false); 
+        if(log != "")
+        {
+            logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
+            logMessage(log);
+        }
+        return std::move(field);
+    }
+    //and then slice reads interfaces
 }
 
