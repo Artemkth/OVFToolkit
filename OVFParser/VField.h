@@ -127,7 +127,7 @@ namespace VField{
                 friend ConstVFieldIterator operator-(ConstVFieldIterator it, const std::size_t step) noexcept
                 {it-=step; return it;}
                 long int operator-(const ConstVFieldIterator& ref) const noexcept 
-                {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;};
+                {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;}
                 bool operator == (const ConstVFieldIterator& ref) const noexcept
                 {if(parent != ref.parent) return false; return data == ref.data;}
                 bool operator != (const ConstVFieldIterator& ref) const noexcept

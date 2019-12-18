@@ -222,7 +222,7 @@ namespace VField{
         }
     }
     //interfaces through bracket operator
-    template<> associatedType_t<pType::Uint>& OVFHeader::operator[]<associatedType_t<pType::Uint>> (const OVFParameter& p) & noexcept
+    template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) & 
     {
         if(!isSet(p))
         {
@@ -231,7 +231,7 @@ namespace VField{
         }
         return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[p]).value();
     }
-    template<> associatedType_t<pType::Float>& OVFHeader::operator[]<associatedType_t<pType::Float>> (const OVFParameter& p) & noexcept
+    template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &
     {
         if(!isSet(p))
         {
@@ -240,7 +240,7 @@ namespace VField{
         }
         return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).value();
     }
-    template<> associatedType_t<pType::String>& OVFHeader::operator[]<associatedType_t<pType::String>> (const OVFParameter& p) & noexcept
+    template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) &
     {
         if(!isSet(p))
         {

@@ -512,8 +512,8 @@ namespace VField{
                 case(pType::String):
                     if(*it == OVFParameter::Desc)
                     {
-                        head.operator[]<std::string>(OVFParameter::Desc) += "\n";
-                        head.operator[]<std::string>(OVFParameter::Desc) += res[1].str();
+                        head.at<pType::String>(OVFParameter::Desc) += "\n";
+                        head.at<pType::String>(OVFParameter::Desc) += res[1].str();
                         break;
                     }
                     head.set(*it, res[1].str());
@@ -939,6 +939,130 @@ namespace VField{
         }
         return std::move(field);
     }
+    //templates for slicing vfields after import
+    //TODO: check if doing in-place version instead is better
+    template<typename T>
+    VField SliceVField(VField val, const VFieldFile::slice_type& slice)
+    {
+        //beginning iterator
+        auto beginIt = val.cbegin<T>();
+        //and teh dimension
+        const auto dim{val.pntDimension()};
+        //and translate slice into a specification for bounds
+        const auto [begin, end, stride] = translateSlice(val, slice);
+        const std::size_t newSize {val.pntCount() / stride * dim };
+        //and start this bad boy up
+        auto buffer = new T[newSize];
+        for(auto cnt = begin;begin <= end; cnt += stride)
+            for(std::size_t i = 0; i < dim; i++)
+                buffer[dim * cnt + i] = (beginIt + cnt)[i];
+        val.setData(buffer, newSize);
+        return val;
+    }
+    //and slice for rectangular grid
+    template<typename T>
+    VField SliceVField(VField val, const VFieldFile::slice_type& xslice,
+                                   const VFieldFile::slice_type& yslice,
+                                   const VFieldFile::slice_type& zslice)
+    {
+        if(!val.isAddressable() || val.Header.getMeshType() != OVFHeader::MeshType::rectangular)
+            return {};
+        //beginning iterator
+        auto beginIt = val.cbegin<T>();
+        const auto XNodeCnt = val.Header.getUint(OVFParameter::Xnodes);
+        const auto YNodeCnt = val.Header.getUint(OVFParameter::Ynodes);
+        const auto ZNodeCnt = val.Header.getUint(OVFParameter::Znodes);
+        std::size_t slices[9];
+        const std::size_t dim { val.pntDimension() };
+        std::size_t vCount{1u};
+        //convert slices into real coordinates
+        for(const auto& x: {std::make_tuple(XNodeCnt, xslice, slices),
+                            std::make_tuple(YNodeCnt, yslice, slices+3),
+                            std::make_tuple(ZNodeCnt, zslice, slices+6)})
+        {
+            auto& [begin, end, stride] = std::get<2>(x);//get the points from slices array
+            const auto& maxVal = std::get<1>(x);
+            const auto& slice = std::get<0>(x);
+            stride = slice.stride; //easy
+            begin = !stride.begin.isSpecial? stride.begin.getPos : ((slice.begin == slice_pnt::begin)? 0 : maxVal);
+            end = !stride.end.isSpecial? stride.end.getPos : ((slice.end == slice_pnt::begin)? 0 : maxVal);
+            if(begin > end)
+                std::swap(begin, end);
+            vCount *= 1 + (end - begin + 1) / stride;
+            if( begin > maxVal || end > maxVal) // no need to check for <0, unsigned types
+                return {};
+        }
+        //then recalculate how large of an array is needed
+        vCount *= dim;
+        auto buffer = new T[vCount];
+        //whole load of magic values INC
+        for(auto k = slices[6]; k <= slices[7]; k+= slices[8]) //z cycle
+        {
+            for(auto j = slices[3]; j <= slices[4]; j+= slices[5]) //y cycle
+            {
+                for(auto i = slices[0]; i <= slices[1]; i+= slices[2]) //x cycle
+                    for(auto p = 0; p < dim; p++)//point values
+                        buffer[(k * XNodeCnt * YNodeCnt + j * XNodeCnt + i) * dim + p] =
+                            (beginIt + k * XNodeCnt * YNodeCnt + j * XNodeCnt + i)[p];
+            }
+        }
+        if(val.Header.validate())//only do the coordinate resize if header was valid to begin with
+        {
+            val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[1]-slices[0])/slices[2];
+        }
+
+        val.setData(buffer, vCount);
+        return val;
+    }
+
     //and then slice reads interfaces
+    VField VFieldFile::readSlice(const std::size_t& index, const slice_type& slice) const noexcept
+    {
+        //first, check if index is OOB
+        if(index >= data->segments.size())
+        {
+            logMessage("VFieldFile::readSlice: index out of range!");
+            return {};
+        }
+        //then check the element
+        auto [field, pos, size] = data->segments[index];
+        if(pos == std::nullopt && size == 0)
+        {
+            logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
+            return std::move(field);
+        }
+        if(!field.isWeaklyAddressable())
+        {
+            logMessage("VFieldFile:readSlice: VField is not weakly addressable, abborting!");
+            return {};
+        }
+        //if field is not here it is time to import it
+        if(!field.isDataPresent())
+        {
+            //read the data and return that
+            std::ifstream file(fPath, std::ios_base::binary);
+            file.seekg(pos.value());
+            if(!file.good())
+            {
+                logMessage("VFieldFile::operator[]: error opening file!");
+                return std::move(field);
+            }
+            auto log = readData(file, field, slice, size, false); 
+            if(log != "")
+            {
+                logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
+                logMessage(log);
+            }
+            return std::move(field);
+        }
+        //else slice vfield
+        if(field.curDataInternalSize() == 4)
+            return SliceVField<float>(field, slice);
+        else if(field.curDataInternalSize() == 8)
+            return SliceVField<double>(field, slice);
+        else
+            //unreachable branch, hope compiler prunes it
+            return {};
+    }
 }
 

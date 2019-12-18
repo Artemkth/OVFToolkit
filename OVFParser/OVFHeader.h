@@ -155,23 +155,23 @@ namespace VField{
         bool validate();                                          //validate contents
         const associatedType_t<pType::String> ValidationReport(); //report checks done, run validation if needed
         //template for getting access to data
-        template<typename T>
-        T& operator[](const OVFParameter&) & noexcept;
-        template<typename T>
-        const T& operator[](const OVFParameter& p) const &
-        {if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return operator[]<T>(p);};
+        template<pType p>
+        associatedType_t<p>& at(const OVFParameter&) &;
+        template<pType pt>
+        const associatedType_t<pt>& at(const OVFParameter& p) const &
+        {if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p);};
     };
     
     //delete implementation for 'Other' type, so compiler will throw an error
     template<>
     const associatedType_t<pType::Other> OVFHeader::get<pType::Other>(const OVFParameter& ref) const = delete;
-    //allowed instantiations for operator[] template
-    template<> associatedType_t<pType::Uint>& OVFHeader::operator[]<associatedType_t<pType::Uint>> (const OVFParameter& p) & noexcept;
-    template<> associatedType_t<pType::Float>& OVFHeader::operator[]<associatedType_t<pType::Float>> (const OVFParameter& p) & noexcept;
-    template<> associatedType_t<pType::String>& OVFHeader::operator[]<associatedType_t<pType::String>> (const OVFParameter& p) & noexcept;
-    template<> const associatedType_t<pType::Uint>& OVFHeader::operator[]<associatedType_t<pType::Uint>> (const OVFParameter& p) const &;
-    template<> const associatedType_t<pType::Float>& OVFHeader::operator[]<associatedType_t<pType::Float>> (const OVFParameter& p) const &;
-    template<> const associatedType_t<pType::String>& OVFHeader::operator[]<associatedType_t<pType::String>> (const OVFParameter& p) const  &;
+    //allowed instantiations for at template
+    template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) &;
+    template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &;
+    template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) &;
+    template<> const associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) const &;
+    template<> const associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) const &;
+    template<> const associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) const &;
 
 }
 
