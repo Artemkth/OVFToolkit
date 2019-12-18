@@ -32,11 +32,6 @@ namespace VField{
         using type = double;
     };
     template<>
-    struct associatedType<pType::Other>
-    {
-        using type = void;
-    };
-    template<>
     struct associatedType<pType::String>
     {
         using type = std::string;
@@ -113,34 +108,14 @@ namespace VField{
         const associatedType_t<pType::String>& getString(const OVFParameter&) const &;
         const associatedType_t<pType::Uint>& getUint(const OVFParameter&) const &;
         const associatedType_t<pType::Float>& getFloat(const OVFParameter&) const &;
-        //and interfaces to change values
-        //TODO: check later
 
-        //universal retrieve
-        //throws wrong type when trying to retrive wrong type or
-        //throws read_unitialized when trying to read non-initialized field
-        template<pType p>
-        const associatedType_t<p> get(const OVFParameter& ref) const
-        {
-            if (paramType(ref) != p)
-                throw std::logic_error("OVFHeader::get: Tried to retrieve a wrong type!");
-            
-            if constexpr(p == pType::String)
-                return getString(ref);
-            else if constexpr(p == pType::Uint)
-                return getUint(ref);
-            else if constexpr(p == pType::Float)
-                return getFloat(ref);
-        }
-        
         //check if field was set method
         bool isSet(const OVFParameter&) const noexcept;
         
         //setters
-        //thows 'overwrite_initialized' logic_error exception when overwriting a field
-        void set(const OVFParameter&, const associatedType_t<pType::String>& );
-        void set(const OVFParameter&, const associatedType_t<pType::Uint>& );
-        void set(const OVFParameter&, const associatedType_t<pType::Float>& );
+        void set(const OVFParameter&, const associatedType_t<pType::String>& ) noexcept;
+        void set(const OVFParameter&, const associatedType_t<pType::Uint>& ) noexcept;
+        void set(const OVFParameter&, const associatedType_t<pType::Float>& ) noexcept;
         
         //unset a value
         void unset(const OVFParameter&) noexcept;
@@ -156,15 +131,12 @@ namespace VField{
         const associatedType_t<pType::String> ValidationReport(); //report checks done, run validation if needed
         //template for getting access to data
         template<pType p>
-        associatedType_t<p>& at(const OVFParameter&) &;
+        associatedType_t<p>& at(const OVFParameter&) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
         const associatedType_t<pt>& at(const OVFParameter& p) const &
         {if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p);};
     };
     
-    //delete implementation for 'Other' type, so compiler will throw an error
-    template<>
-    const associatedType_t<pType::Other> OVFHeader::get<pType::Other>(const OVFParameter& ref) const = delete;
     //allowed instantiations for at template
     template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) &;
     template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &;
@@ -172,6 +144,5 @@ namespace VField{
     template<> const associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) const &;
     template<> const associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) const &;
     template<> const associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) const &;
-
 }
 

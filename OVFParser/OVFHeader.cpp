@@ -124,24 +124,18 @@ namespace VField{
         return *this;
     }
     //setters
-    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::String>& val)
+    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::String>& val) noexcept
     {
-        if(paramIndex(param) != pType::String)
-            throw std::logic_error("OVFHeader::set called string setter with for a non-string parameter");
         data->ParameterFields[param] = std::make_optional<associatedType_t<pType::String>>(val);
         data->isChecked = false;
     }
-    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Uint>& val)
+    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Uint>& val) noexcept
     {
-        if(paramIndex(param) != pType::Uint)
-            throw std::logic_error("OVFHeader::set called string setter with for a non-UINT parameter");
         data->ParameterFields[param] = std::make_optional<associatedType_t<pType::Uint>>(val);
         data->isChecked = false;
     }
-    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Float>& val)
+    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Float>& val) noexcept
     {
-        if(paramIndex(param) != pType::Float)
-            throw std::logic_error("OVFHeader::set called string setter with for a non-floating point parameter");
         data->ParameterFields[param] = std::make_optional<associatedType_t<pType::Float>>(val);
         data->isChecked = false;
     }

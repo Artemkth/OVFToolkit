@@ -980,12 +980,14 @@ namespace VField{
                             std::make_tuple(YNodeCnt, yslice, slices+3),
                             std::make_tuple(ZNodeCnt, zslice, slices+6)})
         {
-            auto& [begin, end, stride] = std::get<2>(x);//get the points from slices array
-            const auto& maxVal = std::get<1>(x);
-            const auto& slice = std::get<0>(x);
+            auto& begin = *std::get<2>(x);//get the points from slices array
+            auto& end   = *(std::get<2>(x) + 1);
+            auto& stride= *(std::get<2>(x) + 2);
+            const auto& maxVal = std::get<0>(x);
+            const auto& slice = std::get<1>(x);
             stride = slice.stride; //easy
-            begin = !stride.begin.isSpecial? stride.begin.getPos : ((slice.begin == slice_pnt::begin)? 0 : maxVal);
-            end = !stride.end.isSpecial? stride.end.getPos : ((slice.end == slice_pnt::begin)? 0 : maxVal);
+            begin = !slice.begin.isSpecial()? slice.begin.getPos() : ((slice.begin == slice_pnt::begin)? 0 : maxVal);
+            end = !slice.end.isSpecial()? slice.end.getPos() : ((slice.end == slice_pnt::begin)? 0 : maxVal);
             if(begin > end)
                 std::swap(begin, end);
             vCount *= 1 + (end - begin + 1) / stride;
@@ -1001,14 +1003,25 @@ namespace VField{
             for(auto j = slices[3]; j <= slices[4]; j+= slices[5]) //y cycle
             {
                 for(auto i = slices[0]; i <= slices[1]; i+= slices[2]) //x cycle
-                    for(auto p = 0; p < dim; p++)//point values
+                    for(std::size_t p = 0; p < dim; p++)//point values
                         buffer[(k * XNodeCnt * YNodeCnt + j * XNodeCnt + i) * dim + p] =
                             (beginIt + k * XNodeCnt * YNodeCnt + j * XNodeCnt + i)[p];
             }
         }
         if(val.Header.validate())//only do the coordinate resize if header was valid to begin with
         {
+            //first set the correct node counts
             val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[1]-slices[0])/slices[2];
+            val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[4]-slices[3])/slices[5];
+            val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[7]-slices[6])/slices[8];
+            //then set correct initial position
+            val.Header.at<pType::Float>(OVFParameter::Xbase) += val.Header.at<pType::Float>(OVFParameter::Xstep) * slices[0];
+            val.Header.at<pType::Float>(OVFParameter::Ybase) += val.Header.at<pType::Float>(OVFParameter::Ystep) * slices[3];
+            val.Header.at<pType::Float>(OVFParameter::Zbase) += val.Header.at<pType::Float>(OVFParameter::Zstep) * slices[6];
+            //and then, finaly, set correct steps
+            val.Header.at<pType::Float>(OVFParameter::Xstep) *= slices[2];
+            val.Header.at<pType::Float>(OVFParameter::Ystep) *= slices[5];
+            val.Header.at<pType::Float>(OVFParameter::Zstep) *= slices[8];
         }
 
         val.setData(buffer, vCount);
@@ -1060,6 +1073,57 @@ namespace VField{
             return SliceVField<float>(field, slice);
         else if(field.curDataInternalSize() == 8)
             return SliceVField<double>(field, slice);
+        else
+            //unreachable branch, hope compiler prunes it
+            return {};
+    }
+    VField VFieldFile::readSlice(const std::size_t& index,
+                                 const VFieldFile::slice_type& xslice,
+                                 const VFieldFile::slice_type& yslice,
+                                 const VFieldFile::slice_type& zslice) const noexcept
+    {
+        //first, check if index is OOB
+        if(index >= data->segments.size())
+        {
+            logMessage("VFieldFile::readSlice: index out of range!");
+            return {};
+        }
+        //then check the element
+        auto [field, pos, size] = data->segments[index];
+        if(pos == std::nullopt && size == 0)
+        {
+            logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
+            return std::move(field);
+        }
+        if(!field.isAddressable())
+        {
+            logMessage("VFieldFile:readSlice: VField is not addressable, abborting!");
+            return {};
+        }
+        //if field is not here it is time to import it
+        if(!field.isDataPresent())
+        {
+            //read the data and return that
+            std::ifstream file(fPath, std::ios_base::binary);
+            file.seekg(pos.value());
+            if(!file.good())
+            {
+                logMessage("VFieldFile::operator[]: error opening file!");
+                return std::move(field);
+            }
+            //TODO: look into optimizing by translating three splices into one beforehand
+            auto log = readData(file, field, {}, size, false); 
+            if(log != "" || !field.isDataPresent())
+            {
+                logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
+                logMessage(log);
+            }
+        }
+        //else slice vfield
+        if(field.curDataInternalSize() == 4)
+            return SliceVField<float>(field, xslice, yslice, zslice);
+        else if(field.curDataInternalSize() == 8)
+            return SliceVField<double>(field, xslice, yslice, zslice);
         else
             //unreachable branch, hope compiler prunes it
             return {};
