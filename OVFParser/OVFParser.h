@@ -37,8 +37,6 @@ namespace VField{
         //basic read/write
         //read a file, prefetch indicated that only positions for data should be recovered
         bool read(const pathType&, bool prefetch = true) noexcept;
-        //write a file from data present
-        bool write(const pathType&) const noexcept;   //doesn't change internals, only changes host FS stuff
         
         //number of segments from the file
         //data access
