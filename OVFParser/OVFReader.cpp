@@ -7,7 +7,6 @@
 #include<array>
 #include<regex>
 #include<algorithm>
-#include<execution>
 #include<optional>
 #include"OVFParser.h"
 #include"OVFVersion.h"
@@ -467,7 +466,7 @@ namespace VField{
 
             //first check if value is a normal value type
             std::smatch res;
-            auto it = std::find_if(std::execution::seq, ValidParams.begin(), ValidParams.end(), 
+            auto it = std::find_if(ValidParams.begin(), ValidParams.end(), 
                                    [&](const OVFParameter& p){return std::regex_match(buffer, res, TokenMap.at(p));});
             if(it != ValidParams.end())
             {
@@ -524,7 +523,7 @@ namespace VField{
             }
 
             //else try to match for one of the allowed other parameters
-            it = std::find_if(std::execution::seq, AllowedOtherParams.begin(), AllowedOtherParams.end(),
+            it = std::find_if(AllowedOtherParams.begin(), AllowedOtherParams.end(),
                     [&](const OVFParameter& p){return std::regex_match(buffer, res, TokenMap.at(p));});
 
             if(it == AllowedOtherParams.end())
