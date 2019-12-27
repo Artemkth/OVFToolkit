@@ -74,7 +74,7 @@ namespace VField{
             problemParams.push_back(OVFParameter::VersionString);
         else
         {
-            if(matchVersionString(ref.get<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF2)
+            if(matchVersionString(ref.at<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF2)
                 if(!ref.isSet(OVFParameter::Vdim))
                     problemParams.push_back(OVFParameter::Vdim);
         }
@@ -101,7 +101,7 @@ namespace VField{
         if(!ref.isSet(OVFParameter::VersionString))
             return{false, prefix+"\n\tVersion string was not set", {OVFParameter::VersionString}};
         //nothing to check for OVF v0.0
-        if(matchVersionString(ref.get<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF0)
+        if(matchVersionString(ref.at<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF0)
             return {true, prefix + "SUCCESS", {}};
         //otherwise checking all the parameters
         //first check is for parameters being limited
@@ -235,7 +235,7 @@ namespace VField{
             if(!ref.isSet(OVFParameter::Bound))
                 return {true, prefix + "SUCCESS", {}}; //nothing to check
             //get the boundary vertex list
-            const std::string boundaryList { ref.get<pType::String>(OVFParameter::Bound)};
+            const std::string boundaryList { ref.at<pType::String>(OVFParameter::Bound)};
             //count how many tokens there are, validating if they are convertible to double
             auto cnt = countTokens(boundaryList, [](const std::string& ref){try{std::stod(ref);}catch(const std::logic_error& e){return false;} return true;});
             if( cnt == 0)
@@ -298,8 +298,8 @@ namespace VField{
             if(!ref.isSet(OVFParameter::Vdim))
                 return {false, prefix + "Value dimensions are not set yet", {OVFParameter::Vdim}};
             std::size_t num {0};
-            if((num = countTokens(ref.get<pType::String>(OVFParameter::Vunit))) != ref.get<pType::Uint>(OVFParameter::Vdim))
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit), {OVFParameter::Vunit}};
+            if((num = countTokens(ref.at<pType::String>(OVFParameter::Vunit))) != ref.at<pType::Uint>(OVFParameter::Vdim))
+                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit), {OVFParameter::Vunit}};
             return {true, prefix + "SUCCESS", {}};
         },
         //check if value labels has correct number of tokens
@@ -311,9 +311,9 @@ namespace VField{
                 return {false, prefix + "Value labels are not set yet", {OVFParameter::Vlabels}};
             if(!ref.isSet(OVFParameter::Vdim))
                 return {false, prefix + "Value dimensions are not set yet", {OVFParameter::Vdim}};
-            std::size_t num {countTokens(ref.get<pType::String>(OVFParameter::Vlabels))};
-            if(num != 1 && num != ref.get<pType::Uint>(OVFParameter::Vdim))
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.get<pType::String>(OVFParameter::Vunit), {OVFParameter::Vlabels}};
+            std::size_t num {countTokens(ref.at<pType::String>(OVFParameter::Vlabels))};
+            if(num != 1 && num != ref.at<pType::Uint>(OVFParameter::Vdim))
+                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit), {OVFParameter::Vlabels}};
             return {true, prefix + "SUCCESS", {}};
         }
     };
@@ -329,7 +329,7 @@ namespace VField{
     {
         if(!std::get<0>(isGridDefined(ref)))
             return 0u;
-        auto version = matchVersionString(ref.get<pType::String>(OVFParameter::VersionString));
+        auto version = matchVersionString(ref.at<pType::String>(OVFParameter::VersionString));
         if(version == OVFVersion::OVF0)
             return 0u;
         std::size_t dimensionality = ((ref.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
@@ -369,7 +369,7 @@ namespace VField{
         if(!ref.isSet(OVFParameter::VersionString))
             return{ false, log + " version string was not set, aborting!", {OVFParameter::VersionString}};
         //else execute the correct ruleset
-        const auto version = matchVersionString(ref.get<pType::String>(OVFParameter::VersionString));
+        const auto version = matchVersionString(ref.at<pType::String>(OVFParameter::VersionString));
         if(Ruleset.find(version) == Ruleset.end())
             return{ false, log + " version reported does not have a ruleset implemented!", {OVFParameter::VersionString}};
         //otherwise it is safe to execute ruleset
@@ -406,7 +406,7 @@ namespace VField{
     {
         if(!Header.isSet(OVFParameter::VersionString))
             return false;
-        auto version = matchVersionString(Header.get<pType::String>(OVFParameter::VersionString));
+        auto version = matchVersionString(Header.at<pType::String>(OVFParameter::VersionString));
         if(curDataPoints() == 0 || version == OVFVersion::Unknown || !Header.isSet(OVFParameter::Mtype) || (version == OVFVersion::OVF2 && !Header.isSet(OVFParameter::Vdim)) )
             return false;
         const auto dim = ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
@@ -418,7 +418,7 @@ namespace VField{
     {
         if(!isWeaklyAddressable())
             return 0u;
-        auto version = matchVersionString(Header.get<pType::String>(OVFParameter::VersionString));
+        auto version = matchVersionString(Header.at<pType::String>(OVFParameter::VersionString));
         return ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
                ((version == OVFVersion::OVF1) ? 3 : Header.getUint(OVFParameter::Vdim));
     }
@@ -715,9 +715,9 @@ namespace VField{
                 {
                     if(!std::get<0>(isGridDefined(ref.Header)))
                         return {false, val};
-                    val = ref.Header.get<pType::Uint>(OVFParameter::Xnodes) *
-                          ref.Header.get<pType::Uint>(OVFParameter::Ynodes) *
-                          ref.Header.get<pType::Uint>(OVFParameter::Znodes);
+                    val = ref.Header.at<pType::Uint>(OVFParameter::Xnodes) *
+                          ref.Header.at<pType::Uint>(OVFParameter::Ynodes) *
+                          ref.Header.at<pType::Uint>(OVFParameter::Znodes);
                     return {true, val};
                 }
                 return {false, val};
