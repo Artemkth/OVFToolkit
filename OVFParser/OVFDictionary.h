@@ -129,7 +129,7 @@ namespace DictionaryHelpers{
             intType val{};
         public:
             constexpr explicit OVFParamIterator(const intType& vval = minVal): val(vval) {}
-            constexpr const VField::OVFParameter operator*() const
+            constexpr VField::OVFParameter operator*() const
             {return static_cast<VField::OVFParameter>(val);}
             constexpr OVFParamIterator& operator++()
             {val++; return *this;}

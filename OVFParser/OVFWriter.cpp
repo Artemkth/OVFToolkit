@@ -1,6 +1,6 @@
 #include<map>
 #include<variant>
-#include"OVFVersion.h"
+#include"OVFUtil.h"
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
 
@@ -67,6 +67,39 @@ namespace VField
 
     std::string WriteSegment(std::ostream& out, const VField& field) noexcept
     {
+        if( !out.good())
+            return "WriteSegment: Stream given was not good, aborting!";
+        if( !out.isWeaklyAddressable())
+            return "WriteSegment: Vector field should at least be weakly addressable, aborting!";
+        out << "# Begin: Segment\n# Begin: Header\n";
+        auto log = WriteHeader(out, field.Header);
+        out << "# End: Header\n# Begin: Data binary "<<field.curDataInternalSize() << "\n";
+        switch(field.curDataInternalSize())
+        {
+            case(4):
+                out<<TestVal<float>;
+                out.write(reinterpret_cast<char*>(field.getData<float>()), 
+                                                  field.curDataPoints() * sizeof(float)/sizeof(char));
+                break;
+            case(8):
+                out<<TestVal<double>;
+                out.write(reinterpret_cast<char*>(field.getData<double>()), 
+                                                  field.curDataPoints() * sizeof(double)/sizeof(char));
+                break;
+            default:
+                if(!log.empty())
+                    log+="\n";
+                log += "WriteSegment: somehow got invalid internal data size! Please check 'isWeaklyAddressable' for bugs!";
+        }
+        out << "# End: Data binary " <<field.curDataInternalSize() << "\n" << "# End: Segment\n";
+        out.flush();
+        if(!out.good())
+        {
+            if(!log.empty())
+                log += "\n";
+            log += "WriteSegment: filesystem error occured while writing the segment!";
+        }
+        return log;
     }
 }
 

@@ -8,8 +8,8 @@
 #include<regex>
 #include<algorithm>
 #include<optional>
+#include"OVFUtil.h"
 #include"OVFParser.h"
-#include"OVFVersion.h"
 #include"OVFDictionary.h"
 //boost endian conversion library setup
 #include<boost/endian/conversion.hpp>
@@ -121,14 +121,6 @@ namespace VField{
     //////////////////////////////////////////////////////////
     /// main code for reading stuff based off of regexes /////
     //////////////////////////////////////////////////////////
-    ///Break compilation if the float or double are not standard,
-    //very sorry, the file is in binary :p
-    static_assert(std::numeric_limits<double>::is_iec559, "The systems double is not IEC559 compatible");
-    static_assert(std::numeric_limits<float>::is_iec559, "The systems float is not IEC559 compatible");
-    //check if numerics are double by default
-    static_assert(sizeof(1.0) == sizeof(double), "Double literals function unexpectedly");
-    //and just for kicks
-    static_assert(sizeof(1.0f) == sizeof(float), "Fload literals function unexpectedly");
 
     //shared flags
     constexpr auto commonFlags = std::regex_constants::icase |          //ignore case while matching
@@ -600,13 +592,6 @@ namespace VField{
     }
 
     //and then for the cream of the crop, header reader!
-    //test constants
-    template<typename T>
-    constexpr T TestVal;
-    
-    template<> constexpr float TestVal<float> = 1234567.0f;
-    template<> constexpr double TestVal<double> = 123456789012345.0;
-    
     //main method
     //TODO: implement OVF0 reading at some point
     std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, std::size_t& cnt, bool prefetch)

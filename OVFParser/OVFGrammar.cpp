@@ -504,7 +504,7 @@ namespace VField{
         },
         {
             OVFParameter::Munit,
-            [](const VField& ref) -> sub_pair_t<pType::String>{
+            [](const VField&) -> sub_pair_t<pType::String>{
                 return {true, "m m m"};
             }
         },
@@ -569,7 +569,7 @@ namespace VField{
         },
         {
             OVFParameter::Bound,
-            [](const VField& ref) -> sub_pair_t<pType::String>{
+            [](const VField&) -> sub_pair_t<pType::String>{
                 return {true, ""};
             }
         }
