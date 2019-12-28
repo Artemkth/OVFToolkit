@@ -91,6 +91,31 @@ namespace VField{
         }
         return {false, errMessage, problemParams};
     }
+    //checking if strings are single line
+    std::tuple<bool, std::string, std::vector<OVFParameter>> CheckStrings(const OVFHeader& ref)
+    {
+        std::vector<OVFParameter> faultyStrings{};
+        for(const auto& x: StringParamList)
+        {
+            if(x == OVFParameter::Desc) //skip the only parameter allowed to have multiple lines
+                continue;
+            if(!ref.isSet(x))           //ditto if parameter was not set == nothing to check
+                continue;
+            const auto& param = ref.at<pType::String>(x);
+            if(param.find('\n') != std::string::npos)
+                faultyStrings.push_back(x);
+        }
+        if(faultyStrings.empty())
+            return {true, "", faultyStrings};
+
+        std::string log { "The following string parameters have a newline in them: "};
+        for(const auto& x: faultyStrings)
+        {
+            log += "\n";
+            log += ParameterName(x);
+        }
+        return { false, log, faultyStrings };
+    }
     //checking physical constrains, i.e. if values are sane
     std::tuple<bool, std::string, std::vector<OVFParameter>> checkPhysicalConstraints(const OVFHeader& ref)
     {
@@ -226,6 +251,7 @@ namespace VField{
             }
             return {false, errMessage, problemParams};
         },
+        CheckStrings,
         //check if grid is defined
         isGridDefined,
         //check that the boundary list, if present, is a list of tripples of points
@@ -287,6 +313,7 @@ namespace VField{
             }
             return {false, errMessage, missingList};
         },
+        CheckStrings,
         isGridDefined,
         //check if value units has correct number of tokens
         [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
@@ -902,5 +929,26 @@ namespace VField{
             result+= "\n Missing parameter list has stopped shrinking, stopping!";
         
         return result;
+    }
+
+    //strip list
+    constexpr auto OVFOptional = 
+        DictionaryHelpers::make_array(
+            OVFParameter::Vmin,
+            OVFParameter::Vmax,
+            OVFParameter::Bound,
+            OVFParameter::Desc
+        );
+
+    //strip optional parameters
+    void VField::Strip() noexcept
+    {
+        if(!Header.isSet(OVFParameter::VersionString))
+            return;
+        auto version = matchVersionString(Header.getString(OVFParameter::VersionString));
+        if(version == OVFVersion::OVF1 || version == OVFVersion::OVF2)
+            for(const auto& par: OVFOptional)
+                Header.unset(par);
+        return;
     }
 }

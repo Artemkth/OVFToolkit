@@ -1,5 +1,8 @@
 #include<map>
 #include<variant>
+#include<algorithm>
+#include<vector>
+#include<utility>
 #include"OVFUtil.h"
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
@@ -20,7 +23,7 @@ namespace VField
         { OVFParameter::Munit,          "meshunit"              },
         { OVFParameter::Vunit, 
           [](const OVFVersion ver) -> std::string 
-            { return ver == OVFVersion::OVF1? "meshunit" : "meshunits"; }
+            { return ver == OVFVersion::OVF1? "valueunit" : "valueunits"; }
         },
         { OVFParameter::Vmult,          "valuemultiplier"       },
         { OVFParameter::Vdim,           "valuedim"              },
@@ -62,16 +65,103 @@ namespace VField
     }
 
     //then some of the functions to write warious parts of header
+    //T is iterator to pair of <OVFParameter, bool>
+    template<typename T>
+    inline std::string writeField(std::ostream& out, const OVFHeader& header,
+                                                    T begin, T end)
+    {
+        std::string = log;
+        for(; begin != end; begin++ )
+        {
+            if(!header.isSet(begin -> first) && begin -> second)
+            {
+                if(!log.empty())
+                    log += "\n";
+                log += (std::string)"writeField: parameter \"" + ParameterName(begin -> first) +
+                    "\" was not set! skipping!";
+                continue;
+            }
+            if(TokenNames.find(begin -> first) == TokenNames.end())
+            {
+                if(!log.empty())
+                    log += "\n";
+                log += (std::string)"writeField: parameter \"" + ParameterName(begin -> first) +
+                    "\" has no token name defined yet! skipping!";
+                continue;
+            }
+            //else write stuff out
+            if(begin -> first == OVFParameter::Desc)
+            {
+                std::string desc = header.getString(begin -> first);
+                std::regex pat("^\\s*(.*?)\\s*\n", std::regex_constants::ECMAScript);
+                std::smatch sm;
+                while(!desc.empty() && std::regex_search(desc, pat, sm))
+                {
+                    out << "# " << getName(OVFParameter::Desc) << ": ";
+                    out << sm[1].str() << "\n";
+                    desc = sm.suffix();
+                }
+                continue;
+            }
+            out << "# " << getName(begin -> first) << ": ";
+            switch(paramIndex(begin -> first))
+            {
+            case(pType::Uint):
+                out << header.getUint(begin -> first);
+                break;
+            case(pType::String):
+                out << header.getString(begin -> first);
+                break;
+            case(pType::Float):
+                out << header.getFloat(begin -> first);
+                break;
+            default:
+                //TODO: come up with something 
+            }
+            out << '\n';
+        }
+        return log;
+    }
+
+    constexpr auto OVFTitles = DictionaryHelpers::make_array(
+            std::make_pair(OVFParameter::Title, true),
+            std::make_pair(OVFParameter::Desc,  false),
+            std::make_pair(OVFParameter::Vunit, true),
+            std::make_pair(OVFParameter::Munit, true)
+        );
     //first defining the rules for writing out a header using make_array helper template
     inline std::string WriteHeader(std::ostream& out, const OVFHeader& header) noexcept
     {
+        if( !header.isSet(OVFParameter::VersionString) )
+            return "WriteHeader: Version wasn't set in header, aborting!";
+        auto version = matchVersionString(header.getString(OVFParameter::VersionString));
+        if( version == OVFVersion::OVF0 )
+            return ""; //nothing to output LULW
+
+        //otherwise start writing
+        if( version == OVFVersion::OVF1 || version == OVFVersion::OVF2 )
+        {
+            std::string log = "";
+            //start by generating a header
+            std::vector<std::pair<OVFParameter, bool>> Titles {OVFTitles.begin(), OVFTitles.end()};
+            if(version == OVFVersion::OVF1)
+                Titles.push_back(std::make_pair(OVFParameter::Vmult, true));
+            writeField(out, header, Titles.begin(), Titles.end());
+            //write a small comment
+            out << "## Grid parameters: \n";
+            //TODO: finish! 
+            return log;
+        }
+
+        return (std::string)"WriteHeader: Unknown or unhandled version encountered! Version string: \"" + 
+            header.getString(OVFParameter::VersionString) + "\";";
     }
 
     //and a template binary data writer
     template<typename T>
     struct UintAnalogue {};
-    template<> struct UintAnalogue<float> {using type = std::uint32_t;}
-    template<> struct UintAnalogue<double> {using type = std::uint64_t;}
+    template<> struct UintAnalogue<float> {using type = std::uint32_t;};
+    template<> struct UintAnalogue<double> {using type = std::uint64_t;};
 
     template<typename T>
     inline WriteBinaryData(std::ostream& out, const VField& field)

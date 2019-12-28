@@ -65,6 +65,7 @@ namespace VField{
             std::string ValidationReport();                                 //full report of validation results, run validation if needed
             bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
             std::string DeduceRecursively(const std::size_t& max_iter = 5); //try to deduce out all of the missing required fields
+            void Strip() noexcept;                                          //remove optional parameters
             
             //checking dimensions of internal data
             std::size_t pntCount() const noexcept;
