@@ -463,6 +463,25 @@ namespace VField{
             [](const VField&) -> sub_pair_t<pType::Float> {
                 return {true, 1. };
             }
+        },
+        //default value for the base are at (0, 0, 0)
+        {
+            OVFParameter::Xbase,
+            [](const VField&) -> sub_pair_t<pType::Float> {
+                return {true, 0. };
+            }
+        },
+        {
+            OVFParameter::Ybase,
+            [](const VField&) -> sub_pair_t<pType::Float> {
+                return {true, 0. };
+            }
+        },
+        {
+            OVFParameter::Zbase,
+            [](const VField&) -> sub_pair_t<pType::Float> {
+                return {true, 0. };
+            }
         }
     };
     const std::map< OVFParameter, sub_func_t<pType::Uint> > UINTDefaults {
