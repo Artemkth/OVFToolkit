@@ -3,6 +3,8 @@
 #include"OVFUtil.h"
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
+//endian conversion
+#include<boost/endian/conversion.hpp>
 
 namespace VField
 {
@@ -71,21 +73,45 @@ namespace VField
             return "WriteSegment: Stream given was not good, aborting!";
         if( !out.isWeaklyAddressable())
             return "WriteSegment: Vector field should at least be weakly addressable, aborting!";
+        
+        auto version = matchVersionString(field.Header.at<pType::String>(OVFParameter::VersionString));
         out << "# Begin: Segment\n# Begin: Header\n";
         auto log = WriteHeader(out, field.Header);
         out << "# End: Header\n# Begin: Data binary "<<field.curDataInternalSize() << "\n";
         switch(field.curDataInternalSize())
         {
             case(4):
+            {
                 out<<TestVal<float>;
-                out.write(reinterpret_cast<char*>(field.getData<float>()), 
-                                                  field.curDataPoints() * sizeof(float)/sizeof(char));
+                float* buff {nullptr};
+                if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
+                    boost::endian::ordern::native == boost::endian::order::little )
+                    buff = field.getDataCopy<float>();
+                if(buff != nullptr)
+                    for( std::size_t i = 0; i < field.curDataPoints(); i++)
+                        boost::endian::reverse_inplace( *reinterpret_cast<std::uint32_t*>(buff + i) );
+                const char* outBuff = reinterpret_cast<const std::ostream::charT*>(
+                        (buff != nullptr)? buff, field.getData<float>());  
+                out.write(outBuff, field.curDataPoints() * sizeof(float)/sizeof(char));
+                delete[] buff;
                 break;
+            }
             case(8):
+            {
                 out<<TestVal<double>;
-                out.write(reinterpret_cast<char*>(field.getData<double>()), 
-                                                  field.curDataPoints() * sizeof(double)/sizeof(char));
+                double* buff {nullptr};
+                if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
+                    boost::endian::ordern::native == boost::endian::order::little )
+                    buff = field.getDataCopy<double>();
+                if(buff != nullptr)
+                    for( std::size_t i = 0; i < field.curDataPoints(); i++)
+                        boost::endian::reverse_inplace( *reinterpret_cast<std::uint64_t*>(buff + i) );
+                const char* outBuff = reinterpret_cast<const std::ostream::charT*>(
+                        (buff != nullptr)? buff, field.getData<double>());  
+                out.write(outBuff, field.curDataPoints() * sizeof(double)/sizeof(char));
+                delete[] buff;
                 break;
+            }
             default:
                 if(!log.empty())
                     log+="\n";
