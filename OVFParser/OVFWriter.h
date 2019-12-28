@@ -30,31 +30,34 @@ namespace VField
     //and writing a text file, only a single segment supported!
     std::string WriteTextOVF(const std::string& fName, const VField& ref) noexcept;
 
-    //writing a whole bunch of files
+    //writing a whole bunch of segments
     template<typename T>
-        inline std::string WriteOVF(T begin, T end) noexcept
+    inline std::string WriteOVF(T begin, T end) noexcept
+    {
+        //begin by determining number of segments
+        std::size_t size { 0 };
+        for(auto it = begin; it != end; ++it)
+            size++;
+        if(!begin.isSet(OVFParameter::VersionString))
+            return "WriteOVF: Version string was not set, aborting!";
+        //making sure version strings are the same
+        for(auto it = begin; it != end; it++)
+            it -> at<pType::String> (OVFParameter::VersionString) = 
+                begin -> at<pType::String> (OVFParameter::VersionString);
+        std::string log{""};
+        std::ofstream file(fName, std::ios_base::out | std::ios_base::bin | std::ios_base::trunc);
+        if(!file.good())
+            return "WriteOVF: Unable to open a file!";
+        file << begin -> Header.getString(OVFParameter::VersionString) << "\n";
+        file << "# Segment count: "<< size << "\n";
+        for(auto it = begin; it != end; ++it)
         {
-            //begin by determining number of segments
-            std::size_t size { 0 };
-            for(auto it = begin; it != end; ++it)
-                size++;
-            if(!begin.isSet(OVFParameter::VersionString))
-                return "WriteOVF: Version string was not set, aborting!";
-            //TODO: look into checking if version strings are the same
-            std::string log{""};
-            std::ofstream file(fName, std::ios_base::out | std::ios_base::bin | std::ios_base::trunc);
+            log = WriteSegment(file, *it);
             if(!file.good())
-                return "WriteOVF: Unable to open a file!";
-            file << begin -> Header.getString(OVFParameter::VersionString) << "\n";
-            file << "# Segment count: "<< size << "\n";
-            for(auto it = begin; it != end; ++it)
-            {
-                log = WriteSegment(file, *it);
-                if(!file.good())
-                    return 
-                        (std::string)"WriteOVF: Error while writing out a file! segment writer returned:\n" + log ;
-            }
-            return log;
+                return 
+                    (std::string)"WriteOVF: Error while writing out a file! segment writer returned:\n" + log ;
         }
+        return log;
+    }
 }
 

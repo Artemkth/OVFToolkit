@@ -67,6 +67,29 @@ namespace VField
     {
     }
 
+    //and a template binary data writer
+    template<typename T>
+    struct UintAnalogue {};
+    template<> struct UintAnalogue<float> {using type = std::uint32_t;}
+    template<> struct UintAnalogue<double> {using type = std::uint64_t;}
+
+    template<typename T>
+    inline WriteBinaryData(std::ostream& out, const VField& field)
+    {
+        out<<TestVal<T>;
+        T* buff {nullptr};
+        if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
+                boost::endian::ordern::native == boost::endian::order::little )
+            buff = field.getDataCopy<T>();
+        if(buff != nullptr)
+            for( std::size_t i = 0; i < field.curDataPoints(); i++)
+                boost::endian::reverse_inplace( *reinterpret_cast<UintAnalogue<T>::type*>(buff + i) );
+        const char* outBuff = reinterpret_cast<const std::ostream::charT*>(
+                (buff != nullptr)? buff, field.getData<T>());  
+        out.write(outBuff, field.curDataPoints() * sizeof(T)/sizeof(char));
+        delete[] buff;
+    }
+
     std::string WriteSegment(std::ostream& out, const VField& field) noexcept
     {
         if( !out.good())
@@ -81,37 +104,11 @@ namespace VField
         switch(field.curDataInternalSize())
         {
             case(4):
-            {
-                out<<TestVal<float>;
-                float* buff {nullptr};
-                if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
-                    boost::endian::ordern::native == boost::endian::order::little )
-                    buff = field.getDataCopy<float>();
-                if(buff != nullptr)
-                    for( std::size_t i = 0; i < field.curDataPoints(); i++)
-                        boost::endian::reverse_inplace( *reinterpret_cast<std::uint32_t*>(buff + i) );
-                const char* outBuff = reinterpret_cast<const std::ostream::charT*>(
-                        (buff != nullptr)? buff, field.getData<float>());  
-                out.write(outBuff, field.curDataPoints() * sizeof(float)/sizeof(char));
-                delete[] buff;
+                WriteBinaryData<float>(out, field);
                 break;
-            }
             case(8):
-            {
-                out<<TestVal<double>;
-                double* buff {nullptr};
-                if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
-                    boost::endian::ordern::native == boost::endian::order::little )
-                    buff = field.getDataCopy<double>();
-                if(buff != nullptr)
-                    for( std::size_t i = 0; i < field.curDataPoints(); i++)
-                        boost::endian::reverse_inplace( *reinterpret_cast<std::uint64_t*>(buff + i) );
-                const char* outBuff = reinterpret_cast<const std::ostream::charT*>(
-                        (buff != nullptr)? buff, field.getData<double>());  
-                out.write(outBuff, field.curDataPoints() * sizeof(double)/sizeof(char));
-                delete[] buff;
+                WriteBinaryData<double>(out, field);
                 break;
-            }
             default:
                 if(!log.empty())
                     log+="\n";
