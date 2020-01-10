@@ -1,0 +1,5 @@
+//CMAKE config generator for whole project
+
+//Version information macros
+#define OVFTOOLKIT_MAJOR_VERSION @OVFToolkit_VERSION_MAJOR@
+#define OVFTOOLKIT_MINOR_VERSION @OVFToolkit_VERSION_MINOR@
