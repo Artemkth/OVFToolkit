@@ -1,4 +1,5 @@
 #library build file
+include(GenerateExportHeader)
 #like in windows make only certain function exported
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
@@ -16,7 +17,8 @@ add_library(ovfparser
 generate_export_header(ovfparser)
 
 #and install information for library
-install(TARGETS somelib DESTINATION ${LIBRARY_INSTALL_DIR})
+set(INCLUDE_INSTALL_DIR "${INSTALL_DIR}/include")
+install(TARGETS ovfparser DESTINATION ${LIBRARY_INSTALL_DIR})
 install(FILES
     OVFHeader.h
     VField.h
