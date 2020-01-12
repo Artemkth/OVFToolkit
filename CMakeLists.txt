@@ -24,7 +24,7 @@ add_library(ovfparser
     OVFParser/OVFGrammar.cpp
     OVFParser/VField.cpp
     OVFParser/OVFReader.cpp
-    #OVFParser/OVFWriter.cpp
+    OVFParser/OVFWriter.cpp
 )
 generate_export_header(ovfparser EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h")
 

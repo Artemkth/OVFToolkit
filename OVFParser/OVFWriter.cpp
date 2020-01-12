@@ -70,7 +70,7 @@ namespace VField
     inline std::string writeField(std::ostream& out, const OVFHeader& header,
                                                     T begin, T end)
     {
-        std::string = log;
+        std::string log{};
         for(; begin != end; begin++ )
         {
             if(!header.isSet(begin -> first) && begin -> second)
@@ -95,15 +95,15 @@ namespace VField
                 std::string desc = header.getString(begin -> first);
                 std::regex pat("^\\s*(.*?)\\s*\n", std::regex_constants::ECMAScript);
                 std::smatch sm;
-                while(!desc.empty() && std::regex_search(desc, pat, sm))
+                while(!desc.empty() && std::regex_search(desc, sm, pat))
                 {
-                    out << "# " << getName(OVFParameter::Desc) << ": ";
+                    out << "# " << ParameterName(OVFParameter::Desc) << ": ";
                     out << sm[1].str() << "\n";
                     desc = sm.suffix();
                 }
                 continue;
             }
-            out << "# " << getName(begin -> first) << ": ";
+            out << "# " << ParameterName(begin -> first) << ": ";
             switch(paramIndex(begin -> first))
             {
             case(pType::Uint):
@@ -117,6 +117,7 @@ namespace VField
                 break;
             default:
                 //TODO: come up with something 
+                break;
             }
             out << '\n';
         }
@@ -130,11 +131,10 @@ namespace VField
             std::make_pair(OVFParameter::Munit, true)
         );
     //first defining the rules for writing out a header using make_array helper template
-    inline std::string WriteHeader(std::ostream& out, const OVFHeader& header) noexcept
+    inline std::string WriteHeader(std::ostream& out, const OVFVersion& version, const OVFHeader& header) noexcept
     {
         if( !header.isSet(OVFParameter::VersionString) )
             return "WriteHeader: Version wasn't set in header, aborting!";
-        auto version = matchVersionString(header.getString(OVFParameter::VersionString));
         if( version == OVFVersion::OVF0 )
             return ""; //nothing to output LULW
 
@@ -164,18 +164,18 @@ namespace VField
     template<> struct UintAnalogue<double> {using type = std::uint64_t;};
 
     template<typename T>
-    inline WriteBinaryData(std::ostream& out, const VField& field)
+    inline void WriteBinaryData(std::ostream& out, const OVFVersion& version, const VField& field)
     {
         out<<TestVal<T>;
         T* buff {nullptr};
         if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
-                boost::endian::ordern::native == boost::endian::order::little )
+                boost::endian::order::native == boost::endian::order::little )
             buff = field.getDataCopy<T>();
         if(buff != nullptr)
             for( std::size_t i = 0; i < field.curDataPoints(); i++)
-                boost::endian::reverse_inplace( *reinterpret_cast<UintAnalogue<T>::type*>(buff + i) );
-        const char* outBuff = reinterpret_cast<const std::ostream::charT*>(
-                (buff != nullptr)? buff, field.getData<T>());  
+                boost::endian::endian_reverse_inplace( *reinterpret_cast<typename UintAnalogue<T>::type*>(buff + i) );
+        const char* outBuff = reinterpret_cast<const std::ostream::char_type*>(
+                (buff != nullptr)? buff : field.getData<T>());  
         out.write(outBuff, field.curDataPoints() * sizeof(T)/sizeof(char));
         delete[] buff;
     }
@@ -184,20 +184,20 @@ namespace VField
     {
         if( !out.good())
             return "WriteSegment: Stream given was not good, aborting!";
-        if( !out.isWeaklyAddressable())
+        if( !field.isWeaklyAddressable())
             return "WriteSegment: Vector field should at least be weakly addressable, aborting!";
         
         auto version = matchVersionString(field.Header.at<pType::String>(OVFParameter::VersionString));
         out << "# Begin: Segment\n# Begin: Header\n";
-        auto log = WriteHeader(out, field.Header);
+        auto log = WriteHeader(out, version, field.Header);
         out << "# End: Header\n# Begin: Data binary "<<field.curDataInternalSize() << "\n";
         switch(field.curDataInternalSize())
         {
             case(4):
-                WriteBinaryData<float>(out, field);
+                WriteBinaryData<float>(out, version, field);
                 break;
             case(8):
-                WriteBinaryData<double>(out, field);
+                WriteBinaryData<double>(out, version, field);
                 break;
             default:
                 if(!log.empty())

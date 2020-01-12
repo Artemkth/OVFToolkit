@@ -2,20 +2,21 @@
 //Declaration of file-exporting interfaces for the vector-field files
 #include<fstream>
 #include"VField.h"
+#include"ovfparser_export.h"
 
 namespace VField
 {
     //TODO: implement writing of text versions of data as a separate function
     //for outputting contents of VFields
-    std::string WriteSegment(std::ostream&, const VField&) noexcept;
+    OVFPARSER_EXPORT std::string WriteSegment(std::ostream&, const VField&) noexcept;
 
     //writing a file with a single field, binary only
-    std::string WriteOVF(const std::string& fName, const VField& ref) noexcept
+    inline OVFPARSER_NO_EXPORT std::string WriteOVF(const std::string& fName, const VField& ref) noexcept
     {
-        if(!ref.isSet(OVFParameter::VersionString))
+        if(!ref.Header.isSet(OVFParameter::VersionString))
             return "WriteOVF: Version string was not set, aborting!";
         std::string log{""};
-        std::ofstream file(fName, std::ios_base::out | std::ios_base::bin | std::ios_base::trunc);
+        std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())
             return "WriteOVF: Unable to open a file!";
         file << ref.Header.getString(OVFParameter::VersionString) << "\n";
@@ -28,11 +29,11 @@ namespace VField
     }
 
     //and writing a text file, only a single segment supported!
-    std::string WriteTextOVF(const std::string& fName, const VField& ref) noexcept;
+    OVFPARSER_EXPORT std::string WriteTextOVF(const std::string& fName, const VField& ref) noexcept;
 
     //writing a whole bunch of segments
     template<typename T>
-    inline std::string WriteOVF(T begin, T end) noexcept
+    OVFPARSER_NO_EXPORT inline std::string WriteOVF(const std::string& fName, T begin, T end) noexcept
     {
         //begin by determining number of segments
         std::size_t size { 0 };
@@ -45,7 +46,7 @@ namespace VField
             it -> at<pType::String> (OVFParameter::VersionString) = 
                 begin -> at<pType::String> (OVFParameter::VersionString);
         std::string log{""};
-        std::ofstream file(fName, std::ios_base::out | std::ios_base::bin | std::ios_base::trunc);
+        std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())
             return "WriteOVF: Unable to open a file!";
         file << begin -> Header.getString(OVFParameter::VersionString) << "\n";
