@@ -42,31 +42,24 @@ namespace DictionaryHelpers{
 
     //checks if a parameter p is inside
     template<VField::OVFParameter p>
-    struct IsDefined
+    constexpr bool IsDefined()
     {
-        static constexpr bool value()
-        {
-            //what is a good hack without a bit of preprocessor mess
-            //checked to work with GCC versions of 6+ with godbolt
+        //what is a good hack without a bit of preprocessor mess
+        //checked to work with GCC versions of 6+ with godbolt
 #if defined(__clang__) || defined(__GNUC__)
-            return isValid(__PRETTY_FUNCTION__);
+        return isValid(__PRETTY_FUNCTION__);
 #elif defined(_MSC_VER)
-            return isValid(__FUNCSIG__);
+        return isValid(__FUNCSIG__);
 #else
-            static_assert(false, "Trying to go round with an unsupported compiler do you?");
-            return false;
+        static_assert(false, "Trying to go round with an unsupported compiler do you?");
+        return false;
 #endif
-        }
-    };
-    
-    //helper template to incorporate the value
-    template<VField::OVFParameter p>
-    constexpr bool IsDefined_v {IsDefined<p>::value()};
-    
+    }
+
     //a define for laters
     using intType = typename std::underlying_type<VField::OVFParameter>::type;
     
-    static_assert(IsDefined<VField::OVFParameter::Invalid>::value, "The OVFParameter::Invalid was not defined!");
+    static_assert(IsDefined<VField::OVFParameter::Invalid>(), "The OVFParameter::Invalid was not defined!");
     //helper fold counter classm, by the power of (GRAYSKULL) C++17!
     template<
         template<intType> typename pred,//predicate which is checked when folding
@@ -93,7 +86,7 @@ namespace DictionaryHelpers{
         {
             if(n == std::numeric_limits<intType>::min() || n == std::numeric_limits<intType>::max())
                 return false;
-            return IsDefined<static_cast<VField::OVFParameter>(n)>::value();
+            return IsDefined<static_cast<VField::OVFParameter>(n)>();
         }
     };
     
@@ -113,7 +106,7 @@ namespace DictionaryHelpers{
     template< intType n>
     struct Helper
     {
-        static_assert(IsDefined_v<static_cast<VField::OVFParameter>(n)> , "The intial value was for search is invalid!!");
+        static_assert(IsDefined<static_cast<VField::OVFParameter>(n)>() , "The intial value was for search is invalid!!");
         //meat of teh dish
         static constexpr intType minVal { fold_counter<SearchPred, Decrement, n>::depth };
         static constexpr intType maxVal { fold_counter<SearchPred, Increment, n>::depth };
