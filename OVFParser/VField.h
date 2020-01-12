@@ -35,7 +35,7 @@ namespace VField{
             void clearData();
             //initialize it empty
             template<typename T>
-            void initData(const std::size_t& );
+            inline void initData(const std::size_t& );
             
             //data access methods
             //setting data to whatever, 
@@ -224,11 +224,11 @@ namespace VField{
     template<> VField::ConstVFieldIterator<float> VField::end<float> () const; 
     template<> VField::ConstVFieldIterator<double> VField::end<double> () const; 
     //instantiation of empty data setter
-    template<> void VField::initData<float>(const std::size_t& size)
+    template<> inline void VField::initData<float>(const std::size_t& size)
     {
         setData(new float[size], size);
     }
-    template<> void VField::initData<double>(const std::size_t& size)
+    template<> inline void VField::initData<double>(const std::size_t& size)
     {
         setData(new double[size], size);
     }
