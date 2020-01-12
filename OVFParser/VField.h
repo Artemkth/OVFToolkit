@@ -1,9 +1,10 @@
 //header file for the main vector field storage container, template class VField
 #pragma once
 #include"OVFHeader.h"
+#include"ovfparser_export.h"
 
 namespace VField{
-    class VField
+    class OVFPARSER_EXPORT VField
     {
         private:
             //details of data storage thingie defined outside
@@ -205,35 +206,35 @@ namespace VField{
     //available specializations
     //templates for getting the internal array
     template<>
-    const float* VField::getData<float>() const;
+    OVFPARSER_EXPORT const float* VField::getData<float>() const;
     template<>
-    const double* VField::getData<double>() const;
+    OVFPARSER_EXPORT const double* VField::getData<double>() const;
 
     //template for getting a copy of internal array, changes to it will be not regarded
     template<>
-    float* VField::getDataCopy<float>() const;
+    OVFPARSER_EXPORT float* VField::getDataCopy<float>() const;
     template<>
-    double* VField::getDataCopy<double>() const;
+    OVFPARSER_EXPORT double* VField::getDataCopy<double>() const;
     //and instantiations of class methods for iterators :'(
-    template<> VField::VFieldIterator<float> VField::begin<float> ();
-    template<> VField::VFieldIterator<double> VField::begin<double> ();
-    template<> VField::ConstVFieldIterator<float> VField::begin<float> () const;
-    template<> VField::ConstVFieldIterator<double> VField::begin<double> () const;
-    template<> VField::VFieldIterator<float> VField::end<float> (); 
-    template<> VField::VFieldIterator<double> VField::end<double> (); 
-    template<> VField::ConstVFieldIterator<float> VField::end<float> () const; 
-    template<> VField::ConstVFieldIterator<double> VField::end<double> () const; 
+    template<> OVFPARSER_EXPORT VField::VFieldIterator<float> VField::begin<float> ();
+    template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::begin<double> ();
+    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<float> VField::begin<float> () const;
+    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<double> VField::begin<double> () const;
+    template<> OVFPARSER_EXPORT VField::VFieldIterator<float> VField::end<float> (); 
+    template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::end<double> (); 
+    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<float> VField::end<float> () const; 
+    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<double> VField::end<double> () const; 
     //instantiation of empty data setter
-    template<> inline void VField::initData<float>(const std::size_t& size)
+    template<> inline OVFPARSER_EXPORT void VField::initData<float>(const std::size_t& size)
     {
         setData(new float[size], size);
     }
-    template<> inline void VField::initData<double>(const std::size_t& size)
+    template<> inline OVFPARSER_EXPORT void VField::initData<double>(const std::size_t& size)
     {
         setData(new double[size], size);
     }
     //instantiation of conversions
-    template<> void VField::convert<float>();
-    template<> void VField::convert<double>();
+    template<> OVFPARSER_EXPORT void VField::convert<float>();
+    template<> OVFPARSER_EXPORT void VField::convert<double>();
 }
 

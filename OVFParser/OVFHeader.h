@@ -7,6 +7,7 @@
 //only standard header cluttering output will be string, with exceptions included inside, which is everywhere anyway and has good integration
 #pragma once
 #include<string>
+#include"ovfparser_export.h" //generated with cmake, shared lib export macros
 
 namespace VField{
     //OVF syntaxis dictionaries
@@ -21,21 +22,13 @@ namespace VField{
     //default variable types
     template<pType>
     struct associatedType;
-    template<>
-    struct associatedType<pType::Uint>
-    {
-        using type = std::size_t;
-    };
-    template<>
-    struct associatedType<pType::Float>
-    {
-        using type = double;
-    };
-    template<>
-    struct associatedType<pType::String>
-    {
-        using type = std::string;
-    };
+    template<> struct associatedType<pType::Uint>
+    { using type = std::size_t; };
+    template<> struct associatedType<pType::Float>
+    { using type = double; };
+    template<> struct associatedType<pType::String>
+    { using type = std::string; };
+
     template<pType p>
     using associatedType_t = typename associatedType<p>::type;
     
@@ -71,7 +64,7 @@ namespace VField{
     };
     
     //Header container+utilities class
-    class OVFHeader{
+    class OVFPARSER_EXPORT OVFHeader{
     private:
         //class data in pimpl
         struct HeaderData;
@@ -81,23 +74,18 @@ namespace VField{
         //enum class with Mesh type
         enum class MeshType {irregular, rectangular};
         
-        //c-tor and d-tor of header
+        //c-tor and d-tor of a header
         OVFHeader();
-        //doing the whole set
         ~OVFHeader();
         //the one where version string is explicitly known beforehand, useful when parsing a file, to be defined outside
         explicit OVFHeader(const associatedType_t<pType::String>& ref) : OVFHeader()
-        {
-            set(OVFParameter::VersionString, ref);
-        }
+        { set(OVFParameter::VersionString, ref); }
         //copy stuff
         OVFHeader(const OVFHeader&);
         OVFHeader& operator=(const OVFHeader&);
         //move stuff
-        OVFHeader(OVFHeader&& ref): data(ref.data)
-        {ref.data = nullptr;};
-        OVFHeader& operator=(OVFHeader&& ref)
-        {data = ref.data; ref.data = nullptr; return *this;}
+        OVFHeader(OVFHeader&& ref) = default;
+        OVFHeader& operator=(OVFHeader&& ref) = default;
         
         //Public interfaces of the header
         //first common utils
@@ -134,15 +122,12 @@ namespace VField{
         associatedType_t<p>& at(const OVFParameter&) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
         const associatedType_t<pt>& at(const OVFParameter& p) const &
-        {if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p);};
+        {if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p);}
     };
     
     //allowed instantiations for at template
-    template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) &;
-    template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &;
-    template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) &;
-    template<> const associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) const &;
-    template<> const associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) const &;
-    template<> const associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) const &;
+    template<> OVFPARSER_EXPORT associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) &;
+    template<> OVFPARSER_EXPORT associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &;
+    template<> OVFPARSER_EXPORT associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) &;
 }
 

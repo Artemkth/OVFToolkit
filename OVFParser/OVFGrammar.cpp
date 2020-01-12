@@ -441,7 +441,7 @@ namespace VField{
         return curDataPoints() % dim == 0;
     }
     //return dimensionality
-    inline std::size_t VField::pntDimension() const noexcept
+    std::size_t VField::pntDimension() const noexcept
     {
         if(!isWeaklyAddressable())
             return 0u;

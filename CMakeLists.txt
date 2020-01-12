@@ -31,7 +31,7 @@ generate_export_header(ovfparser EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/OVFPars
 #TODO: look into moving it further
 configure_file(OVFToolkitConfig.h.in OVFToolkitConfig.h)
 target_include_directories(ovfparser 
-                           INTERFACE
+                           PUBLIC 
                            $<INSTALL_INTERFACE:include/OVFParser>
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/OVFparser>
                            $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/OVFParser>
@@ -51,6 +51,7 @@ install(FILES
     OVFParser/VField.h
     OVFParser/OVFDictionary.h
     OVFParser/OVFParser.h
+    OVFParser/Slice.h
     OVFParser/OVFWriter.h
     "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h" DESTINATION "${INCLUDE_INSTALL_DIR}"
 )

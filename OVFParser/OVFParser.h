@@ -1,13 +1,14 @@
 //describing file interfaces for OVFparser
 #include"VField.h"
 #include"Slice.h"
+#include"ovfparser_export.h"
 
 namespace VField{
     //lets hope this doesn't have to be changed at any point
     using pathType = std::string;
 
     //all exceptions should be handled inside the class, resulting in exceptions being posted into a log file
-    class VFieldFile
+    class OVFPARSER_EXPORT VFieldFile
     {
     private:
         //data
@@ -19,8 +20,9 @@ namespace VField{
         using slice_type = slice<associatedType_t<pType::Uint>>;
 
         //c++ housekeeping
-        VFieldFile() noexcept;                                                         //default constructor makes the empty structure
-        inline explicit VFieldFile(const pathType&, bool prefetch = true) noexcept;    //reads the file upon construction
+        VFieldFile() noexcept;                                                                       //default constructor makes the empty structure
+        explicit VFieldFile(const pathType& name, bool prefetch = true) noexcept: VFieldFile()       //reads the file upon construction
+        { read(name, prefetch); }
         VFieldFile(const VFieldFile&) noexcept;
         VFieldFile& operator= (const VFieldFile&) noexcept;
         VFieldFile(VFieldFile&&) = default;
@@ -121,9 +123,5 @@ namespace VField{
         inline std::size_t push_back(const VField& ref)
         {return push_back(VField(ref)); }
     };
-
-    //implementation of constructor from a file name
-    VFieldFile::VFieldFile(const pathType& name, bool prefetch) noexcept: VFieldFile()
-    { read(name, prefetch); }
 }
 
