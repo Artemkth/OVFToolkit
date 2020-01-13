@@ -81,20 +81,21 @@ namespace VField{
             { return ! (*this == ref); }
             friend class VFieldFile;
         };
-        class ConstFieldIterator{
-        };
+        //TODO: Finish constant iterator implementation!
+        //class ConstFieldIterator{
+        //};
         
         //iterators to begining and ending
         FieldIterator begin()
         {return FieldIterator(this, 0);}
-        ConstFieldIterator begin() const;
-        ConstFieldIterator cbegin() const
-        {return begin();}
+        //ConstFieldIterator begin() const;
+        //ConstFieldIterator cbegin() const
+        //{return begin();}
         FieldIterator end()
         {return FieldIterator(this, cntSegments());}
-        ConstFieldIterator end() const;
-        ConstFieldIterator cend() const
-        {return end();}
+        //ConstFieldIterator end() const;
+        //ConstFieldIterator cend() const
+        //{return end();}
         
         //some methods for populating the VFieldFile
         std::size_t insert(FieldIterator, VField&&);

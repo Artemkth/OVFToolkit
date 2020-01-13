@@ -37,7 +37,7 @@ target_include_directories(ovfparser
                            $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/OVFParser>
                            PRIVATE
                            #boost for building internals
-                           "${BOOST_INCLUDE_DIRS}"
+                           "${Boost_INCLUDE_DIRS}"
                            #config header
                            "${PROJECT_BINARY_DIR}"
                           )

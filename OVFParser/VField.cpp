@@ -1,5 +1,6 @@
 #include<algorithm>
 #include<type_traits>
+#include<stdexcept>
 #include"VField.h"
 #include<optional>
 #include<variant>
@@ -70,10 +71,12 @@ namespace VField{
                 return;
             
             //default assume it is 'double' value, casting to double
-            if ( storSize != 0)
+            if ( storSize != 0 )
             {
-                if constexpr(std::is_same<double, T>::value)
+                if constexpr (std::is_same<double, T>::value)
                     darray = data;
+                else if constexpr (std::is_same<float, T>::value)
+                    farray = data;
                 else
                 {
                     //else convert data to 'double' and nuke it!
@@ -105,17 +108,6 @@ namespace VField{
         template<typename T>
         inline T* makeCopy() const;
     };
-
-    //specialization for floats
-    template<>
-        VField::StorageArray::StorageArray<float>(float* data, const std::size_t& length): StorageArray()
-    {
-        if (data == nullptr)
-            return;
-        storSize = length;
-
-        farray = data;
-    }
 
     void VField::StorageArray::convert()
     {

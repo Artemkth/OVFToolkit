@@ -17,7 +17,7 @@ namespace VField
 
     //test constants
     template<typename T>
-        constexpr T TestVal;
+    constexpr T TestVal{};
 
     template<> constexpr float TestVal<float> = 1234567.0f;
     template<> constexpr double TestVal<double> = 123456789012345.0;

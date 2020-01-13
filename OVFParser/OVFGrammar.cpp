@@ -176,7 +176,7 @@ namespace VField{
                 OVFParameter::Xstep,
                 OVFParameter::Ystep,
                 OVFParameter::Zstep);
-            static_assert(!DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::join(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
+            static_assert(!DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::makeUnion(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
             //check if required params are positively defined
             for(const auto& x: posDefined)
             {
@@ -263,7 +263,7 @@ namespace VField{
             //get the boundary vertex list
             const std::string boundaryList { ref.at<pType::String>(OVFParameter::Bound)};
             //count how many tokens there are, validating if they are convertible to double
-            auto cnt = countTokens(boundaryList, [](const std::string& ref){try{std::stod(ref);}catch(const std::logic_error& e){return false;} return true;});
+            auto cnt = countTokens(boundaryList, [](const std::string& ref){try{std::stod(ref);}catch(const std::logic_error&){return false;} return true;});
             if( cnt == 0)
                 return{false, prefix + "A string in 'boundarylist' contains invalid tokens: \n\t" + boundaryList, {OVFParameter::Bound}};
             if( cnt % 3 != 0)

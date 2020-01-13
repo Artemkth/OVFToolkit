@@ -184,13 +184,13 @@ namespace VField{
     template<> inline std::optional<associatedType_t<pType::Uint>> ParseToken<pType::Uint>(const std::string& str)
     {
         try{ return stoul(str); }
-        catch(const std::logic_error& e)
+        catch(const std::logic_error&)
         { return std::nullopt; }
     }
     template<> inline std::optional<associatedType_t<pType::Float>> ParseToken<pType::Float>(const std::string& str)
     {
         try{ return stod(str); }
-        catch(const std::logic_error& e)
+        catch(const std::logic_error&)
         { return std::nullopt; }
     }
     template<> inline std::optional<associatedType_t<pType::String>> ParseToken<pType::String>(const std::string& str)
@@ -515,10 +515,10 @@ namespace VField{
             }
 
             //else try to match for one of the allowed other parameters
-            it = std::find_if(AllowedOtherParams.begin(), AllowedOtherParams.end(),
-                    [&](const OVFParameter& p){return std::regex_match(buffer, res, TokenMap.at(p));});
+            auto itOpt = std::find_if(AllowedOtherParams.cbegin(), AllowedOtherParams.cend(),
+                [&](const OVFParameter& p) {return std::regex_match(buffer, res, TokenMap.at(p)); });
 
-            if(it == AllowedOtherParams.end())
+            if(itOpt == AllowedOtherParams.end())
             {
                 if(log != "") log += "\n";
                 log+=(std::string)"readHeader: Encountered unexpected line # " + 
@@ -541,7 +541,7 @@ namespace VField{
                 BadLineCnt = 0;
             }
             //else can again switch on a type of parameter
-            switch(*it)
+            switch(*itOpt)
             {
             case(OVFParameter::Open):
                 if(log != "") log += "\n";

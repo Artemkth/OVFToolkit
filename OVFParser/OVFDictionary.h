@@ -211,24 +211,9 @@ namespace DictionaryHelpers{
         return intersect;
     }
 
-    //array joining 
-    template<std::size_t n, std::size_t m>
-    constexpr auto join( const std::array<VField::OVFParameter, n>& arr1,
-                                   const std::array<VField::OVFParameter, m>& arr2 )
-    {
-        std::array<VField::OVFParameter, n+m> collector{};
-        auto cit = collector.begin();
-        for(auto it = arr1.begin(); it != arr1.end(); ++it)
-        {
-            *cit++ = *it;
-        }
-        for(auto it = arr2.begin(); it != arr2.end(); ++it)
-            *cit++ = *it;
-        
-        return collector;
-    }
+    //collect constexpr containers into a single one
     template<typename... T>
-    constexpr auto makeUnion(const T& ...params)
+    constexpr auto makeUnion(const T ...params)
     {
         //static_assert((!hasDuplicates(params) && ...), "One of the arguments had a duplicate");
         constexpr std::size_t totCount {(params.size() + ... + 0)}; //unary form not would exclude the case with empty pack!
@@ -276,7 +261,7 @@ namespace DictionaryHelpers{
 namespace VField{
     //main info structure
     using ParamInfo = 
-        struct DictionaryHelpers::Helper<static_cast<DictionaryHelpers::intType>(OVFParameter::Invalid)>;
+        typename DictionaryHelpers::Helper<static_cast<DictionaryHelpers::intType>(OVFParameter::Invalid)>;
     
     // define the parameter 'universe'
     // in c++20 can switch to constexpr vector which also uses iterator initializing
