@@ -1,6 +1,8 @@
 #include<algorithm>
 #include<type_traits>
-#include<stdexcept>
+#if defined(_MSC_VER)
+#include<stdexcept> //workaround for missing logic_error
+#endif
 #include"VField.h"
 #include<optional>
 #include<variant>
