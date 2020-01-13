@@ -13,5 +13,22 @@ int main()
     testHeader.set(VField::OVFParameter::Xnodes, testUnsigned);
     testHeader.set(VField::OVFParameter::Xstep, testDouble);
 
+    //and then immediately test what we have set
+    if(testHeader.getString(VField::OVFParameter::Desc) != testString)
+    {
+        std::cerr << "String value got corrupted!\n";
+        return 1;
+    }
+    if(testHeader.getUint(VField::OVFParameter::Xnodes) != testUnsigned)
+    {
+        std::cerr << "Integer value got corrupted!\n";
+        return 1;
+    }
+    if(testHeader.getFloat(VField::OVFParameter::Xstep) != testDouble)
+    {
+        std::cerr << "Floating-point value got corrupted!\n";
+        return 1;
+    }
+
     return 0;
 }
