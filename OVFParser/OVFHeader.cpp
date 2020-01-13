@@ -24,13 +24,13 @@ namespace VField{
                 switch(paramIndex(x))
                 {
                     case(pType::Uint):
-                        pmap.emplace(x, std::make_optional<associatedType_t<pType::Uint>>());
+                        pmap.emplace(x, std::optional<associatedType_t<pType::Uint>>{});
                         break;
                     case(pType::Float):
-                        pmap.emplace(x, std::make_optional<associatedType_t<pType::Float>>());
+                        pmap.emplace(x, std::optional<associatedType_t<pType::Float>>{});
                         break;
                     case(pType::String):
-                        pmap.emplace(x, std::make_optional<associatedType_t<pType::String>>());
+                        pmap.emplace(x, std::optional<associatedType_t<pType::String>>{});
                         break;
                     case(pType::Other):
                         //hope it never reaches here :p
