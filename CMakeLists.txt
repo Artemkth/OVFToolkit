@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 #versioning
-project(OVFToolkit VERSION 0.1)
+project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX)
 
 #TODO: add some more checks
 # C++ standard
@@ -33,7 +33,7 @@ configure_file(OVFToolkitConfig.h.in OVFToolkitConfig.h)
 target_include_directories(ovfparser 
                            PUBLIC 
                            $<INSTALL_INTERFACE:include/OVFParser>
-                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/OVFparser>
+                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/OVFParser>
                            $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/OVFParser>
                            PRIVATE
                            #boost for building internals
@@ -55,4 +55,13 @@ install(FILES
     OVFParser/OVFWriter.h
     "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h" DESTINATION "${INCLUDE_INSTALL_DIR}"
 )
+
+#include tests
+IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+    include(CTest)
+ENDIF()
+
+IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
+    add_subdirectory(tests)
+ENDIF()
 
