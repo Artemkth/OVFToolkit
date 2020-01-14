@@ -86,6 +86,10 @@ namespace VField{
         //move stuff
         OVFHeader(OVFHeader&& ref) = default;
         OVFHeader& operator=(OVFHeader&& ref) = default;
+        //comparison operators
+        bool operator==(const OVFHeader& ref) const noexcept;
+        bool operator!=(const OVFHeader& ref) const noexcept
+        { return !(*this == ref); }
         
         //Public interfaces of the header
         //first common utils
@@ -122,7 +126,7 @@ namespace VField{
         associatedType_t<p>& at(const OVFParameter&) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
         const associatedType_t<pt>& at(const OVFParameter& p) const &
-        {if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p);}
+        { if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p); }
     };
     
     //allowed instantiations for at template

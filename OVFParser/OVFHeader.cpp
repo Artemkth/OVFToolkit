@@ -77,6 +77,14 @@ namespace VField{
         }
     };
 
+    //comparison implementation
+    bool OVFHeader::operator==(const OVFHeader& ref) const noexcept
+    {
+        if(data -> meshType != ref.data -> meshType)
+            return false;
+        return data -> ParameterFields == ref.data -> ParameterFields;
+    }
+
     //validation stuff
     //Implemented in OVFGrammar.cpp!
     extern std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref);

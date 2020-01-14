@@ -132,6 +132,22 @@ int main()
     //copy construction
     auto copy{ testHeader };
     auto copy2  = testHeader;
+    if( copy != testHeader || copy2 != testHeader)
+    {
+        std::cerr << "Copying corrupted the data!\n";
+        return 10;
+    }
+    //try out the inequality operator
+    copy.set(VField::OVFParameter::Desc, testStringChange);
+    if( copy == testHeader )
+    {
+        std::cerr << "Comparison operator failure\n";
+        return 11;
+    }
+
+    //check the move operators
+    VField::OVFHeader emptyHeader;
+    std::swap(copy2, emptyHeader);
 
     return 0;
 }
