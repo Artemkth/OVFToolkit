@@ -84,8 +84,10 @@ namespace VField{
         OVFHeader(const OVFHeader&);
         OVFHeader& operator=(const OVFHeader&);
         //move stuff
-        OVFHeader(OVFHeader&& ref) = default;
-        OVFHeader& operator=(OVFHeader&& ref) = default;
+        OVFHeader(OVFHeader&& ref)
+        { std::swap(data, ref.data); } //TODO: investigate why '=default' causes exceptions, just of curiosity
+        OVFHeader& operator=(OVFHeader&& ref)
+        { std::swap(data, ref.data); return *this; }
         //comparison operators
         bool operator==(const OVFHeader& ref) const noexcept;
         bool operator!=(const OVFHeader& ref) const noexcept
@@ -121,7 +123,7 @@ namespace VField{
         //validation function
         bool validate();                                          //validate contents
         const associatedType_t<pType::String> ValidationReport(); //report checks done, run validation if needed
-        //template for getting access to data
+        //template for getting access to data by reference, throws when wrong data type is requested for a given parameter
         template<pType p>
         associatedType_t<p>& at(const OVFParameter&) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
