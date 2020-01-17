@@ -436,7 +436,7 @@ namespace VField{
         auto version = matchVersionString(Header.at<pType::String>(OVFParameter::VersionString));
         if(curDataPoints() == 0 || version == OVFVersion::Unknown || !Header.isSet(OVFParameter::Mtype) || (version == OVFVersion::OVF2 && !Header.isSet(OVFParameter::Vdim)) )
             return false;
-        const auto dim = ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
+        const std::size_t dim = ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
                          ((version == OVFVersion::OVF1) ? 3 : Header.getUint(OVFParameter::Vdim));
         return curDataPoints() % dim == 0;
     }

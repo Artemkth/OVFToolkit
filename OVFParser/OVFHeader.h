@@ -128,7 +128,11 @@ namespace VField{
         associatedType_t<p>& at(const OVFParameter&) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
         const associatedType_t<pt>& at(const OVFParameter& p) const &
-        { if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!"); return at<pt>(p); }
+        {
+            if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!");
+            //hacky way to do that, but casting this to non-const to use normal at operator
+            return const_cast<OVFHeader*>(this)->at<pt>(p);
+        }
     };
     
     //allowed instantiations for at template

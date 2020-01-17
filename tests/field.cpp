@@ -5,6 +5,7 @@
 #include<cmath>
 #include<array>
 #include<VField.h>
+#include<limits>
 
 int main()
 {
@@ -50,11 +51,59 @@ int main()
     //Define common header
     VField::OVFHeader commonHeader("# OOMMF OVF 2.0");
     commonHeader.set(VField::OVFParameter::Title, "Random VField");
-    commonHeader.set(VField::OVFParameter::Desc, "reall, it is random!");
+    commonHeader.set(VField::OVFParameter::Desc, "really, it is random!");
     //mesh parameters
     commonHeader.set(VField::OVFParameter::Xnodes, Xstep);
     commonHeader.set(VField::OVFParameter::Ynodes, Ystep);
     commonHeader.set(VField::OVFParameter::Znodes, Zstep);
+    commonHeader.set(VField::OVFParameter::Vdim, Pdim);
+    //To be expanded later for features needing full header
+    
+    //test features requiring Weak Addressibility (ability to traverse points of internal array)
+    {
+        //make copies and keep originals of fields for later
+        VField::VField tmpRegular(commonHeader, pCount * Pdim, const_cast<const double*>(data));
+        VField::VField tmpIrregular(commonHeader, pCount * (Pdim + 3), const_cast<const double*>(irrData));
+        tmpRegular.Header.setMesh(VField::OVFHeader::MeshType::rectangular);
+        tmpIrregular.Header.setMesh(VField::OVFHeader::MeshType::irregular);
+        //this should be enough to make both weakly addressable!
+        if(!tmpRegular.isWeaklyAddressable() || !tmpIrregular.isWeaklyAddressable())
+        {
+            std::cerr << "Arrays unexpectedly not weakly addressable!\n";
+            return 1;
+        }
+        //now check how well can point count be determined
+        if(tmpRegular.pntDimension() != Pdim || tmpIrregular.pntDimension() != (Pdim + 3))
+        {
+            std::cerr << "Got unexpected point dimensions!\n";
+            return 2;
+        }
+        if(tmpRegular.pntCount() != pCount || tmpIrregular.pntCount() != pCount)
+        {
+            std::cerr << "Got incorrent number of points!\n";
+            return 3;
+        }
+        if( std::distance(tmpRegular.cbegin<double>(), tmpRegular.cend<double>()) != pCount ||
+            std::distance(tmpRegular.begin<double>(), tmpRegular.end<double>()) != pCount )
+        {
+            std::cerr << "Iterator goes over invalid ammount of points!\n";
+            return 4;
+        }
+        //now try to convert and see if it is still RICHTIG
+        auto tmpCopy {tmpRegular};
+        tmpCopy.convert<float>();
+        //check if after conversion numbers are still within rounding error!
+        if( !std::equal( tmpCopy.cbegin<float>(), tmpCopy.cend<float>(), tmpRegular.cbegin<double>(),
+            [&tmpCopy] (const float* arr1, const double* arr2){
+                return std::equal(arr1, arr1 + tmpCopy.pntDimension(), arr2,
+                     [](const float& a, const double& b){return std::abs(b-a)/std::abs(b) <= std::numeric_limits<float>::epsilon(); });
+            })
+        )
+        {
+            std::cerr << "Conversion and/or copy failed!\n";
+            return 5;
+        }
+    }
 
     //don't forget to clean up after ourselves
     delete [] data;

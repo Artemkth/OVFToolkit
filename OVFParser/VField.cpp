@@ -98,8 +98,19 @@ namespace VField{
             storSize = ref.storSize;
             return *this;
         }
-        StorageArray(StorageArray&& ref) = default;
-        StorageArray& operator= (StorageArray&& ref) = default;
+        StorageArray(StorageArray&& ref)
+        {
+            std::swap(storSize, ref.storSize);
+            std::swap(farray, ref.farray);
+            std::swap(darray, ref.darray);
+        }
+        StorageArray& operator= (StorageArray&& ref) 
+        {
+            std::swap(storSize, ref.storSize);
+            std::swap(farray, ref.farray);
+            std::swap(darray, ref.darray);
+            return *this;
+        }
         ~StorageArray()
         {
             clear();
@@ -134,13 +145,13 @@ namespace VField{
     //outside conversion
     template<> void VField::convert<float>()
     {
-        if(!isDataPresent() || data->farray == nullptr)
+        if(!isDataPresent() || data->farray != nullptr)
             return;
         data->convert();
     }
     template<> void VField::convert<double>()
     {
-        if(!isDataPresent() || data->darray == nullptr)
+        if(!isDataPresent() || data->darray != nullptr)
             return;
         data->convert();
     }
@@ -189,7 +200,7 @@ namespace VField{
         if(farray != nullptr)
             std::copy_n( farray, storSize, buffer);
         else if(darray != nullptr)
-            std::copy_n( farray, storSize, buffer);
+            std::copy_n( darray, storSize, buffer);
         
         return buffer;
     }
@@ -295,7 +306,7 @@ namespace VField{
     //implementation of iterator creators
     template<> VField::VFieldIterator<float> VField::begin<float> ()
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> farray == nullptr)
@@ -304,7 +315,7 @@ namespace VField{
     }
     template<> VField::VFieldIterator<double> VField::begin<double> ()
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> darray == nullptr)
@@ -313,7 +324,7 @@ namespace VField{
     }
     template<> VField::ConstVFieldIterator<double> VField::begin<double> () const
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> darray == nullptr)
@@ -322,7 +333,7 @@ namespace VField{
     }
     template<> VField::ConstVFieldIterator<float> VField::begin<float> () const
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> farray == nullptr)
@@ -332,7 +343,7 @@ namespace VField{
     //and same for end
     template<> VField::VFieldIterator<float> VField::end<float> ()
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> farray == nullptr)
@@ -341,7 +352,7 @@ namespace VField{
     }
     template<> VField::VFieldIterator<double> VField::end<double> ()
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> darray == nullptr)
@@ -350,7 +361,7 @@ namespace VField{
     }
     template<> VField::ConstVFieldIterator<double> VField::end<double> () const
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> darray == nullptr)
@@ -359,7 +370,7 @@ namespace VField{
     }
     template<> VField::ConstVFieldIterator<float> VField::end<float> () const
     {
-        if(!isAddressable())
+        if(!isWeaklyAddressable())
             throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
 
         if (data -> farray == nullptr)

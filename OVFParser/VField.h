@@ -1,5 +1,6 @@
 //header file for the main vector field storage container, template class VField
 #pragma once
+#include<iterator>
 #include"OVFHeader.h"
 #include"ovfparser_export.h"
 
@@ -11,19 +12,40 @@ namespace VField{
             //data is stored internally as a single array of homogenious-type values
             struct StorageArray;
             StorageArray *data{nullptr};
+
+            //common defines to be used by iterators to be compatible with algorithm library
+            //T is supposed to be a floating point arithmetic type
+            template<typename T>
+            class CommonVFieldIterator{
+                public:
+                    using difference_type = std::ptrdiff_t;
+                    using value_type = T*;
+                    using pointer = T**;
+                    using reference = void;
+                    using iterator_category = std::random_access_iterator_tag;
+            };
             
         public:
             //constructors and other general utility
             VField();
             explicit VField(const associatedType_t<pType::String>& version): VField()
             {Header.set(OVFParameter::VersionString, version);}
+            //constructors for fully populating the internals
+            template<typename T>
+            VField(const OVFHeader& head, std::size_t size = 0, T* ref = nullptr)       : VField()
+            { Header = head; if(ref!=nullptr) setData(ref, size); }
+            template<typename T>
+            VField(const OVFHeader& head, std::size_t size = 0, const T* ref = nullptr) : VField()
+            { Header = head; if(ref!=nullptr) setData(ref, size); }
             ~VField();
             //copy and move c-tors
             VField(const VField&);
             VField& operator=(const VField&);
             //I would like to move it move it lol
-            VField(VField&& ref) = default;
-            VField& operator=(VField&&) = default;
+            VField(VField&& ref)
+            {std::swap(data, ref.data);}
+            VField& operator=(VField&& ref)
+            {std::swap(data, ref.data); return *this;}
             
             OVFHeader Header{};
             //number of bytes of current internally stored data
@@ -73,6 +95,7 @@ namespace VField{
             std::size_t pntDimension() const noexcept;
 
             //serialization using custom iterators
+            //TODO: curb more of the iterator goodness into parent class above^
             template<typename T>
             class VFieldIterator;
             template<typename T>
@@ -94,7 +117,7 @@ namespace VField{
             {return end<T>();}
 
             template<typename T>
-            class ConstVFieldIterator{
+            class ConstVFieldIterator: public CommonVFieldIterator<T>{
             private:
                 using indexType = associatedType_t<pType::Uint>;
                 //addressing bounds
@@ -128,7 +151,7 @@ namespace VField{
                 {data-= pntDimension * step; return *this;}
                 friend ConstVFieldIterator operator-(ConstVFieldIterator it, const std::size_t step) noexcept
                 {it-=step; return it;}
-                long int operator-(const ConstVFieldIterator& ref) const noexcept 
+                typename CommonVFieldIterator<T>::difference_type operator-(const ConstVFieldIterator& ref) const noexcept 
                 {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;}
                 bool operator == (const ConstVFieldIterator& ref) const noexcept
                 {if(parent != ref.parent) return false; return data == ref.data;}
@@ -147,7 +170,7 @@ namespace VField{
             };
             //and methods to get the iterators
             template<typename T>
-            class VFieldIterator{
+            class VFieldIterator: public CommonVFieldIterator<T>{
             private:
                 using indexType = associatedType_t<pType::Uint>;
                 //addressing bounds
@@ -182,7 +205,7 @@ namespace VField{
                 {data-= pntDimension * step; return *this;}
                 friend VFieldIterator operator-(VFieldIterator it, const std::size_t step) noexcept
                 {it-=step; return it;}
-                long int operator-(const VFieldIterator& ref) const noexcept 
+                typename CommonVFieldIterator<T>::difference_type operator-(const VFieldIterator& ref) const noexcept 
                 {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;};
                 bool operator == (const VFieldIterator& ref) const noexcept
                 {if(parent != ref.parent) return false; return data == ref.data;}
@@ -226,13 +249,9 @@ namespace VField{
     template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<double> VField::end<double> () const; 
     //instantiation of empty data setter
     template<> inline OVFPARSER_EXPORT void VField::initData<float>(const std::size_t& size)
-    {
-        setData(new float[size], size);
-    }
+    { setData(new float[size], size); }
     template<> inline OVFPARSER_EXPORT void VField::initData<double>(const std::size_t& size)
-    {
-        setData(new double[size], size);
-    }
+    { setData(new double[size], size); }
     //instantiation of conversions
     template<> OVFPARSER_EXPORT void VField::convert<float>();
     template<> OVFPARSER_EXPORT void VField::convert<double>();
