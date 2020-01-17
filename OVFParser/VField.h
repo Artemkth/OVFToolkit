@@ -251,14 +251,12 @@ namespace VField{
     OVFPARSER_EXPORT const double* VField::getData<double>() const;
 
     //template for getting a copy of internal array, changes to it will be not regarded
-    template<>
-    OVFPARSER_EXPORT float* VField::getDataCopy<float>() const;
-    template<>
-    OVFPARSER_EXPORT double* VField::getDataCopy<double>() const;
+    template<> OVFPARSER_EXPORT float*  VField::getDataCopy<float>  () const;
+    template<> OVFPARSER_EXPORT double* VField::getDataCopy<double> () const;
     //and instantiations of class methods for iterators :'(
-    template<> OVFPARSER_EXPORT VField::VFieldIterator<float> VField::begin<float> ();
+    template<> OVFPARSER_EXPORT VField::VFieldIterator<float>  VField::begin<float>  ();
     template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::begin<double> ();
-    template<> OVFPARSER_EXPORT VField::VFieldIterator<float> VField::end<float> (); 
+    template<> OVFPARSER_EXPORT VField::VFieldIterator<float>  VField::end<float>  (); 
     template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::end<double> (); 
     //instantiation of empty data setter
     template<> inline OVFPARSER_EXPORT void VField::initData<float>(const std::size_t& size)

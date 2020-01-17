@@ -304,63 +304,62 @@ namespace VField{
         return *this;
     }
     //implementation of iterator creators
-    template<typename T> 
-    VField::VFieldIterator<T> VField::begin ()
+    //TODO: investigate why templating here fails to export!
+    template<> VField::VFieldIterator<float> VField::begin<float> ()
     {
         if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+        if( data -> farray == nullptr )
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
 
         //initialize a base class, and use private access to it to form a result
-        CommonVFieldIterator<T> res;
+        CommonVFieldIterator<float> res;
         res.parent = this;
         res.pntDimension = pntDimension();
-
-        if constexpr(std::is_same<T,float>::value)
-        {
-            if(data -> farray == nullptr)
-                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-            res.data = data -> farray;
-        }
-        else if constexpr(std::is_same<T,double>::value)
-        {
-            if (data -> darray == nullptr)
-                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-            res.data = data -> darray;
-        }
-
+        res.it_data = data -> farray;
         return res;
     }
-    //and same for end
-    template<typename T> 
-    VField::VFieldIterator<T> VField::end ()
+    template<> VField::VFieldIterator<double> VField::begin<double> ()
     {
         if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+        if( data -> darray == nullptr )
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
 
         //initialize a base class, and use private access to it to form a result
-        CommonVFieldIterator<T> res;
+        CommonVFieldIterator<double> res;
         res.parent = this;
         res.pntDimension = pntDimension();
-
-        if constexpr(std::is_same<T,float>::value)
-        {
-            if(data -> farray == nullptr)
-                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-            res.data = data->farray + data->storSize;
-        }
-        else if constexpr(std::is_same<T,double>::value)
-        {
-            if (data -> darray == nullptr)
-                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-            res.data = data->darray + data->storSize;
-        }
-
+        res.it_data = data -> darray;
         return res;
     }
-    //instantiate correct ones after
-    template VField::VFieldIterator<float> VField::begin<float> ();
-    template VField::VFieldIterator<double> VField::begin<double> ();
-    template VField::VFieldIterator<float> VField::end<float> (); 
-    template VField::VFieldIterator<double> VField::end<double> (); 
+    template<> VField::VFieldIterator<float> VField::end<float> ()
+    {
+        if(!isWeaklyAddressable())
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+        if( data -> farray == nullptr )
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+
+        //initialize a base class, and use private access to it to form a result
+        CommonVFieldIterator<float> res;
+        res.parent = this;
+        res.pntDimension = pntDimension();
+        res.it_data = data->farray + data->storSize;
+        return res;
+    }
+    template<> VField::VFieldIterator<double> VField::end<double> ()
+    {
+        if(!isWeaklyAddressable())
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+        if( data -> darray == nullptr )
+            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+
+        //initialize a base class, and use private access to it to form a result
+        CommonVFieldIterator<double> res;
+        res.parent = this;
+        res.pntDimension = pntDimension();
+        res.it_data = data->darray + data->storSize;
+        return res;
+    }
 }
 
