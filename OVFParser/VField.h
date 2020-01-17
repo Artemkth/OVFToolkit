@@ -7,6 +7,14 @@
 namespace VField{
     class OVFPARSER_EXPORT VField
     {
+        public:
+            template<typename T>
+            class VFieldIterator;
+            //and standard access fields
+            template<typename T>
+            VFieldIterator<T> begin();
+            template<typename T>
+            VFieldIterator<T> end();
         private:
             //details of data storage thingie defined outside
             //data is stored internally as a single array of homogenious-type values
@@ -17,12 +25,34 @@ namespace VField{
             //T is supposed to be a floating point arithmetic type
             template<typename T>
             class CommonVFieldIterator{
+                private:
+                    const VField* parent {nullptr};
+                protected:
+                    //addressing bounds
+                    std::size_t pntDimension{};
+                    //iterator position
+                    T* it_data {nullptr};
+                    //check if classes are related
+                    bool isBrother(const CommonVFieldIterator& ref) const noexcept
+                    {return ref.parent == parent && parent != nullptr;}
                 public:
+                    //interfaces for std::iterator_traits
                     using difference_type = std::ptrdiff_t;
-                    using value_type = T*;
-                    using pointer = T**;
-                    using reference = void;
                     using iterator_category = std::random_access_iterator_tag;
+
+                    //friend function declarations to make initialization possible
+                    friend VFieldIterator<T> VField::begin<T>();
+                    friend VFieldIterator<T> VField::end<T>();
+
+                    //iterator algebra interfaces
+                    difference_type operator-(const CommonVFieldIterator& ref) const noexcept 
+                    {if(!isBrother(ref)) return 0u; return  (it_data - ref.it_data)/pntDimension;}
+
+                    bool operator == (const CommonVFieldIterator& ref) const noexcept
+                    {if(!isBrother(ref)) return false; return it_data == ref.it_data;}
+
+                    bool operator != (const CommonVFieldIterator& ref) const noexcept
+                    { return !(*this == ref); }
             };
             
         public:
@@ -47,7 +77,10 @@ namespace VField{
             VField& operator=(VField&& ref)
             {std::swap(data, ref.data); return *this;}
             
+            //Header storing all the metadata
             OVFHeader Header{};
+
+            //Access to internal data array
             //number of bytes of current internally stored data
             std::size_t curDataInternalSize() const;
             //and number of data points
@@ -79,6 +112,9 @@ namespace VField{
             //convert to specified type 
             template <typename T>
             void convert();
+            //checking dimensions of internal data
+            std::size_t pntCount() const noexcept;
+            std::size_t pntDimension() const noexcept;
 
             //interfaces for validation and deduction
             //defined and realized in OVFGrammar.cpp!
@@ -89,141 +125,122 @@ namespace VField{
             bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
             std::string DeduceRecursively(const std::size_t& max_iter = 5); //try to deduce out all of the missing required fields
             void Strip() noexcept;                                          //remove optional parameters
-            
-            //checking dimensions of internal data
-            std::size_t pntCount() const noexcept;
-            std::size_t pntDimension() const noexcept;
 
-            //serialization using custom iterators
-            //TODO: curb more of the iterator goodness into parent class above^
-            template<typename T>
-            class VFieldIterator;
-            template<typename T>
-            class ConstVFieldIterator;
-            //and standard access fields
-            template<typename T>
-            VFieldIterator<T> begin();
-            template<typename T>
-            ConstVFieldIterator<T> begin() const;
-            template<typename T>
-            VFieldIterator<T> end();
-            template<typename T>
-            ConstVFieldIterator<T> end() const;
-            template<typename T>
-            inline ConstVFieldIterator<T> cbegin() const
-            {return begin<T>();}
-            template<typename T>
-            inline ConstVFieldIterator<T> cend() const
-            {return end<T>();}
 
             template<typename T>
-            class ConstVFieldIterator: public CommonVFieldIterator<T>{
-            private:
-                using indexType = associatedType_t<pType::Uint>;
-                //addressing bounds
-                indexType pntCount{};
-                indexType pntDimension{};
-                //iterator position
-                T* data {nullptr};
-                const VField* parent {nullptr};
-                explicit ConstVFieldIterator(const VField* par, T* ref, const indexType& pcnt, const indexType& pdim): 
-                    parent(par), data(ref), pntCount(pcnt), pntDimension(pdim)
-                {} 
-            public:
-                ConstVFieldIterator(const VField* ref = nullptr): parent(ref) {}
-                ~ConstVFieldIterator() = default;
-                ConstVFieldIterator(const ConstVFieldIterator&) = default;
-                ConstVFieldIterator& operator= (const ConstVFieldIterator&) = default;
-                //now to iterating, yay!
-                ConstVFieldIterator& operator++() noexcept
-                {data+=pntDimension; return *this;}
-                ConstVFieldIterator operator++(int) noexcept
-                {ConstVFieldIterator copy = *this; data+=pntDimension; return copy;} 
-                ConstVFieldIterator& operator+=(const std::size_t& step) noexcept
-                {data+= pntDimension * step; return *this;}
-                friend ConstVFieldIterator operator+(ConstVFieldIterator it, const std::size_t step) noexcept
-                {it+=step; return it;}
-                ConstVFieldIterator& operator--() noexcept
-                {data-=pntDimension; return *this;}
-                ConstVFieldIterator operator--(int) noexcept
-                {ConstVFieldIterator copy = *this; data-=pntDimension; return copy;} 
-                ConstVFieldIterator& operator-=(const std::size_t& step) noexcept
-                {data-= pntDimension * step; return *this;}
-                friend ConstVFieldIterator operator-(ConstVFieldIterator it, const std::size_t step) noexcept
-                {it-=step; return it;}
-                typename CommonVFieldIterator<T>::difference_type operator-(const ConstVFieldIterator& ref) const noexcept 
-                {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;}
-                bool operator == (const ConstVFieldIterator& ref) const noexcept
-                {if(parent != ref.parent) return false; return data == ref.data;}
-                bool operator != (const ConstVFieldIterator& ref) const noexcept
-                {if(parent != ref.parent) return true; return data != ref.data;}
-                //dereferencing stuff
-                const T* operator*() const noexcept                           //dereferencing a list of points
-                { return data; }
-                const T& operator[](const indexType& coord) const noexcept    //dereferencing an individual point
-                { return *(data + coord); }
-                
-                //friend class declaration to make conversion possible
-                friend class VFieldIterator<T>;
-                friend ConstVFieldIterator<T> VField::begin<T>() const;
-                friend ConstVFieldIterator<T> VField::end<T>() const;
+                class ConstVFieldIterator: public CommonVFieldIterator<T>
+            {
+                protected:
+                    using CommonVFieldIterator<T>::it_data;
+                    using CommonVFieldIterator<T>::pntDimension;
+                public:
+                    //complete the interface for iteraitor_traits
+                    using value_type = T const *;
+                    using pointer = T* const *;
+                    using reference = void;
+
+                    //c-tors
+                    ConstVFieldIterator() = default;
+                    //convert from base iterator like it is done by default
+                    ConstVFieldIterator(const CommonVFieldIterator<T>& ref): CommonVFieldIterator<T>(ref) {}
+
+                    //basic iterator arithmetics
+                    ConstVFieldIterator& operator++() noexcept
+                    {it_data+=pntDimension; return *this;}
+
+                    ConstVFieldIterator operator++(int) noexcept
+                    {CommonVFieldIterator copy = *this; it_data+=pntDimension; return copy;} 
+
+                    ConstVFieldIterator& operator+=(const std::size_t& step) noexcept
+                    {it_data+= pntDimension * step; return *this;}
+
+                    friend ConstVFieldIterator operator+(ConstVFieldIterator it, const std::size_t step) noexcept
+                    {it+=step; return it;}
+
+                    ConstVFieldIterator& operator--() noexcept
+                    {it_data-=pntDimension; return *this;}
+
+                    ConstVFieldIterator operator--(int) noexcept
+                    {CommonVFieldIterator copy = *this; it_data-=pntDimension; return copy;} 
+
+                    ConstVFieldIterator& operator-=(const std::size_t& step) noexcept
+                    {it_data-= pntDimension * step; return *this;}
+
+                    friend ConstVFieldIterator operator-(ConstVFieldIterator it, const std::size_t step) noexcept
+                    {it-=step; return it;}
+
+                    //dereferencing stuff
+                    const T* operator*() const noexcept                           //dereferencing a list of points
+                    { return it_data; }
+                    const T& operator[](const std::size_t& coord) const noexcept    //dereferencing an individual point
+                    { return *(it_data + coord); }
             };
             //and methods to get the iterators
             template<typename T>
-            class VFieldIterator: public CommonVFieldIterator<T>{
-            private:
-                using indexType = associatedType_t<pType::Uint>;
-                //addressing bounds
-                indexType pntCount{};
-                indexType pntDimension{};
-                //iterator position
-                T* data {nullptr};
-                const VField* parent {nullptr};
-                explicit VFieldIterator(const VField* par,T* ref, const indexType& pcnt, const indexType& pdim): 
-                    parent(par), data(ref), pntCount(pcnt), pntDimension(pdim)
-                {} 
-            public:
-                VFieldIterator(const VField* ref = nullptr): parent(ref) {}
-                ~VFieldIterator() = default;
-                VFieldIterator(const VFieldIterator&) = default;
-                VFieldIterator& operator= (const VFieldIterator&) = default;
+            class VFieldIterator: public CommonVFieldIterator<T>
+            {
+                protected:
+                    using CommonVFieldIterator<T>::it_data;
+                    using CommonVFieldIterator<T>::pntDimension;
+                public:
+                    using value_type = T *;
+                    using pointer = T **;
+                    using reference = void;
 
-                //now to iterating, yay!
-                VFieldIterator& operator++() noexcept
-                {data+=pntDimension; return *this;}
-                VFieldIterator operator++(int) noexcept
-                {VFieldIterator copy = *this; data+=pntDimension; return copy;} 
-                VFieldIterator& operator+=(const std::size_t& step) noexcept
-                {data+= pntDimension * step; return *this;}
-                friend VFieldIterator operator+(VFieldIterator it, const std::size_t step) noexcept
-                {it+=step; return it;}
-                VFieldIterator& operator--() noexcept
-                {data-=pntDimension; return *this;}
-                VFieldIterator operator--(int) noexcept
-                {VFieldIterator copy = *this; data-=pntDimension; return copy;} 
-                VFieldIterator& operator-=(const std::size_t& step) noexcept
-                {data-= pntDimension * step; return *this;}
-                friend VFieldIterator operator-(VFieldIterator it, const std::size_t step) noexcept
-                {it-=step; return it;}
-                typename CommonVFieldIterator<T>::difference_type operator-(const VFieldIterator& ref) const noexcept 
-                {if(parent != ref.parent) return 0u; return  (data - ref.data)/pntDimension;};
-                bool operator == (const VFieldIterator& ref) const noexcept
-                {if(parent != ref.parent) return false; return data == ref.data;}
-                bool operator != (const VFieldIterator& ref) const noexcept
-                {if(parent != ref.parent) return true; return data != ref.data;}
-                //dereferencing stuff
+                    //c-tors
+                    VFieldIterator() = default;
+                    //convert from base iterator like it is done by default
+                    VFieldIterator(const CommonVFieldIterator<T>& ref): CommonVFieldIterator<T>(ref) {}
 
-                operator ConstVFieldIterator<T>() const noexcept
-                { return ConstVFieldIterator(parent, data, pntCount, pntDimension); }
+                    //basic iterator arithmetics
+                    VFieldIterator& operator++() noexcept
+                    {it_data+=pntDimension; return *this;}
 
-                T* operator*() noexcept                           //dereferencing a list of points
-                { return data; }
-                T& operator[](const indexType& coord) noexcept    //dereferencing an individual point
-                { return *(data + coord); }
-                //friend class declaration to make conversion possible
-                friend VFieldIterator<T> VField::begin<T>();
-                friend VFieldIterator<T> VField::end<T>();
+                    VFieldIterator operator++(int) noexcept
+                    {CommonVFieldIterator copy = *this; it_data+=pntDimension; return copy;} 
+
+                    VFieldIterator& operator+=(const std::size_t& step) noexcept
+                    {it_data+= pntDimension * step; return *this;}
+
+                    friend VFieldIterator operator+(VFieldIterator it, const std::size_t step) noexcept
+                    {it+=step; return it;}
+
+                    VFieldIterator& operator--() noexcept
+                    {it_data-=pntDimension; return *this;}
+
+                    VFieldIterator operator--(int) noexcept
+                    {CommonVFieldIterator copy = *this; it_data-=pntDimension; return copy;} 
+
+                    VFieldIterator& operator-=(const std::size_t& step) noexcept
+                    {it_data-= pntDimension * step; return *this;}
+
+                    friend VFieldIterator operator-(VFieldIterator it, const std::size_t step) noexcept
+                    {it-=step; return it;}
+                    //now to iterating, yay!
+                    operator ConstVFieldIterator<T>() const noexcept
+                    { return static_cast<CommonVFieldIterator<T>> (*this); }
+
+                    T* operator*() noexcept                           //dereferencing a list of points
+                    { return it_data; }
+                    T& operator[](const std::size_t& coord) noexcept    //dereferencing an individual point
+                    { return *(it_data + coord); }
             };
+
+            template<typename T>
+            ConstVFieldIterator<T> begin() const
+            {return const_cast<VField*>(this)->begin<T>();}
+
+            template<typename T>
+            ConstVFieldIterator<T> end() const
+            {return const_cast<VField*>(this)->end<T>();}
+
+            template<typename T>
+            inline ConstVFieldIterator<T> cbegin() const
+            {return begin<T>();}
+
+            template<typename T>
+            inline ConstVFieldIterator<T> cend() const
+            {return end<T>();}
     };
     
     //available specializations
@@ -241,12 +258,8 @@ namespace VField{
     //and instantiations of class methods for iterators :'(
     template<> OVFPARSER_EXPORT VField::VFieldIterator<float> VField::begin<float> ();
     template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::begin<double> ();
-    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<float> VField::begin<float> () const;
-    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<double> VField::begin<double> () const;
     template<> OVFPARSER_EXPORT VField::VFieldIterator<float> VField::end<float> (); 
     template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::end<double> (); 
-    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<float> VField::end<float> () const; 
-    template<> OVFPARSER_EXPORT VField::ConstVFieldIterator<double> VField::end<double> () const; 
     //instantiation of empty data setter
     template<> inline OVFPARSER_EXPORT void VField::initData<float>(const std::size_t& size)
     { setData(new float[size], size); }

@@ -304,78 +304,63 @@ namespace VField{
         return *this;
     }
     //implementation of iterator creators
-    template<> VField::VFieldIterator<float> VField::begin<float> ()
+    template<typename T> 
+    VField::VFieldIterator<T> VField::begin ()
     {
         if(!isWeaklyAddressable())
             throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
 
-        if (data -> farray == nullptr)
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<float>(this, data -> farray, pntCount(), pntDimension());
-    }
-    template<> VField::VFieldIterator<double> VField::begin<double> ()
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+        //initialize a base class, and use private access to it to form a result
+        CommonVFieldIterator<T> res;
+        res.parent = this;
+        res.pntDimension = pntDimension();
 
-        if (data -> darray == nullptr)
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<double>(this, data -> darray, pntCount(), pntDimension());
-    }
-    template<> VField::ConstVFieldIterator<double> VField::begin<double> () const
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
+        if constexpr(std::is_same<T,float>::value)
+        {
+            if(data -> farray == nullptr)
+                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+            res.data = data -> farray;
+        }
+        else if constexpr(std::is_same<T,double>::value)
+        {
+            if (data -> darray == nullptr)
+                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+            res.data = data -> darray;
+        }
 
-        if (data -> darray == nullptr)
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<double>(this, data -> darray, pntCount(), pntDimension());
-    }
-    template<> VField::ConstVFieldIterator<float> VField::begin<float> () const
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
-
-        if (data -> farray == nullptr)
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<float>(this, data -> farray, pntCount(), pntDimension());
+        return res;
     }
     //and same for end
-    template<> VField::VFieldIterator<float> VField::end<float> ()
+    template<typename T> 
+    VField::VFieldIterator<T> VField::end ()
     {
         if(!isWeaklyAddressable())
-            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
 
-        if (data -> farray == nullptr)
-            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<float>(this, data -> farray + data -> storSize, pntCount(), pntDimension());
-    }
-    template<> VField::VFieldIterator<double> VField::end<double> ()
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+        //initialize a base class, and use private access to it to form a result
+        CommonVFieldIterator<T> res;
+        res.parent = this;
+        res.pntDimension = pntDimension();
 
-        if (data -> darray == nullptr)
-            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::VFieldIterator<double>(this, data -> darray + data -> storSize, pntCount(), pntDimension());
-    }
-    template<> VField::ConstVFieldIterator<double> VField::end<double> () const
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
+        if constexpr(std::is_same<T,float>::value)
+        {
+            if(data -> farray == nullptr)
+                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+            res.data = data->farray + data->storSize;
+        }
+        else if constexpr(std::is_same<T,double>::value)
+        {
+            if (data -> darray == nullptr)
+                throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
+            res.data = data->darray + data->storSize;
+        }
 
-        if (data -> darray == nullptr)
-            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<double>(this, data -> darray + data -> storSize, pntCount(), pntDimension());
+        return res;
     }
-    template<> VField::ConstVFieldIterator<float> VField::end<float> () const
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::end<T>(): Cannot make iterator for non-addressable data");
-
-        if (data -> farray == nullptr)
-            throw std::logic_error("VField::end<T>(): Trying to access wrong type");
-        return VField::ConstVFieldIterator<float>(this, data -> farray + data -> storSize, pntCount(), pntDimension());
-    }
+    //instantiate correct ones after
+    template VField::VFieldIterator<float> VField::begin<float> ();
+    template VField::VFieldIterator<double> VField::begin<double> ();
+    template VField::VFieldIterator<float> VField::end<float> (); 
+    template VField::VFieldIterator<double> VField::end<double> (); 
 }
 
