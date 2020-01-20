@@ -106,10 +106,10 @@ namespace VField{
         //check if field was set method
         bool isSet(OVFParameter) const noexcept;
         
-        //setters
-        void set(OVFParameter, const associatedType_t<pType::String>& ) noexcept;
-        void set(OVFParameter, const associatedType_t<pType::Uint>& ) noexcept;
-        void set(OVFParameter, const associatedType_t<pType::Float>& ) noexcept;
+        //setters, throw if incorrect variant was chosen
+        void set(OVFParameter, const associatedType_t<pType::String>& );
+        void set(OVFParameter, const associatedType_t<pType::Uint>& );
+        void set(OVFParameter, const associatedType_t<pType::Float>& );
         
         //unset a value
         void unset(OVFParameter) noexcept;
@@ -127,7 +127,7 @@ namespace VField{
         template<pType p>
         associatedType_t<p>& at(OVFParameter) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
-        const associatedType_t<pt>& at(OVFParameter p) const &
+        const OVFPARSER_NO_EXPORT associatedType_t<pt>& at(OVFParameter p) const &
         {
             if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!");
             //hacky way to do that, but casting this to non-const to use normal at operator

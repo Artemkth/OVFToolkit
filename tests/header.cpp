@@ -171,22 +171,28 @@ int main()
         return 14;
     } catch (const std::bad_variant_access&) {}
     try{
+        //Writing a wrong type of variable through set interface
+        testHeader.set(VField::OVFParameter::Desc, 1.0f);
+        std::cerr << "Exception was expected for setting a wrong type!\n";
+        return 15;
+    } catch (const std::bad_variant_access&) {}
+    try{
         //Reading wrong type of variable through the 'at<>' interface
         testHeader.at<VField::pType::Uint>(VField::OVFParameter::VersionString);
         std::cerr << "Exception was expected for reading wrong type!\n";
-        return 15;
+        return 16;
     } catch (const std::bad_variant_access&) {}
     try{
         //Reading unitialized variable
         testHeader.getUint(VField::OVFParameter::Ynodes);
         std::cerr << "Exception was expected for accessing unitialized variable!\n";
-        return 16;
+        return 17;
     } catch (const std::bad_optional_access&) {}
     try{
         //Reading unitialized variable from constant header
         const_cast<const VField::OVFHeader&>(testHeader).at<VField::pType::Uint>(VField::OVFParameter::Ynodes);
         std::cerr << "Exception was expected for accessing unitialized variable!\n";
-        return 17;
+        return 18;
     } catch (const std::logic_error&) {}
 
     return 0;

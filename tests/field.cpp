@@ -108,6 +108,13 @@ int main()
             std::cerr << "Built-in comparison failed!\n";
             return 6;
         }
+        //check if it also detects inconsistencies
+        tmpCopy.setPoint(pCount, 42.0f);
+        if(tmpCopy == tmpRegular)
+        {
+            std::cerr << "Failure to set a point/or failure in comparison!\n";
+            return 7;
+        }
     }
 
     //don't forget to clean up after ourselves

@@ -67,7 +67,7 @@ namespace VField
     //then some of the functions to write warious parts of header
     //T is iterator to pair of <OVFParameter, bool>
     template<typename T>
-    inline std::string writeField(std::ostream& out, const OVFHeader& header,
+    inline std::string writeField(std::ostream& out, const OVFHeader& header, OVFVersion ver,
                                                     T begin, T end)
     {
         std::string log{};
@@ -81,7 +81,8 @@ namespace VField
                     "\" was not set! skipping!";
                 continue;
             }
-            if(TokenNames.find(begin -> first) == TokenNames.end())
+            const auto token_it { TokenNames.find(begin -> first) };
+            if( TokenNames.find(begin -> first) == TokenNames.end() )
             {
                 if(!log.empty())
                     log += "\n";
@@ -93,17 +94,17 @@ namespace VField
             if(begin -> first == OVFParameter::Desc)
             {
                 std::string desc = header.getString(begin -> first);
-                std::regex pat("^\\s*(.*?)\\s*\n", std::regex_constants::ECMAScript);
+                std::regex pat("(.*?)\\s*\n", std::regex_constants::ECMAScript);
                 std::smatch sm;
                 while(!desc.empty() && std::regex_search(desc, sm, pat))
                 {
-                    out << "# " << ParameterName(OVFParameter::Desc) << ": ";
+                    out << "# " << getName(ver, begin -> first) << ": ";
                     out << sm[1].str() << "\n";
                     desc = sm.suffix();
                 }
                 continue;
             }
-            out << "# " << ParameterName(begin -> first) << ": ";
+            out << "# " << getName(ver, begin -> first) << ": ";
             switch(paramIndex(begin -> first))
             {
             case(pType::Uint):
@@ -146,7 +147,7 @@ namespace VField
             std::vector<std::pair<OVFParameter, bool>> Titles {OVFTitles.begin(), OVFTitles.end()};
             if(version == OVFVersion::OVF1)
                 Titles.push_back(std::make_pair(OVFParameter::Vmult, true));
-            writeField(out, header, Titles.begin(), Titles.end());
+            writeField(out, header, version, Titles.begin(), Titles.end());
             //write a small comment
             out << "## Grid parameters: \n";
             //TODO: finish! 
@@ -166,7 +167,8 @@ namespace VField
     template<typename T>
     inline void WriteBinaryData(std::ostream& out, const OVFVersion& version, const VField& field)
     {
-        out<<TestVal<T>;
+        out.write(reinterpret_cast<const std::ostream::char_type*>(&TestVal<T>), 
+                sizeof(T)/sizeof(std::ostream::char_type));
         T* buff {nullptr};
         if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
                 boost::endian::order::native == boost::endian::order::little )
