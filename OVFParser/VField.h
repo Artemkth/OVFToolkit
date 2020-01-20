@@ -11,6 +11,7 @@ namespace VField{
             template<typename T>
             class VFieldIterator;
             //and standard access fields
+            //throw if isWeaklyAddressible() = false, or incorrect data type requested
             template<typename T>
             VFieldIterator<T> begin();
             template<typename T>
@@ -57,15 +58,16 @@ namespace VField{
             
         public:
             //constructors and other general utility
+            //*every* can throw iff out of memory (std::bad_alloc)
             VField();
             explicit VField(const associatedType_t<pType::String>& version): VField()
             { Header.set(OVFParameter::VersionString, version); }
             //constructors for fully populating the internals
             template<typename T>
-            VField(const OVFHeader& head, std::size_t size = 0, T* ref = nullptr)       : VField()
+            explicit VField(const OVFHeader& head, std::size_t size = 0, T* ref = nullptr)       : VField()
             { Header = head; if(ref!=nullptr) setData(ref, size); }
             template<typename T>
-            VField(const OVFHeader& head, std::size_t size = 0, const T* ref = nullptr) : VField()
+            explicit VField(const OVFHeader& head, std::size_t size = 0, const T* ref = nullptr) : VField()
             { Header = head; if(ref!=nullptr) setData(ref, size); }
             ~VField();
             //copy and move c-tors
@@ -78,9 +80,9 @@ namespace VField{
             {std::swap(data, ref.data); return *this;}
 
             //comparison operations
-            bool isSameDataAs(const VField&) const;
-            bool operator==(const VField&) const;
-            bool operator!=(const VField& ref) const
+            bool isSameDataAs(const VField&) const noexcept;
+            bool operator==(const VField&) const noexcept;
+            bool operator!=(const VField& ref) const noexcept
             { return !(*this == ref); }
             
             //Header storing all the metadata
@@ -88,31 +90,33 @@ namespace VField{
 
             //Access to internal data array
             //number of bytes of current internally stored data
-            std::size_t curDataInternalSize() const;
+            //return 0 if for some reason cannot be calculated
+            std::size_t curDataInternalSize() const noexcept;
             //and number of data points
-            std::size_t curDataPoints() const;
+            std::size_t curDataPoints() const noexcept;
             //is data present
-            bool isDataPresent() const; 
+            bool isDataPresent() const noexcept; 
             //clearing out the storage
-            void clearData();
+            void clearData() noexcept;
             //initialize it empty
             template<typename T>
-            inline void initData(const std::size_t& );
+            inline void initData( std::size_t );
             
             //data access methods
-            //setting data to whatever, 
-            void setData(float*, const std::size_t&);
-            void setData(double*, const std::size_t&);
+            //setting data to whatever, clears previous data 
+            void setData(float*, std::size_t) noexcept;
+            void setData(double*, std::size_t) noexcept;
             //same but with a copy, indicated by pointer being constant
-            void setData(const float*, const std::size_t&);
-            void setData(const double*, const std::size_t&);
+            //throw when out of memory
+            void setData(const float*, std::size_t);
+            void setData(const double*, std::size_t);
             //setting specific elements, bool indicates success
-            bool setPoint(const std::size_t&, const float&);
-            bool setPoint(const std::size_t&, const double&);
-            //get data
+            bool setPoint(std::size_t, const float&);
+            bool setPoint(std::size_t, const double&);
+            //get data, throw if trying to get wrong type
             template <typename T>
             const T* getData() const;
-            //get a copy
+            //get a copy, perform a conversion if needed
             template <typename T>
             T* getDataCopy() const;
             //convert to specified type 
@@ -124,8 +128,8 @@ namespace VField{
 
             //interfaces for validation and deduction
             //defined and realized in OVFGrammar.cpp!
-            bool isAddressable() const;                                     //validate if there is enough information to traverse internal array
-            bool isWeaklyAddressable() const;                               //validate if there is *just* enough information to traverse internal array
+            bool isAddressable() const noexcept;                                     //validate if there is enough information to traverse internal array
+            bool isWeaklyAddressable() const noexcept;                               //validate if there is *just* enough information to traverse internal array
             bool isValid();                                                 //check if vector field is in spec
             std::string ValidationReport();                                 //full report of validation results, run validation if needed
             bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
@@ -265,9 +269,9 @@ namespace VField{
     template<> OVFPARSER_EXPORT VField::VFieldIterator<float>  VField::end<float>  (); 
     template<> OVFPARSER_EXPORT VField::VFieldIterator<double> VField::end<double> (); 
     //instantiation of empty data setter
-    template<> inline OVFPARSER_EXPORT void VField::initData<float>(const std::size_t& size)
+    template<> inline OVFPARSER_EXPORT void VField::initData<float>(std::size_t size)
     { setData(new float[size], size); }
-    template<> inline OVFPARSER_EXPORT void VField::initData<double>(const std::size_t& size)
+    template<> inline OVFPARSER_EXPORT void VField::initData<double>(std::size_t size)
     { setData(new double[size], size); }
     //instantiation of conversions
     template<> OVFPARSER_EXPORT void VField::convert<float>();

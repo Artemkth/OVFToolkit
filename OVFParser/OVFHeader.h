@@ -76,7 +76,7 @@ namespace VField{
         
         //c-tor and d-tor of a header
         OVFHeader();
-        ~OVFHeader();
+        ~OVFHeader() noexcept;
         //the one where version string is explicitly known beforehand, useful when parsing a file, to be defined outside
         explicit OVFHeader(const associatedType_t<pType::String>& ref) : OVFHeader()
         { set(OVFParameter::VersionString, ref); }
@@ -95,28 +95,28 @@ namespace VField{
         
         //Public interfaces of the header
         //first common utils
-        static pType paramType (const OVFParameter&);
+        static pType paramType (OVFParameter) noexcept;
         
         //retrieve methods
         //const identifier is ignored unless associatedType_t is a c array, or c++ container like std::string
-        const associatedType_t<pType::String>& getString(const OVFParameter&) const &;
-        const associatedType_t<pType::Uint>& getUint(const OVFParameter&) const &;
-        const associatedType_t<pType::Float>& getFloat(const OVFParameter&) const &;
+        const associatedType_t<pType::String>& getString(OVFParameter) const &;
+        const associatedType_t<pType::Uint>& getUint(OVFParameter) const &;
+        const associatedType_t<pType::Float>& getFloat(OVFParameter) const &;
 
         //check if field was set method
-        bool isSet(const OVFParameter&) const noexcept;
+        bool isSet(OVFParameter) const noexcept;
         
         //setters
-        void set(const OVFParameter&, const associatedType_t<pType::String>& ) noexcept;
-        void set(const OVFParameter&, const associatedType_t<pType::Uint>& ) noexcept;
-        void set(const OVFParameter&, const associatedType_t<pType::Float>& ) noexcept;
+        void set(OVFParameter, const associatedType_t<pType::String>& ) noexcept;
+        void set(OVFParameter, const associatedType_t<pType::Uint>& ) noexcept;
+        void set(OVFParameter, const associatedType_t<pType::Float>& ) noexcept;
         
         //unset a value
-        void unset(const OVFParameter&) noexcept;
+        void unset(OVFParameter) noexcept;
         
         //mesh type
-        MeshType getMeshType() const;
-        void setMesh(const MeshType&);
+        MeshType getMeshType() const noexcept;
+        void setMesh(MeshType) noexcept;
         
         //reset function
         void reset();
@@ -125,9 +125,9 @@ namespace VField{
         const associatedType_t<pType::String> ValidationReport(); //report checks done, run validation if needed
         //template for getting access to data by reference, throws when wrong data type is requested for a given parameter
         template<pType p>
-        associatedType_t<p>& at(const OVFParameter&) &;           //will check the type, and throw if incorrect one is used!
+        associatedType_t<p>& at(OVFParameter) &;           //will check the type, and throw if incorrect one is used!
         template<pType pt>
-        const associatedType_t<pt>& at(const OVFParameter& p) const &
+        const associatedType_t<pt>& at(OVFParameter p) const &
         {
             if(!isSet(p)) throw std::logic_error("Cannot access an unitialized field!");
             //hacky way to do that, but casting this to non-const to use normal at operator
@@ -136,8 +136,8 @@ namespace VField{
     };
     
     //allowed instantiations for at template
-    template<> OVFPARSER_EXPORT associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) &;
-    template<> OVFPARSER_EXPORT associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &;
-    template<> OVFPARSER_EXPORT associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) &;
+    template<> OVFPARSER_EXPORT associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (OVFParameter p) &;
+    template<> OVFPARSER_EXPORT associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (OVFParameter p) &;
+    template<> OVFPARSER_EXPORT associatedType_t<pType::String>& OVFHeader::at<pType::String> (OVFParameter p) &;
 }
 

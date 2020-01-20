@@ -414,7 +414,7 @@ namespace VField{
     }
     
     //method telling if current data is isAddressable, i.e. if data structure within array is known
-    bool VField::isAddressable() const
+    bool VField::isAddressable() const noexcept
     {
         //if it is impossible to calculate number of values we already are in a bust
         const auto expected = expectedValueCount(Header);
@@ -429,7 +429,7 @@ namespace VField{
         return true;
     }
     //and same for weekly addressable, i.e. there is enough data to traverse internal array, but it ends abruptly
-    bool VField::isWeaklyAddressable() const
+    bool VField::isWeaklyAddressable() const noexcept
     {
         if(!Header.isSet(OVFParameter::VersionString))
             return false;

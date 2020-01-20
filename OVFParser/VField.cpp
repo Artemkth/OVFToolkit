@@ -44,10 +44,11 @@ namespace VField{
         //else need to find least and most accurate types
         using precision_type = typename std::conditional< (sizeof(T) > sizeof(U)), T, U >::type;
         constexpr precision_type epsilon { std::numeric_limits<typename std::conditional<sizeof(T) < sizeof(U), T, U>::type>::epsilon() };
+        constexpr precision_type min_val { 10 * std::numeric_limits<typename std::conditional<sizeof(T) < sizeof(U), T, U>::type>::min() };
         //and compare giving allowance for maximum of epsilon discrepancy
         //TODO: check later if you need to cast both v1 and v2 to precision_type
         return std::equal( arr1, arr1 + size, arr2,
-                [] (const T& v1, const U& v2) { return v1 != 0.0? std::abs(v1 - v2)/std::abs(v1) <= epsilon : std::abs(v2) <= epsilon; } );
+                [] (const T& v1, const U& v2) { return v1 != 0.0? std::abs(v1 - v2)/std::abs(v1) <= epsilon : std::abs(v2) <= min_val; } );
     }
         
     struct VField::StorageArray
@@ -202,7 +203,7 @@ namespace VField{
         data->convert();
     }
 
-    std::size_t VField::curDataInternalSize() const
+    std::size_t VField::curDataInternalSize() const noexcept
     {
         if( data -> farray != nullptr)
             return sizeof(float);
@@ -210,12 +211,12 @@ namespace VField{
             return sizeof(double);
         return 0;
     }
-    std::size_t VField::curDataPoints() const
+    std::size_t VField::curDataPoints() const noexcept
     {
         return data -> storSize;
     }
 
-    bool VField::isDataPresent() const
+    bool VField::isDataPresent() const noexcept
     {
         return !( data -> isEmpty() );
     }
@@ -230,7 +231,7 @@ namespace VField{
         delete data;
     }
     
-    void VField::clearData()
+    void VField::clearData() noexcept
     {
         data -> clear();
     }
@@ -280,21 +281,21 @@ namespace VField{
     }
     
     //setters
-    void VField::setData(float* arr, const std::size_t& size)
+    void VField::setData(float* arr, std::size_t size) noexcept
     {
         *data = std::move(StorageArray(arr, size));
     }
-    void VField::setData(double* arr, const std::size_t& size)
+    void VField::setData(double* arr, std::size_t size) noexcept
     {
         *data = std::move(StorageArray(arr, size));
     }
-    void VField::setData(const float* arr, const std::size_t& size)
+    void VField::setData(const float* arr, std::size_t size)
     {
         auto buffer = new float[size];
         std::copy_n( arr, size, buffer);
         *data = std::move(StorageArray(buffer, size));
     }
-    void VField::setData(const double* arr, const std::size_t& size)
+    void VField::setData(const double* arr, std::size_t size)
     {
         auto buffer = new double[size];
         std::copy_n( arr, size, buffer);
@@ -310,7 +311,7 @@ namespace VField{
     }
     //here we go
     //look into templating this stuff
-    bool VField::setPoint(const std::size_t& pos, const float& val)
+    bool VField::setPoint(std::size_t pos, const float& val)
     {
         if( data -> isEmpty() || pos >= data -> storSize )
             return false;
@@ -321,7 +322,7 @@ namespace VField{
             conv_assign(data -> darray, pos, val);
         return true;
     }
-    bool VField::setPoint(const std::size_t& pos, const double& val)
+    bool VField::setPoint(std::size_t pos, const double& val)
     {
         if( data -> isEmpty() || pos >= data -> storSize )
             return false;
@@ -351,9 +352,9 @@ namespace VField{
     }
 
     //comparison operations
-    bool VField::isSameDataAs(const VField& ref) const
+    bool VField::isSameDataAs(const VField& ref) const noexcept
     { return *data == *ref.data; }
-    bool VField::operator==(const VField& ref) const
+    bool VField::operator==(const VField& ref) const noexcept
     { return Header == ref.Header && isSameDataAs(ref); }
 
     //implementation of iterator creators

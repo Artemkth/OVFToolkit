@@ -113,7 +113,7 @@ namespace VField{
         data = new HeaderData();
     }
     //d-tor
-    OVFHeader::~OVFHeader()
+    OVFHeader::~OVFHeader() noexcept
     {
         delete data;
     }
@@ -131,24 +131,27 @@ namespace VField{
 
         return *this;
     }
+    //parameter type checker, courtesy of constexpr magic in the dictionary
+    pType OVFHeader::paramType ( OVFParameter p) noexcept
+    { return paramIndex(p); }
     //setters
-    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::String>& val) noexcept
+    void OVFHeader::set(OVFParameter param, const associatedType_t<pType::String>& val) noexcept
     {
         data->ParameterFields[param] = std::make_optional<associatedType_t<pType::String>>(val);
         data->isChecked = false;
     }
-    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Uint>& val) noexcept
+    void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Uint>& val) noexcept
     {
         data->ParameterFields[param] = std::make_optional<associatedType_t<pType::Uint>>(val);
         data->isChecked = false;
     }
-    void OVFHeader::set(const OVFParameter& param, const associatedType_t<pType::Float>& val) noexcept
+    void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Float>& val) noexcept
     {
         data->ParameterFields[param] = std::make_optional<associatedType_t<pType::Float>>(val);
         data->isChecked = false;
     }
     //check if a given field is set
-    bool OVFHeader::isSet(const OVFParameter& refP) const noexcept
+    bool OVFHeader::isSet(OVFParameter refP) const noexcept
     {
         switch(paramIndex(refP))
         {
@@ -169,25 +172,25 @@ namespace VField{
         return false;
     }
     //getters
-    const associatedType_t<pType::String>& OVFHeader::getString(const OVFParameter& param) const &
+    const associatedType_t<pType::String>& OVFHeader::getString(OVFParameter param) const &
     {
         return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[param]).value();
     }
-    const associatedType_t<pType::Uint>& OVFHeader::getUint(const OVFParameter& param) const &
+    const associatedType_t<pType::Uint>& OVFHeader::getUint(OVFParameter param) const &
     {
         return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[param]).value();
     }
-    const associatedType_t<pType::Float>& OVFHeader::getFloat(const OVFParameter& param) const &
+    const associatedType_t<pType::Float>& OVFHeader::getFloat(OVFParameter param) const &
     {
         return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[param]).value();
     }
 
     //mesh type functions
-    OVFHeader::MeshType OVFHeader::getMeshType() const
+    OVFHeader::MeshType OVFHeader::getMeshType() const noexcept
     {
         return data->meshType.value();
     }
-    void OVFHeader::setMesh(const MeshType& ref)
+    void OVFHeader::setMesh(MeshType ref) noexcept
     {
         data->meshType = ref;
         //invalidating a checked status
@@ -198,7 +201,7 @@ namespace VField{
     {data->reset();data->isChecked = false;};
 
     //unset a parameter
-    void OVFHeader::unset(const OVFParameter& p) noexcept
+    void OVFHeader::unset(OVFParameter p) noexcept
     {
         switch(paramIndex(p))
         {
@@ -224,7 +227,7 @@ namespace VField{
         }
     }
     //interfaces through bracket operator
-    template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (const OVFParameter& p) & 
+    template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (OVFParameter p) & 
     {
         if(!isSet(p))
         {
@@ -233,7 +236,7 @@ namespace VField{
         }
         return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[p]).value();
     }
-    template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (const OVFParameter& p) &
+    template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (OVFParameter p) &
     {
         if(!isSet(p))
         {
@@ -242,7 +245,7 @@ namespace VField{
         }
         return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).value();
     }
-    template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (const OVFParameter& p) &
+    template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (OVFParameter p) &
     {
         if(!isSet(p))
         {

@@ -103,7 +103,7 @@ int main()
             return 5;
         }
         //now to check the exported comparison operations
-        if ( !tmpCopy.isSameDataAs(tmpRegular) )
+        if( !tmpCopy.isSameDataAs(tmpRegular) )
         {
             std::cerr << "Built-in comparison failed!\n";
             return 6;
