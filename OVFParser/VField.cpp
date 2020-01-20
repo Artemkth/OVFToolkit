@@ -1,5 +1,7 @@
 #include<algorithm>
 #include<type_traits>
+#include<limits>
+#include<cmath>
 #if defined(_MSC_VER)
 #include<stdexcept> //workaround for missing logic_error
 #endif
@@ -29,6 +31,24 @@ namespace VField{
         std::swap(*dest, buffer);
         //delete old data now stored in buffer
         delete[] buffer;
+    }
+
+    template<typename T, typename U>
+    inline bool cmpFloatArr(const T* arr1, const U* arr2, std::size_t size)
+    {
+        static_assert( std::is_floating_point<T>::value && std::is_floating_point<U>::value,
+                "Comparing floats is only allowed for floating point arithmetic types!" );
+        //if types are the same just compare by value
+        if constexpr( std::is_same<T, U>::value )
+            return std::equal(arr1, arr1 + size, arr2);
+        //else need to find least and most accurate types
+        using precision_type = typename std::conditional< (sizeof(T) > sizeof(U)), T, U >::type;
+        constexpr precision_type epsilon { std::numeric_limits<typename std::conditional<sizeof(T) < sizeof(U), T, U>::type>::epsilon() };
+        //and compare giving allowance for maximum of epsilon discrepancy
+        //TODO: check later if you need to cast both v1 and v2 to precision_type
+        return std::equal( arr1, arr1 + size, arr2,
+                [] (const T& v1, const U& v2)
+                { return std::abs(v1 - v2) < epsilon; } );
     }
         
     struct VField::StorageArray
@@ -104,13 +124,40 @@ namespace VField{
             std::swap(farray, ref.farray);
             std::swap(darray, ref.darray);
         }
-        StorageArray& operator= (StorageArray&& ref) 
+        StorageArray& operator= (StorageArray&& ref)
         {
             std::swap(storSize, ref.storSize);
             std::swap(farray, ref.farray);
             std::swap(darray, ref.darray);
             return *this;
         }
+        //and comparison for data
+        bool operator==(const StorageArray& ref)
+        {
+            //first check if either of containers are empty, 
+            //return true if both are empty
+            if(isEmpty() || ref.isEmpty())
+                return isEmpty() && ref.isEmpty();
+            if(storSize != ref.storSize)
+                return false;
+            //else by-value comparison needs to be done
+            //TODO: try to template following out
+            if(farray != nullptr)
+            {
+                if(ref.farray != nullptr)
+                    return cmpFloatArr(farray, ref.farray, storSize);
+                else
+                    return cmpFloatArr(farray, ref.darray, storSize);
+            }
+            else
+            {
+                if(ref.farray != nullptr)
+                    return cmpFloatArr(darray, ref.farray, storSize);
+                else
+                    return cmpFloatArr(darray, ref.darray, storSize);
+            }
+        }
+
         ~StorageArray()
         {
             clear();
@@ -303,6 +350,13 @@ namespace VField{
         Header = ref.Header;
         return *this;
     }
+
+    //comparison operations
+    bool VField::isSameData(const VField& ref) const
+    { return *data == *ref.data; }
+    bool VField::operator==(const VField& ref) const
+    { return Header == ref.Header && isSameData(ref); }
+
     //implementation of iterator creators
     //TODO: investigate why templating here fails to export!
     template<> VField::VFieldIterator<float> VField::begin<float> ()

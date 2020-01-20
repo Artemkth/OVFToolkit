@@ -46,10 +46,10 @@ namespace VField{
 
                     //iterator algebra interfaces
                     difference_type operator-(const CommonVFieldIterator& ref) const noexcept 
-                    {if(!isBrother(ref)) return 0u; return  (it_data - ref.it_data)/pntDimension;}
+                    { if(!isBrother(ref)) return 0u; return  (it_data - ref.it_data)/pntDimension; }
 
                     bool operator == (const CommonVFieldIterator& ref) const noexcept
-                    {if(!isBrother(ref)) return false; return it_data == ref.it_data;}
+                    { if(!isBrother(ref)) return false; return it_data == ref.it_data; }
 
                     bool operator != (const CommonVFieldIterator& ref) const noexcept
                     { return !(*this == ref); }
@@ -59,7 +59,7 @@ namespace VField{
             //constructors and other general utility
             VField();
             explicit VField(const associatedType_t<pType::String>& version): VField()
-            {Header.set(OVFParameter::VersionString, version);}
+            { Header.set(OVFParameter::VersionString, version); }
             //constructors for fully populating the internals
             template<typename T>
             VField(const OVFHeader& head, std::size_t size = 0, T* ref = nullptr)       : VField()
@@ -76,6 +76,12 @@ namespace VField{
             {std::swap(data, ref.data);}
             VField& operator=(VField&& ref)
             {std::swap(data, ref.data); return *this;}
+
+            //comparison operations
+            bool isSameData(const VField&) const;
+            bool operator==(const VField&) const;
+            bool operator!=(const VField& ref) const
+            { return !(*this == ref); }
             
             //Header storing all the metadata
             OVFHeader Header{};
@@ -175,7 +181,6 @@ namespace VField{
                     const T& operator[](const std::size_t& coord) const noexcept    //dereferencing an individual point
                     { return *(it_data + coord); }
             };
-            //and methods to get the iterators
             template<typename T>
             class VFieldIterator: public CommonVFieldIterator<T>
             {
@@ -226,6 +231,7 @@ namespace VField{
                     { return *(it_data + coord); }
             };
 
+            //implementing access to const iterator through const_cast and iterator cast
             template<typename T>
             ConstVFieldIterator<T> begin() const
             {return const_cast<VField*>(this)->begin<T>();}

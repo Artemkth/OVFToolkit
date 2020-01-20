@@ -97,8 +97,7 @@ int main()
             [&tmpCopy] (const float* arr1, const double* arr2){
                 return std::equal(arr1, arr1 + tmpCopy.pntDimension(), arr2,
                      [](const float& a, const double& b){return std::abs(b-a)/std::abs(b) <= std::numeric_limits<float>::epsilon(); });
-            })
-        )
+            }) )
         {
             std::cerr << "Conversion and/or copy failed!\n";
             return 5;
