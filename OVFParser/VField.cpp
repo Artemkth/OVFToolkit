@@ -47,8 +47,7 @@ namespace VField{
         //and compare giving allowance for maximum of epsilon discrepancy
         //TODO: check later if you need to cast both v1 and v2 to precision_type
         return std::equal( arr1, arr1 + size, arr2,
-                [] (const T& v1, const U& v2)
-                { return std::abs(v1 - v2) < epsilon; } );
+                [] (const T& v1, const U& v2) { return v1 != 0.0? std::abs(v1 - v2)/std::abs(v1) <= epsilon : std::abs(v2) <= epsilon; } );
     }
         
     struct VField::StorageArray
@@ -352,10 +351,10 @@ namespace VField{
     }
 
     //comparison operations
-    bool VField::isSameData(const VField& ref) const
+    bool VField::isSameDataAs(const VField& ref) const
     { return *data == *ref.data; }
     bool VField::operator==(const VField& ref) const
-    { return Header == ref.Header && isSameData(ref); }
+    { return Header == ref.Header && isSameDataAs(ref); }
 
     //implementation of iterator creators
     //TODO: investigate why templating here fails to export!

@@ -102,6 +102,12 @@ int main()
             std::cerr << "Conversion and/or copy failed!\n";
             return 5;
         }
+        //now to check the exported comparison operations
+        if ( !tmpCopy.isSameDataAs(tmpRegular) )
+        {
+            std::cerr << "Built-in comparison failed!\n";
+            return 6;
+        }
     }
 
     //don't forget to clean up after ourselves

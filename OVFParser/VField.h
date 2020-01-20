@@ -78,7 +78,7 @@ namespace VField{
             {std::swap(data, ref.data); return *this;}
 
             //comparison operations
-            bool isSameData(const VField&) const;
+            bool isSameDataAs(const VField&) const;
             bool operator==(const VField&) const;
             bool operator!=(const VField& ref) const
             { return !(*this == ref); }
