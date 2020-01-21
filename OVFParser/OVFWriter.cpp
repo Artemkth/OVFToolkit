@@ -94,7 +94,7 @@ namespace VField
             if(begin -> first == OVFParameter::Desc)
             {
                 std::string desc = header.getString(begin -> first);
-                std::regex pat("(.*?)\\s*\n", std::regex_constants::ECMAScript);
+                std::regex pat("(.+?)\\s*(?:\n|$)", std::regex_constants::ECMAScript);
                 std::smatch sm;
                 while(!desc.empty() && std::regex_search(desc, sm, pat))
                 {
@@ -128,6 +128,7 @@ namespace VField
     constexpr auto OVFTitles = DictionaryHelpers::make_array(
             std::make_pair(OVFParameter::Title, true),
             std::make_pair(OVFParameter::Desc,  false),
+            std::make_pair(OVFParameter::Vlabels, true),
             std::make_pair(OVFParameter::Vunit, true),
             std::make_pair(OVFParameter::Munit, true)
         );
