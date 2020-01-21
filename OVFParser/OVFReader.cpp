@@ -322,8 +322,8 @@ namespace VField{
                                 std::to_string(line_cnt));
                     //in either case read and start waiting for data
                     data -> 
-                        segments.push_back({ VField(version),
-                                             std::nullopt,
+                        segments.push_back({ VField{version},
+                                             {},
                                              0u });
                     //rewind back 1 line
                     file.seekg(pos);
@@ -334,7 +334,7 @@ namespace VField{
                                 std::to_string(line_cnt) + ":\n" + log);
                     WaitingForData = true;
                 }
-                else if(std::regex_match(buffer, regexTokenValue("Begin", "Data")) )
+                else if(std::regex_match(buffer, regexTokenValue("Begin", "Data\\s+.+?")) )
                 {
                     if(!SegmentOpened)
                     {
@@ -343,8 +343,8 @@ namespace VField{
                         SegmentOpened = true;
                         //open a new segment with empty header
                         data -> 
-                            segments.push_back({ VField(version),
-                                                 std::nullopt,
+                            segments.push_back({ VField{version},
+                                                 {},
                                                  0u });
                     }
                     else if(!WaitingForData) // == !WaitingForData && SegmentOpened, missed header, or a duplicate data segment
@@ -370,6 +370,7 @@ namespace VField{
                     if(log != "")
                         logMessage("VFieldFile::read: Errors encountered while reading Data at line #" +
                                 std::to_string(line_cnt) + ":\n" + log);
+                    WaitingForData = false;
                     line_cnt++; //increment line counter for end line after data
                 }
                 else
@@ -381,7 +382,7 @@ namespace VField{
                 break;
             case(OVFParameter::Close):
                 {
-                    if(std::regex_match(buffer, regexTokenValue("Begin","segment")))
+                    if(std::regex_match(buffer, regexTokenValue("End","segment")))
                     {
                         if(SegmentOpened)
                             SegmentOpened = false;
@@ -592,6 +593,7 @@ namespace VField{
         return log;
     }
 
+
     //and then for the cream of the crop, header reader!
     //main method
     //TODO: implement OVF0 reading at some point
@@ -611,9 +613,20 @@ namespace VField{
         std::size_t internalSize = isBinary? ParseToken<pType::Uint>(match[4].str()).value() : 8; // guaranteed to have value from previous lines
         const auto DataBeginPos {file.tellg()};
         //next peek if data is ending at expected position
-        const std::size_t advertisedDim {out.pntDimension()};
-        const std::size_t advertisedCnt {(cnt != 0 && advertisedDim != 0)? cnt/advertisedDim : out.pntCount()};
-        auto endRegex = regexTokenValue("Begin", (std::string)"" + (isBinary? 
+        std::size_t advertisedDim {0};
+        std::size_t advertisedCnt {0};
+        {
+            //try setting previous 2 parameters
+            if(version != OVFVersion::Unknown && out.Header.isSet(OVFParameter::Mtype) && (version != OVFVersion::OVF2 || out.Header.isSet(OVFParameter::Vdim)))
+                advertisedDim = (out.Header.getMeshType() == OVFHeader::MeshType::rectangular? 0:3)+(version == OVFVersion::OVF2? out.Header.getUint(OVFParameter::Vdim) : 3);
+            if(cnt!=0 && advertisedDim!=0)
+                advertisedCnt = cnt / advertisedDim;
+            else if( out.Header.isSet(OVFParameter::Mtype) && (out.Header.getMeshType() != OVFHeader::MeshType::irregular || out.Header.isSet(OVFParameter::Pcount)) && 
+                     out.Header.isSet(OVFParameter::Xnodes) && out.Header.isSet(OVFParameter::Ynodes) && out.Header.isSet(OVFParameter::Znodes) )
+                advertisedCnt = out.Header.getMeshType() == OVFHeader::MeshType::irregular ? out.Header.getUint(OVFParameter::Pcount) :
+                                    out.Header.getUint(OVFParameter::Xnodes) * out.Header.getUint(OVFParameter::Ynodes) * out.Header.getUint(OVFParameter::Znodes);
+        }
+        auto endRegex = regexTokenValue("End", (std::string)"data" + (isBinary? 
                     ((std::string)"binary\\s+" + std::to_string(internalSize)) : "text"));
         //seeking to expected end
         if((advertisedDim * advertisedCnt != 0) || cnt !=0 ) 
@@ -632,7 +645,7 @@ namespace VField{
         std::string closingString{""};
         std::getline(file, closingString);
         std::string log {""};
-        if(std::regex_match(closingString, regexTokenValue("End","Data")))
+        if(std::regex_match(closingString, regexTokenValue("End","Data\\s+.+?")))
             cnt = advertisedDim * advertisedCnt;
         else
         {
@@ -646,7 +659,7 @@ namespace VField{
                 file.unget(); //push # back into stream
                 DataEndPos = file.tellg();
                 std::getline(file, closingString);
-                if(std::regex_match(closingString, regexTokenValue("End", "Data")))
+                if(std::regex_match(closingString, regexTokenValue("End", "Data\\s+.+?")))
                     break;
                 if(!file.good())
                     return "readData: reached the end of file searching for end of data manually ";

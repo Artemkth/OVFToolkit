@@ -116,7 +116,7 @@ int main(int argc, char** argv)
     VField::VFieldFile readBack(workingDir + "tmpOVF.ovf");
     if(!readBack.WorkLog().empty())
     {
-        std::cerr << "Got errors reading the file:\n" << readBack.WorkLog();
+        std::cerr << "Got errors reading the file:\n" << readBack.WorkLog() << "\n";
         return 3;
     }
     //and compare to original data
