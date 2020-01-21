@@ -128,7 +128,7 @@ namespace VField{
 
     //and then regex generators
     std::regex regexToken(const std::string& token)
-    { return std::regex("^#\\s*(" + token + "\\s*:)\\s*(.*?)\\s*(?:##.*)?$", commonFlags); }
+    { return std::regex("^#\\s*(" + token + ")\\s*:\\s*(.*?)\\s*(?:##.*)?$", commonFlags); }
     std::regex regexTokenValue(const std::string& token, const std::string& value)
     { return std::regex("^#\\s*(" + token + ")\\s*:\\s*(" + value + ")\\s*(?:##.*)?$", commonFlags); }
 
