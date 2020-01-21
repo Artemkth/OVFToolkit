@@ -49,6 +49,7 @@ namespace VField
         { OVFParameter::Ynodes,         "ynodes"                },
         { OVFParameter::Znodes,         "znodes"                }
     };
+
     inline std::string getName(const OVFVersion ver, const OVFParameter par)
     {
         auto val = TokenNames.at(par);
@@ -64,99 +65,161 @@ namespace VField
         }
     }
 
+    //next a specification for OVF 'recepies' is required!
+    using FieldSpecifier = 
+    //                         isRequireda *or* is to be outputed in this instance        
+            std::pair<std::variant<bool, bool (*)(const OVFHeader&)>, std::vector<OVFParameter>>;
+    using CookingStep = 
+        std::variant<
+            std::string,   //a comment to be left in file
+            FieldSpecifier //or a rule for a specific field
+        >;
+    //when a cooking rule is reached it is outputed as comment if it is set as string,
+    //else a value at OVFParameter is considered for output. If variant holds 'false' outputting may
+    //be skipped if field is not set. If variant holds a predicate outputting will be attempted if it is 
+    //returning true for current header
+
+    //recepies for different version headers, executed sequentially
+    const std::vector<CookingStep> OVF1Recepy{
+        FieldSpecifier{true, {OVFParameter::Title}},
+        FieldSpecifier{false, {OVFParameter::Desc}},
+        "Data specifications:",
+        FieldSpecifier{true, {OVFParameter::Vunit, OVFParameter::Munit, OVFParameter::Vmult}},
+        "Grid specifications:",
+        FieldSpecifier{true, {OVFParameter::Mtype}},
+        FieldSpecifier{
+            [](const OVFHeader& head)
+            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::rectangular;},
+            {
+                OVFParameter::Xnodes, OVFParameter::Ynodes, OVFParameter::Znodes,
+                OVFParameter::Xstep,  OVFParameter::Ystep,  OVFParameter::Zstep,
+                OVFParameter::Xbase,  OVFParameter::Ybase,  OVFParameter::Zbase
+            }
+        },
+        FieldSpecifier{
+            [](const OVFHeader& head)
+            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::irregular;},
+            {OVFParameter::Pcount}
+        },
+        "Miscellaneous data:",
+        FieldSpecifier{true,  { OVFParameter::Xmin, OVFParameter::Ymin, OVFParameter::Zmin,
+                                OVFParameter::Xmax, OVFParameter::Ymax, OVFParameter::Zmax  }},
+        FieldSpecifier{false, { OVFParameter::Bound, OVFParameter::Vmin, OVFParameter::Vmax }}
+    };
+    const std::vector<CookingStep> OVF2Recepy{
+        FieldSpecifier{true, {OVFParameter::Title}},
+        FieldSpecifier{false, {OVFParameter::Desc}},
+        "Data specifications:",
+        FieldSpecifier{true, {OVFParameter::Vlabels, OVFParameter::Vdim, OVFParameter::Vunit, OVFParameter::Munit}},
+        "Grid specifications:",
+        FieldSpecifier{true, {OVFParameter::Mtype}},
+        FieldSpecifier{
+            [](const OVFHeader& head)
+            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::rectangular;},
+            {
+                OVFParameter::Xnodes, OVFParameter::Ynodes, OVFParameter::Znodes,
+                OVFParameter::Xstep,  OVFParameter::Ystep,  OVFParameter::Zstep,
+                OVFParameter::Xbase,  OVFParameter::Ybase,  OVFParameter::Zbase
+            }
+        },
+        FieldSpecifier{
+            [](const OVFHeader& head)
+            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::irregular;},
+            {OVFParameter::Pcount}
+        },
+        "Miscellaneous data:",
+        FieldSpecifier{true,  { OVFParameter::Xmin, OVFParameter::Ymin, OVFParameter::Zmin,
+                                OVFParameter::Xmax, OVFParameter::Ymax, OVFParameter::Zmax  }}
+    };
+    //It's a piece of cake to bake a pretty cake :D
+    //recepy index
+    const std::map<OVFVersion, const std::vector<CookingStep>&> recepyIndex{
+        {OVFVersion::OVF1, OVF1Recepy},
+        {OVFVersion::OVF2, OVF2Recepy}
+    };
+
     //then some of the functions to write warious parts of header
-    //T is iterator to pair of <OVFParameter, bool>
-    template<typename T>
-    inline std::string writeField(std::ostream& out, const OVFHeader& header, OVFVersion ver,
-                                                    T begin, T end)
+    inline void writeField(std::ostream& out, const OVFHeader& header, OVFVersion ver, const OVFParameter p)
     {
-        std::string log{};
-        for(; begin != end; begin++ )
+        //first handling special cases of Description(multiline string output), and Meshtype (predefined string)
+        if( p == OVFParameter::Desc)
         {
-            if(!header.isSet(begin -> first) && begin -> second)
+            std::string desc = header.getString(p);
+            std::regex pat("(.+?)\\s*(?:\n|$)", std::regex_constants::ECMAScript);
+            std::smatch sm;
+            while(!desc.empty() && std::regex_search(desc, sm, pat))
             {
-                if(!log.empty())
-                    log += "\n";
-                log += (std::string)"writeField: parameter \"" + ParameterName(begin -> first) +
-                    "\" was not set! skipping!";
-                continue;
+                out << "# " << getName(ver, p) << ": ";
+                out << sm[1].str() << "\n";
+                desc = sm.suffix();
             }
-            const auto token_it { TokenNames.find(begin -> first) };
-            if( TokenNames.find(begin -> first) == TokenNames.end() )
-            {
-                if(!log.empty())
-                    log += "\n";
-                log += (std::string)"writeField: parameter \"" + ParameterName(begin -> first) +
-                    "\" has no token name defined yet! skipping!";
-                continue;
-            }
-            //else write stuff out
-            if(begin -> first == OVFParameter::Desc)
-            {
-                std::string desc = header.getString(begin -> first);
-                std::regex pat("(.+?)\\s*(?:\n|$)", std::regex_constants::ECMAScript);
-                std::smatch sm;
-                while(!desc.empty() && std::regex_search(desc, sm, pat))
-                {
-                    out << "# " << getName(ver, begin -> first) << ": ";
-                    out << sm[1].str() << "\n";
-                    desc = sm.suffix();
-                }
-                continue;
-            }
-            out << "# " << getName(ver, begin -> first) << ": ";
-            switch(paramIndex(begin -> first))
-            {
+            return;
+        }
+        if(p == OVFParameter::Mtype)
+        {
+            out << "# " << getName(ver, p) << ": ";
+            out << (header.getMeshType() == OVFHeader::MeshType::rectangular?  "rectangular" : "irregular") << "\n";
+            return;
+        }
+        //else
+        out << "# " << getName(ver, p) << ": ";
+        switch(paramIndex(p))
+        {
             case(pType::Uint):
-                out << header.getUint(begin -> first);
+                out << header.getUint(p);
                 break;
             case(pType::String):
-                out << header.getString(begin -> first);
+                out << header.getString(p);
                 break;
             case(pType::Float):
-                out << header.getFloat(begin -> first);
+                out << header.getFloat(p);
                 break;
             default:
                 //TODO: come up with something 
                 break;
-            }
-            out << '\n';
         }
-        return log;
+        out << '\n';
     }
 
-    constexpr auto OVFTitles = DictionaryHelpers::make_array(
-            std::make_pair(OVFParameter::Title, true),
-            std::make_pair(OVFParameter::Desc,  false),
-            std::make_pair(OVFParameter::Vlabels, true),
-            std::make_pair(OVFParameter::Vunit, true),
-            std::make_pair(OVFParameter::Munit, true)
-        );
     //first defining the rules for writing out a header using make_array helper template
     inline std::string WriteHeader(std::ostream& out, const OVFVersion& version, const OVFHeader& header) noexcept
     {
-        if( !header.isSet(OVFParameter::VersionString) )
-            return "WriteHeader: Version wasn't set in header, aborting!";
-        if( version == OVFVersion::OVF0 )
-            return ""; //nothing to output LULW
+        //start by finding a ruleset if possible
+        auto it = recepyIndex.find(version);
+        if(it == recepyIndex.end())
+            return "WriteHeader: Unknow or unimplemented version encountered, aborting!";
 
-        //otherwise start writing
-        if( version == OVFVersion::OVF1 || version == OVFVersion::OVF2 )
-        {
-            std::string log = "";
-            //start by generating a header
-            std::vector<std::pair<OVFParameter, bool>> Titles {OVFTitles.begin(), OVFTitles.end()};
-            if(version == OVFVersion::OVF1)
-                Titles.push_back(std::make_pair(OVFParameter::Vmult, true));
-            writeField(out, header, version, Titles.begin(), Titles.end());
-            //write a small comment
-            out << "## Grid parameters: \n";
-            //TODO: finish! 
-            return log;
-        }
-
-        return (std::string)"WriteHeader: Unknown or unhandled version encountered! Version string: \"" + 
-            header.getString(OVFParameter::VersionString) + "\";";
+        //logger
+        std::string log {""};
+        for(const auto& rule: it->second)
+            switch(rule.index())
+            {
+            case(0)://string, easy!
+                out << "## " << std::get<std::string> (rule) << "\n";
+                break;
+            case(1)://other rule
+                {
+                    const auto& specifier = std::get<FieldSpecifier> (rule);
+                    const bool required { specifier.first.index() == 0 && std::get<bool>(specifier.first) ||
+                                          specifier.first.index() == 1 && std::get<1>(specifier.first)(header) };
+                    const bool optional { specifier.first.index() == 0 && !std::get<bool>(specifier.first) };
+                    //only have anything to do if 'required || optional'
+                    if(required || optional)
+                        for(const auto& p: specifier.second)
+                        {
+                            if(required && !header.isSet(p))
+                            {
+                                if(!log.empty())
+                                    log += "\n";
+                                log += (std::string)"WriteHeader: required field \"" + ParameterName(p) + "\n was not found!";
+                                continue;
+                            }
+                            writeField(out, header, version, p);
+                        }
+                    break;
+                }
+            }
+        return log;
     }
 
     //and a template binary data writer
