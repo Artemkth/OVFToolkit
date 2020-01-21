@@ -128,7 +128,7 @@ namespace VField{
 
     //and then regex generators
     std::regex regexToken(const std::string& token)
-    { return std::regex("^#\\s*(" + token + ")\\s*:\\s*(.*?)\\s*(?:##.*)?$", commonFlags); }
+    { return std::regex("^#\\s*(" + token + "\\s*:)\\s*(.*?)\\s*(?:##.*)?$", commonFlags); }
     std::regex regexTokenValue(const std::string& token, const std::string& value)
     { return std::regex("^#\\s*(" + token + ")\\s*:\\s*(" + value + ")\\s*(?:##.*)?$", commonFlags); }
 
@@ -476,7 +476,7 @@ namespace VField{
                 {
                 case(pType::Uint):
                     {
-                        auto pval = ParseToken<pType::Uint>(res[1].str());
+                        auto pval = ParseToken<pType::Uint>(res[2].str());
                         if(pval == std::nullopt)
                         {
                             if(log != "") log+= "\n";
@@ -489,7 +489,7 @@ namespace VField{
                     break;
                 case(pType::Float):
                     {
-                        auto pval = ParseToken<pType::Float>(res[1].str());
+                        auto pval = ParseToken<pType::Float>(res[2].str());
                         if(pval == std::nullopt)
                         {
                             if(log != "") log+= "\n";
@@ -503,11 +503,12 @@ namespace VField{
                 case(pType::String):
                     if(*it == OVFParameter::Desc)
                     {
-                        head.at<pType::String>(OVFParameter::Desc) += "\n";
-                        head.at<pType::String>(OVFParameter::Desc) += res[1].str();
+                        if(head.isSet(OVFParameter::Desc))
+                            head.at<pType::String>(OVFParameter::Desc) += "\n";
+                        head.at<pType::String>(OVFParameter::Desc) += res[2].str();
                         break;
                     }
-                    head.set(*it, res[1].str());
+                    head.set(*it, res[2].str());
                 default:
                     break;
                 }
