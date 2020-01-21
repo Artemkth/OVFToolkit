@@ -8,6 +8,8 @@
 
 //main writing interface
 #include<OVFWriter.h>
+//and reading, just cause
+#include<OVFParser.h>
 
 #if defined(WIN32)
 #define FILE_PATH_SEPARATOR '\\'
@@ -103,6 +105,21 @@ int main(int argc, char** argv)
         }
     }
     //try writing ovf out in file named tmpOVF.ovf
-    WriteOVF(workingDir + "tmpOVF.ovf", testOVF);
+    auto write_log {WriteOVF(workingDir + "tmpOVF.ovf", testOVF)};
+    if(!write_log.empty())
+    {
+        std::cerr << "Got some errors while exporting an ovf:\n" << write_log;
+        return 2;
+    }
+
+    //try reading it back
+    VField::VFieldFile readBack(workingDir + "tmpOVF.ovf");
+    if(!readBack.WorkLog().empty())
+    {
+        std::cerr << "Got errors reading the file:\n" << readBack.WorkLog();
+        return 3;
+    }
+    //and compare to original data
+    //if(testOVF != readBack.
     return 0;
 }

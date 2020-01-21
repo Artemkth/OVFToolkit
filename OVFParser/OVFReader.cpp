@@ -428,7 +428,7 @@ namespace VField{
     //reading 
     std::string readHeader(std::istream& file, std::size_t& line_cnt, OVFHeader& head)
     {
-        constexpr auto ValidParams = DictionaryHelpers::makeUnion(UINTParamList, FPParamList, StringParamList);
+        constexpr auto ValidParams = DictionaryHelpers::removeValue( DictionaryHelpers::makeUnion(UINTParamList, FPParamList, StringParamList), OVFParameter::VersionString );
         constexpr auto AllowedOtherParams = DictionaryHelpers::make_array(
                     OVFParameter::Open,
                     OVFParameter::Close,

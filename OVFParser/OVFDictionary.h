@@ -223,6 +223,17 @@ namespace DictionaryHelpers{
         ([&]()->void{for(const auto& x: params) *it++ = x;}(), ...);  
         return ret;
     }
+
+    template<std::size_t n>
+    constexpr auto removeValue(std::array<VField::OVFParameter, n> set, VField::OVFParameter p)
+    {
+        std::array<VField::OVFParameter, n - 1> ret{};
+        auto it = ret.begin();
+        for(const auto& x: set)
+            if(x != p)
+                *it++ = x;
+        return ret;
+    }
     
     //Human-readable names of parameters
     constexpr auto ParamNames = DictionaryHelpers::make_array

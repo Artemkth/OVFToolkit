@@ -3,6 +3,7 @@
 #include<algorithm>
 #include<vector>
 #include<utility>
+#include<iomanip>
 #include"OVFUtil.h"
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
@@ -252,6 +253,8 @@ namespace VField
             return "WriteSegment: Stream given was not good, aborting!";
         if( !field.isWeaklyAddressable())
             return "WriteSegment: Vector field should at least be weakly addressable, aborting!";
+        //set modifiers for 'text-mode' values
+        out << std::setprecision(8);
         
         auto version = matchVersionString(field.Header.at<pType::String>(OVFParameter::VersionString));
         out << "# Begin: Segment\n# Begin: Header\n";

@@ -6,7 +6,6 @@
 
 namespace VField
 {
-    //TODO: implement writing of text versions of data as a separate function
     //for outputting contents of VFields
     OVFPARSER_EXPORT std::string WriteSegment(std::ostream&, const VField&) noexcept;
 
@@ -29,6 +28,7 @@ namespace VField
     }
 
     //and writing a text file, only a single segment supported!
+    //TODO: implement
     OVFPARSER_EXPORT std::string WriteTextOVF(const std::string& fName, const VField& ref) noexcept;
 
     //writing a whole bunch of segments
