@@ -256,11 +256,15 @@ namespace VField{
     template<>
     float* VField::getDataCopy<float>() const
     {
+        if(data -> isEmpty())
+            throw std::logic_error("VField::getData<float>: trying to get data from empty VField");
         return data -> makeCopy<float>();
     }
     template<>
     double* VField::getDataCopy<double>() const
     {
+        if(data -> isEmpty())
+            throw std::logic_error("VField::getData<float>: trying to get data from empty VField");
         return data -> makeCopy<double>();
     }
     
@@ -268,14 +272,18 @@ namespace VField{
     template<>
     const float* VField::getData<float>() const
     {
-        if(data -> farray == nullptr && data -> darray != nullptr)
+        if(data -> isEmpty())
+            throw std::logic_error("VField::getData<float>: trying to get data from empty VField");
+        if(data -> farray == nullptr)
             throw std::logic_error("VField::getData<float>: trying to read the data in wrong type");
         return data -> farray;
     }
     template<>
     const double* VField::getData<double>() const
-    {
-        if(data -> farray == nullptr && data -> darray !=nullptr)
+    {   
+        if(data -> isEmpty())
+            throw std::logic_error("VField::getData<double>: trying to get data from empty VField");
+        if(data -> darray == nullptr)
             throw std::logic_error("VField::getData<double>: trying to read the data in wrong type");
         return data -> darray;
     }

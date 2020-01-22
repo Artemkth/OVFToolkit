@@ -215,6 +215,8 @@ namespace VField
                                 log += (std::string)"WriteHeader: required field \"" + ParameterName(p) + "\n was not found!";
                                 continue;
                             }
+                            if(optional && !header.isSet(p)) //falling through if it is just an option
+                                continue;
                             writeField(out, header, version, p);
                         }
                     break;
@@ -232,12 +234,16 @@ namespace VField
     template<typename T>
     inline void WriteBinaryData(std::ostream& out, const OVFVersion& version, const VField& field)
     {
-        out.write(reinterpret_cast<const std::ostream::char_type*>(&TestVal<T>), 
-                sizeof(T)/sizeof(std::ostream::char_type));
+        auto tVal {TestVal<T>};
         T* buff {nullptr};
-        if( (boost::endian::order::native == boost::endian::order::big && version == OVFVersion::OVF1) ||
-                boost::endian::order::native == boost::endian::order::little )
+        if( (boost::endian::order::native == boost::endian::order::little && version == OVFVersion::OVF1) ||
+                boost::endian::order::native == boost::endian::order::big )
+        {
             buff = field.getDataCopy<T>();
+            boost::endian::endian_reverse_inplace( *reinterpret_cast<typename UintAnalogue<T>::type*>(&tVal) );
+        }
+        out.write(reinterpret_cast<const std::ostream::char_type*>(&tVal), 
+                sizeof(T)/sizeof(std::ostream::char_type));
         if(buff != nullptr)
             for( std::size_t i = 0; i < field.curDataPoints(); i++)
                 boost::endian::endian_reverse_inplace( *reinterpret_cast<typename UintAnalogue<T>::type*>(buff + i) );
@@ -273,7 +279,7 @@ namespace VField
                     log+="\n";
                 log += "WriteSegment: somehow got invalid internal data size! Please check 'isWeaklyAddressable' for bugs!";
         }
-        out << "# End: Data binary " <<field.curDataInternalSize() << "\n" << "# End: Segment\n";
+        out << "# End: Data binary " <<field.curDataInternalSize() << "\n" << "# End: Segment";
         out.flush();
         if(!out.good())
         {

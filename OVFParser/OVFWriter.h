@@ -53,6 +53,8 @@ namespace VField
         file << "# Segment count: "<< size << "\n";
         for(auto it = begin; it != end; ++it)
         {
+            if(it != begin)
+                file << "\n";
             log = WriteSegment(file, *it);
             if(!file.good())
                 return 

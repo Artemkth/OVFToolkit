@@ -13,10 +13,10 @@ namespace VField{
     //regexes to fit the OVF version
     const std::map<OVFVersion, std::regex> versionRegexes {
         //# OOMMF: irregular mesh v0.0
-        {OVFVersion::OVF0, std::regex("^#\\s*OOMMF\\s*:.*\\s+v0.0\\s*$", std::regex_constants::icase | 
+        {OVFVersion::OVF0, std::regex("^#\\s*OOMMF\\s*:\\s*(.+?)\\s+v0.0\\s*$", std::regex_constants::icase | 
                                                                          std::regex_constants::ECMAScript)},
         //# OOMMF: rectangular mesh v1.0
-        {OVFVersion::OVF1, std::regex("^#\\s*OOMMF\\s*:(.*)\\s+v(1.0|0.99|0.0a0)\\s$",
+        {OVFVersion::OVF1, std::regex("^#\\s*OOMMF\\s*:\\s*(.+?)\\s+v((?:1.0)|(?:0.99)|(?:0.0a0))\\s*$",
                                                                          std::regex_constants::icase | 
                                                                          std::regex_constants::ECMAScript)},
         //# OOMMF OVF 2.0

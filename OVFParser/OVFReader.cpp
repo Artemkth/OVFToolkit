@@ -107,13 +107,12 @@ namespace VField{
     }
 
     //translate slice into range specifier
-    inline std::array<std::size_t, 3> translateSlice(const VField& ref, const VFieldFile::slice_type& Slice)
+    inline std::array<std::size_t, 3> translateSlice(const VFieldFile::slice_type& Slice, std::size_t pCount)
     {
-        auto end = ref.pntCount();
         return
         {
-            !Slice.begin.isSpecial()? Slice.begin.getPos() : (Slice.begin == slice_pnt::begin ? 0 : end),
-                !Slice.end.isSpecial()? Slice.end.getPos() : (Slice.end == slice_pnt::begin ? 0 : end),
+            !Slice.begin.isSpecial()? Slice.begin.getPos() : (Slice.begin == slice_pnt::begin ? 0 : pCount),
+                !Slice.end.isSpecial()? Slice.end.getPos() : (Slice.end == slice_pnt::begin ? 0 : pCount),
                 Slice.stride
         };
     }
@@ -202,6 +201,8 @@ namespace VField{
     {
         //reset the log
         clearLog();
+        //and set the file name!
+        fPath = path;
 
         constexpr std::array<OVFParameter, 5> TopLevelTags{
             OVFParameter::Open,
@@ -211,7 +212,7 @@ namespace VField{
             OVFParameter::Comment
         }; 
         //first try to open the file
-        std::ifstream file(path, std::ios_base::binary);//TODO: check if opening it as binary from the start messes with getline
+        std::ifstream file(fPath, std::ios_base::binary);//TODO: check if opening it as binary from the start messes with getline
         if(!file.good())
         {
             logMessage((std::string)"VFieldFile::read: Error opening a file: " + path);
@@ -241,7 +242,7 @@ namespace VField{
             const auto pos = file.tellg(); //store the initial position in case one needs to seek back
 
             std::getline(file, buffer); line_cnt++;
-            if(!file) //any error bit set but EOF
+            if(!file.good() && !file.eof()) //any error bit set but EOF
             {
                 logMessage((std::string)"VFieldFile::read: " + ((file.rdstate()&std::ios_base::badbit)? "Unr":"R") +
                         "ecoverable error ocured while reading '" + path + "', line #" + std::to_string(line_cnt) + " aborting!");
@@ -255,10 +256,12 @@ namespace VField{
             //check if no match was found, i.e. line was invalid for being at a top level
             if( matchIt == TopLevelTags.end() )
             {
-                logMessage((std::string)"VFieldFile::read: Encountered unexpected line # " + 
-                        std::to_string(line_cnt) + ": ");
                 if(++BadLineCnt < BadBlockMax) //truncate output if bad lines come one after another(like misalinged reading frame)
-                    logMessage((std::string)"\t" + buffer.substr(0, 20) + "...");
+                {
+                    logMessage((std::string)"VFieldFile::read: Encountered unexpected line # " + 
+                            std::to_string(line_cnt) + ": ");
+                    logMessage((std::string)"\"" + buffer.substr(0, 20) + ((buffer.length() > 21)?"...":"") + "\"");
+                }
 
                 continue;
             }
@@ -353,7 +356,7 @@ namespace VField{
                                 std::to_string(line_cnt));
                         //now need to distinguish from having read a header and having a duplicated data
                         data -> 
-                            segments.push_back({ VField(version),
+                            segments.push_back({ VField{version},
                                                  std::nullopt,
                                                  0u });
                     }
@@ -523,12 +526,12 @@ namespace VField{
             if(itOpt == AllowedOtherParams.end())
             {
                 if(log != "") log += "\n";
-                log+=(std::string)"readHeader: Encountered unexpected line # " + 
-                        std::to_string(line_cnt) + ": ";
                 if(++BadLineCnt < BadBlockMax) //truncate output if bad lines come one after another(like misalinged reading frame)
                 {
+                   log+=(std::string)"readHeader: Encountered unexpected line # " + 
+                        std::to_string(line_cnt) + ": ";
                    log+= "\n"; 
-                   log+=(std::string)"\t" + buffer.substr(0, 20) + "...";
+                   log+=(std::string)"\"" + buffer.substr(0, 20) + ((buffer.length() > 21)?"...":"") + "\"";
                 }
             }
             
@@ -613,6 +616,7 @@ namespace VField{
         std::size_t internalSize = isBinary? ParseToken<pType::Uint>(match[4].str()).value() : 8; // guaranteed to have value from previous lines
         const auto DataBeginPos {file.tellg()};
         //next peek if data is ending at expected position
+        std::string log {""};
         std::size_t advertisedDim {0};
         std::size_t advertisedCnt {0};
         {
@@ -625,6 +629,8 @@ namespace VField{
                      out.Header.isSet(OVFParameter::Xnodes) && out.Header.isSet(OVFParameter::Ynodes) && out.Header.isSet(OVFParameter::Znodes) )
                 advertisedCnt = out.Header.getMeshType() == OVFHeader::MeshType::irregular ? out.Header.getUint(OVFParameter::Pcount) :
                                     out.Header.getUint(OVFParameter::Xnodes) * out.Header.getUint(OVFParameter::Ynodes) * out.Header.getUint(OVFParameter::Znodes);
+            if(advertisedDim == 0 || advertisedCnt == 0)
+                log += "readData: Couldn't read the array dimensions from the header provided!";
         }
         auto endRegex = regexTokenValue("End", (std::string)"data\\s+" + (isBinary? 
                     ((std::string)"binary\\s+" + std::to_string(internalSize)) : "text"));
@@ -639,17 +645,19 @@ namespace VField{
                 for(std::size_t i = 0; i < advertisedCnt && file.good(); i++)
                     file.ignore( std::numeric_limits<std::streamsize>::max(), '\n');
         }
-        if(!file.good())
-            return "readData: reached the end of file searching for the end of data section!";
         auto DataEndPos {file.tellg()};
         std::string closingString{""};
         std::getline(file, closingString);
-        std::string log {""};
-        if(std::regex_match(closingString, regexTokenValue("End","Data\\s+.+?")))
-            cnt = advertisedDim * advertisedCnt;
+        if( file.good() && std::regex_match(closingString, regexTokenValue("End","Data\\s+.+?")))
+        {
+            //set count if it was not known for sure previously
+            if(cnt == 0)
+                cnt = advertisedDim * advertisedCnt;
+        }
         else
         {
             //if didn't got a correct line have to reseek manually
+            log+= "readData: reached the end of file searching for the end of data section!";
             file.seekg(DataBeginPos);
             while(file.good())
             {
@@ -685,10 +693,12 @@ namespace VField{
             if(log != "") log += "\n";
             log = (std::string)"readData: failed strict check of data type in closing section, got: " + closingString;
         }
-        if(slice == VFieldFile::slice_type() && advertisedDim == 0)
+
+        const bool importWhole {slice == VFieldFile::slice_type()};
+        if(!importWhole && advertisedDim == 0)
         {
             if(log !="") log+= "\n";
-            log += "readData: Cannot read a slice without properly-defined dimension";
+            log += "readData: Cannot read a non-trivial slice without properly-defined dimension";
             return log;
         }
         const auto AfterDataEnd {file.tellg()};
@@ -697,27 +707,22 @@ namespace VField{
         {
             file.seekg(DataBeginPos);
             //actual reading of data
-            auto [begin, end, stride] = translateSlice(out, slice); //hurray for structural binding
-            if(advertisedDim * advertisedCnt != cnt) //if had to adjust  
-            {
-                if(slice.begin == slice_pnt::end)
-                    begin = std::min(cnt/advertisedDim, begin);
-                if(slice.end == slice_pnt::end)
-                    end = std::min(cnt/advertisedDim, end);
-            }
+            auto [begin, end, stride] = translateSlice(slice, 
+                    advertisedDim!=0&&cnt!=0? cnt/advertisedDim : 0); //hurray for structural binding
+
             if(end < begin) std::swap(begin, end);
-            if(end == begin) 
+            if(!importWhole && end == begin)//addedd !importWhole to make it possible to import malformed files 
             {
                 file.seekg(AfterDataEnd);
                 return log; //nothing to import, EZ
             }
-            const bool importWhole {slice == VFieldFile::slice_type()};
             if(isBinary)
             {
                 if(internalSize == 4)
                 {
                     float test{};
-                    file>>test;
+                    file.read( reinterpret_cast<std::istream::char_type *>(&test), 
+                               sizeof(float)/sizeof(std::istream::char_type) );
                     if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(&test));
@@ -761,7 +766,8 @@ namespace VField{
                 if(internalSize == 8)
                 {
                     double test{};
-                    file>>test;
+                    file.read( reinterpret_cast<std::istream::char_type *>(&test), 
+                               sizeof(double)/sizeof(std::istream::char_type) );
                     if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(&test));
@@ -916,10 +922,10 @@ namespace VField{
         if(pos == std::nullopt && size == 0)
         {
             logMessage("VFieldFile::operator[]:  during prefetch phase no data was found!");
-            return std::move(field);
+            return field;
         }
         if(field.isDataPresent())
-            return std::move(field);
+            return field;
 
         //else read the data and return that
         std::ifstream file(fPath, std::ios_base::binary);
@@ -947,13 +953,14 @@ namespace VField{
         //and teh dimension
         const auto dim{val.pntDimension()};
         //and translate slice into a specification for bounds
-        const auto [begin, end, stride] = translateSlice(val, slice);
-        const std::size_t newSize {val.pntCount() / stride * dim };
+        auto [begin, end, stride] = translateSlice(slice, val.pntCount());
+        if(begin > end) std::swap(begin, end);
+        const std::size_t newSize { (end - begin) / stride * dim };
         //and start this bad boy up
         auto buffer = new T[newSize];
-        for(auto cnt = begin;begin <= end; cnt += stride)
+        for(;begin <= end; begin  += stride)
             for(std::size_t i = 0; i < dim; i++)
-                buffer[dim * cnt + i] = (beginIt + cnt)[i];
+                buffer[dim * begin + i] = (beginIt + begin)[i];
         val.setData(buffer, newSize);
         return val;
     }
