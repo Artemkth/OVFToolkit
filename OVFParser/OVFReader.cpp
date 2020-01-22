@@ -626,7 +626,7 @@ namespace VField{
                 advertisedCnt = out.Header.getMeshType() == OVFHeader::MeshType::irregular ? out.Header.getUint(OVFParameter::Pcount) :
                                     out.Header.getUint(OVFParameter::Xnodes) * out.Header.getUint(OVFParameter::Ynodes) * out.Header.getUint(OVFParameter::Znodes);
         }
-        auto endRegex = regexTokenValue("End", (std::string)"data" + (isBinary? 
+        auto endRegex = regexTokenValue("End", (std::string)"data\\s+" + (isBinary? 
                     ((std::string)"binary\\s+" + std::to_string(internalSize)) : "text"));
         //seeking to expected end
         if((advertisedDim * advertisedCnt != 0) || cnt !=0 ) 

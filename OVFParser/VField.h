@@ -75,9 +75,9 @@ namespace VField{
             VField& operator=(const VField&);
             //I would like to move it move it lol
             VField(VField&& ref)
-            {std::swap(data, ref.data);}
+            {std::swap(Header, ref.Header), std::swap(data, ref.data);}
             VField& operator=(VField&& ref)
-            {std::swap(data, ref.data); return *this;}
+            {std::swap(Header, ref.Header), std::swap(data, ref.data); return *this;}
 
             //comparison operations
             bool isSameDataAs(const VField&) const noexcept;
