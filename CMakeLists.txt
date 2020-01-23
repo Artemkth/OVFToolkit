@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 #versioning
-project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX)
+project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
 
 #TODO: add some more checks
 # C++ standard
@@ -16,6 +16,9 @@ include(GenerateExportHeader)
 #like in windows make only certain function exported
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
+#find interfaces for Mathematica
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake/Mathematica" ${CMAKE_MODULE_PATH})
+find_package(Mathematica COMPONENTS WSTP)
 
 #ovfparser library
 add_library(ovfparser
@@ -28,7 +31,6 @@ add_library(ovfparser
 )
 generate_export_header(ovfparser EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h")
 
-#TODO: look into moving it further
 configure_file(OVFToolkitConfig.h.in OVFToolkitConfig.h)
 target_include_directories(ovfparser 
                            PUBLIC 
@@ -65,3 +67,5 @@ IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_subdirectory(tests)
 ENDIF()
 
+#interfaces CMakeLists.txt
+add_subdirectory(Interfaces)
