@@ -264,11 +264,8 @@ namespace VField{
             if( matchIt == TopLevelTags.end() )
             {
                 if(++BadLineCnt < BadBlockMax) //truncate output if bad lines come one after another(like misalinged reading frame)
-                {
                     logMessage((std::string)"VFieldFile::read: Encountered unexpected line # " + 
-                            std::to_string(line_cnt) + ": ");
-                    logMessage((std::string)"\"" + buffer.substr(0, 20) + ((buffer.length() > 21)?"...":"") + "\"");
-                }
+                            std::to_string(line_cnt) + ": \"" + buffer.substr(0, 20) + ((buffer.length() > 21)?"...":"") + "\"");;
 
                 continue;
             }
@@ -428,7 +425,7 @@ namespace VField{
         //bad bit error is handled inside the loop, reaching here necesarily means that EOF occured
         if( SegmentOpened || WaitingForData )
             logMessage("VFieldFile::read: File ended unexpectedly");
-        if( data -> segments.size() != seg_cnt)
+        if( data -> segments.size() != seg_cnt )
             logMessage((std::string)"VFieldFile::read: Got an unexpected number of segments from file: " +
                     std::to_string(data -> segments.size()) + " instead of expected: " +
                     (SegCntDefined? std::to_string(seg_cnt) : "undefined"));
@@ -537,7 +534,6 @@ namespace VField{
                 {
                    log+=(std::string)"readHeader: Encountered unexpected line # " + 
                         std::to_string(line_cnt) + ": ";
-                   log+= "\n"; 
                    log+=(std::string)"\"" + buffer.substr(0, 20) + ((buffer.length() > 21)?"...":"") + "\"";
                 }
             }
@@ -889,7 +885,7 @@ namespace VField{
     }
 
     //and now more high-level interfaces
-    VField& VFieldFile::operator[] (const std::size_t& index) 
+    VField& VFieldFile::operator[] (std::size_t index) &
     {
         auto& [field, pos, size] = data->segments.at(index);
         if(pos == std::nullopt && size == 0)
@@ -916,7 +912,7 @@ namespace VField{
         }
         return field;
     }
-    VField VFieldFile::operator[] (const std::size_t& index) const noexcept
+    VField VFieldFile::operator[] (std::size_t index) const & noexcept
     {
         //first, check if index is OOB
         if(index >= data->segments.size())
@@ -949,6 +945,14 @@ namespace VField{
             logMessage(log);
         }
         return std::move(field);
+    }
+    const OVFHeader& VFieldFile::getSegmentHeader(std::size_t index) const & 
+    {
+        //first, check if index is OOB
+        if(index >= data->segments.size())
+            throw std::out_of_range("Segment access out of range!");
+        //else go and fetch the damm data
+        return std::get<0>(data->segments[index]).Header;
     }
     //templates for slicing vfields after import
     //TODO: check if doing in-place version instead is better

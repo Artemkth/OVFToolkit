@@ -16,7 +16,32 @@ namespace VField{
         //and again a PIMPLE blob LULW
         struct FileData;
         FileData* data{nullptr};
+
+        //base iterator
+        class VFieldFileIteratorBase{
+            protected:
+                VFieldFile* parent {nullptr};
+                std::size_t pos{};
+
+                bool isBrother(const VFieldFileIteratorBase& ref) const noexcept
+                {return ref.parent == parent && parent != nullptr;}
+
+            public:
+                using difference_type = std::ptrdiff_t;
+                using iterator_category = std::forward_iterator_tag;
+
+                //comparisons
+                bool operator == (const VFieldFileIteratorBase& ref) const noexcept
+                { return isBrother(ref) && pos == ref.pos; }
+                bool operator != (const VFieldFileIteratorBase& ref) const noexcept
+                { return !(*this == ref); }
+
+                //friends for construction
+                friend class VFieldFile;
+        };
+
     public:
+        //TODO: Change into signed type to associate with array boundaries
         using slice_type = slice<associatedType_t<pType::Uint>>;
 
         //c++ housekeeping
@@ -44,8 +69,9 @@ namespace VField{
         //data access
         std::size_t cntSegments() const noexcept;
         //next two throw if index is outside of array, and force reading the file if prefetch == true
-        VField& operator[] (const std::size_t& );
-        VField operator[] (const std::size_t& ) const noexcept;
+        VField& operator[] (std::size_t ) &;
+        VField operator[] (std::size_t ) const & noexcept;
+        const OVFHeader& getSegmentHeader(std::size_t ) const &;
         //you can free internal storage by yourself if needed to, since you have the explicit access
         bool isFetched(const std::size_t& ) const noexcept;
         
@@ -59,43 +85,73 @@ namespace VField{
                            const slice_type& zslice) const noexcept;
 
         //forward iterators to access internals for using algorithms
-        class FieldIterator{
-            VFieldFile *parent {nullptr};
-            std::size_t pos{ 0 };
+        class ConstFieldIterator : public VFieldFileIteratorBase{
         public:
-            FieldIterator() = default;
-            FieldIterator(VFieldFile* ref, std::size_t pos_): parent(ref), pos(pos_) {}
+            //conversion and construction
+            ConstFieldIterator() = default;
+            ConstFieldIterator(const VFieldFileIteratorBase& ref): VFieldFileIteratorBase(ref) {}
+
+            using value_type = const VField;
+            using pointer = const VField*;
+            using reference = const VField&;
             //dereference into a VField object, read file if prefetch was true
+            VField operator* ()
+            { return (*reinterpret_cast<const VFieldFile*>(parent))[pos]; }
+            VField slice( const slice_type& Slice)
+            { return parent -> readSlice(pos, Slice); }
+
+            ConstFieldIterator& operator++()
+            { pos++; return *this; }
+            ConstFieldIterator operator++(int)
+            { auto copy = *this; pos++; return copy; }
+        };
+        class FieldIterator : public VFieldFileIteratorBase{
+        public:
+            //conversion and construction
+            FieldIterator() = default;
+            FieldIterator(const VFieldFileIteratorBase& ref): VFieldFileIteratorBase(ref) {}
+
+            using value_type = VField;
+            using pointer = VField*;
+            using reference = VField&;
+
             VField& operator* ()
             { return (*parent)[pos]; }
-            VField slice( const slice_type& Slice)
+            VField slice( const slice_type& Slice )
             { return parent -> readSlice(pos, Slice); }
 
             FieldIterator& operator++()
             { pos++; return *this; }
             FieldIterator operator++(int)
             { auto copy = *this; pos++; return copy; }
-            bool operator== (const FieldIterator& ref) const 
-            { if(parent != ref.parent) return false; return pos == ref.pos;}
-            inline bool operator!= (const FieldIterator& ref) const
-            { return ! (*this == ref); }
-            friend class VFieldFile;
+
+            operator ConstFieldIterator()
+            { return static_cast<VFieldFileIteratorBase> (*this); }
         };
-        //TODO: Finish constant iterator implementation!
-        //class ConstFieldIterator{
-        //};
         
         //iterators to begining and ending
         FieldIterator begin()
-        {return FieldIterator(this, 0);}
-        //ConstFieldIterator begin() const;
-        //ConstFieldIterator cbegin() const
-        //{return begin();}
+        {
+            VFieldFileIteratorBase res;
+            res.parent = this;
+            res.pos = 0;
+            return res;
+        }
         FieldIterator end()
-        {return FieldIterator(this, cntSegments());}
-        //ConstFieldIterator end() const;
-        //ConstFieldIterator cend() const
-        //{return end();}
+        {
+            VFieldFileIteratorBase res;
+            res.parent = this;
+            res.pos = cntSegments();
+            return res;
+        }
+        ConstFieldIterator begin() const
+        { return const_cast<VFieldFile*>(this) -> begin(); }
+        ConstFieldIterator cbegin() const
+        { return this -> begin(); }
+        ConstFieldIterator end() const
+        { return const_cast<VFieldFile*>(this) -> end(); }
+        ConstFieldIterator cend() const
+        { return this -> end(); }
         
         //some methods for populating the VFieldFile
         std::size_t insert(FieldIterator, VField&&);
@@ -122,7 +178,7 @@ namespace VField{
             return insert(last, ref); 
         }
         inline std::size_t push_back(const VField& ref)
-        {return push_back(VField(ref)); }
+        { return push_back(VField(ref)); }
     };
 }
 

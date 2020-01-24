@@ -208,7 +208,7 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
     //next check if fPath is good for reading(i.e. have appropriate permissions and it is not a dir)
     auto status = std::filesystem::status( fPath );
     if( !std::filesystem::is_regular_file(status) || 
-        (status.permissions() & any_read) != std::filesystem::perms::none )
+        (status.permissions() & any_read) == std::filesystem::perms::none )
     {
         WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("OVFToolkit", "notperm", "read", fPath.c_str());
@@ -218,16 +218,32 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
     return fPath;
 }
 
+bool OutputData(const VField::VField& field) //output data to mathematica
+{
+    //output data methods
+}
+
 extern "C" void importWhole(const char* fileName)
 {
     const auto fPath { checkFileName(fileName) };
-    if(fPath == std::nullopt) return; //all output is done by checkFileName when it cannot recover
+    if(!fPath.has_value()) return; //all output is done by checkFileName when it cannot recover
     //next open the file finally
-    VField::VFieldFile fileHandle(fileName);
+    const VField::VFieldFile fileHandle(fPath.value().c_str());
+    if(!fileHandle.WorkLog().empty())
+    {
+        WSPutFunction(stdlink, "CompoundExpression", 2);
+        PostErrorMessage("ImportOVF", "prserr", fileHandle.WorkLog());
+    }
+    //and start outputting data
+    WSPutFunction(stdlink, "List", fileHandle.cntSegments() );
+    for(const auto& vfield: fileHandle)
+    {
+        if(!vfield.isAddressable())
+        { /*handle it*/ }
+        WSPutFunction(stdlink, "List", 0);
+    }
 
-    //else return empty list for now, LULw
-    WSPutFunction(stdlink, "List", 1);
-    PutValue(42);
     WSEndPacket(stdlink);
+    WSFlush(stdlink);
 }
 
