@@ -229,6 +229,13 @@ namespace VField{
             logMessage((std::string)"VFieldFile::read: File ended abruptly while reading the header! path:" + path);
             return false;
         }
+        if(matchVersionString(version) == OVFVersion::Unknown)
+        {
+            logMessage((std::string)"VFieldFile::read: File \"" + path + 
+                    "\" is not a valid OVF file, invalid Header: " + version.substr(0, 20) + 
+                    ((version.length() > 21)?"...":"") + "\"");
+            return false;
+        }
 
         //counters
         bool SegCntDefined{false}; std::size_t line_cnt{1};//file indexed from 1, line 1 being header

@@ -5,11 +5,39 @@
 #include<string>
 #include<type_traits>
 #include<vector>
+#include<optional>
+//small convinience on *nix systems
+//TODO: replace with cmake detection later, CheckIncludeFile
+#if defined(__unix__) || defined(__LINUX__) || defined(__APPLE__)
+#define EXPANDPATH
+#endif
+
+#ifdef EXPANDPATH
+#include<wordexp.h>
+#endif
+
+//and interfaces to ovfparser
+#include<OVFParser.h>
+
 
 //glue code for mathematica's library
 //handles the connection to mathematica kernel
 int main(int argc, char** argv)
 { return WSMain(argc, argv); }
+
+#ifdef EXPANDPATH
+auto ExpandPath(const std::string& fPath)
+{
+    wordexp_t expansions;
+    std::vector<std::string> results {};
+    if(wordexp(fPath.c_str(), &expansions, 0) != 0)
+        return results; //error occured
+    for(std::size_t i = 0; i < expansions.we_wordc; i++)
+        results.push_back(expansions.we_wordv[i]);
+    wordfree(&expansions);
+    return results;
+}
+#endif
 
 template<typename T>
 struct ToSigned{static_assert(!std::is_unsigned_v<T>, "Only usable with unsigned types");};
@@ -71,6 +99,7 @@ template<typename T, template<typename> typename container>
 inline std::enable_if_t<std::is_integral_v<T> || std::is_floating_point_v<T>, bool> PutValue(const container<T>& val)
 {
     //TODO: futureproof by spliting the load by INT_MAX
+    //(hack with putting Sequence functions with INT_MAX size)
     int size { val.size() }; //has to be int for the array input function
     auto ptr { val.data() };
     if constexpr(std::is_integral_v<T>)
@@ -140,15 +169,61 @@ inline bool PostFailure()
     return result && WSFlush(stdlink) != 0;                   //only failure should flush
 }
 
-extern "C" void importWhole(const char* fileName)
+//check the file path
+std::optional<std::filesystem::path> checkFileName(const char* fileName)
 {
+    const auto any_read { 
+            std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read |
+            std::filesystem::perms::others_read
+    };
+    std::filesystem::path fPath {};
     if(!std::filesystem::exists(fileName))
+#ifndef EXPANDPATH
     {
         WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("General", "noopen", fileName);
         PostFailure();
-        return;
+        return std::nullopt;
     }
+    fPath = fileName;
+#else //defined(EXPANDPATH)
+    {
+        //try expansion, that's a good trick
+        auto expanded = ExpandPath(fileName);
+        if( expanded.size() != 1 || !std::filesystem::exists(expanded[0]) )
+        {   
+            WSPutFunction(stdlink, "CompoundExpression", 2);
+            PostErrorMessage("General", "noopen", expanded.size()==1? expanded[0] : fileName);
+            PostFailure();
+            return std::nullopt;
+        }
+        fPath = expanded[0];
+        WSPutFunction(stdlink, "CompoundExpression", 2);
+        PostErrorMessage( "OVFToolkit", "fsub", fileName, expanded[0] );
+    }
+    else
+        fPath = fileName;
+#endif
+    //next check if fPath is good for reading(i.e. have appropriate permissions and it is not a dir)
+    auto status = std::filesystem::status( fPath );
+    if( !std::filesystem::is_regular_file(status) || 
+        (status.permissions() & any_read) != std::filesystem::perms::none )
+    {
+        WSPutFunction(stdlink, "CompoundExpression", 2);
+        PostErrorMessage("OVFToolkit", "notperm", "read", fPath.c_str());
+        PostFailure();
+        return std::nullopt;
+    }
+    return fPath;
+}
+
+extern "C" void importWhole(const char* fileName)
+{
+    const auto fPath { checkFileName(fileName) };
+    if(fPath == std::nullopt) return; //all output is done by checkFileName when it cannot recover
+    //next open the file finally
+    VField::VFieldFile fileHandle(fileName);
 
     //else return empty list for now, LULw
     WSPutFunction(stdlink, "List", 1);
