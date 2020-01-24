@@ -7,6 +7,7 @@
 :Evaluate:      OVFToolkit::bfmt      = "File has a bad structure, or it is not an OVF file"
 :Evaluate:      ImportOVF::argx       = "ImportOVF called with 0 parameters, at least one was expected"
 :Evaluate:      ImportOVF::prserr     = "Received following errors while parsing a file:\n `1`"
+:Evaluate:      ImportOVF::naddr      = "Data in segment `1` of the file \"`2`\" is not addressible!!"
 :Evaluate:      ImportOVF[]           := Message[ImportOVF::argx];
 :Evaluate:      ImportOVF[x_,___]     := Message[OVFToolkit::chtype, x];           
 

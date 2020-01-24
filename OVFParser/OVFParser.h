@@ -60,6 +60,10 @@ namespace VField{
         void clearLog() const;
         void logMessage(const std::string&) const;
 
+        //get current file path
+        const std::string& getCurrentPath() const
+        { return fPath; }
+
         //general file i/o methods
         //basic read/write
         //read a file, prefetch indicated that only positions for data should be recovered

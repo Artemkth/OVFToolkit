@@ -221,6 +221,31 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
 bool OutputData(const VField::VField& field) //output data to mathematica
 {
     //output data methods
+    const bool isRect { field.Header.getMeshType() == VField::OVFHeader::MeshType::rectangular };
+    const int depth {isRect? 4 : 2};
+    std::vector<int> dims;
+    //static casts, explicitly converting to smaller type :'(
+    //TODO: add an error throw for when some argument is larger than INT_MAX
+    if(isRect)
+        dims = { 
+            static_cast<int>(field.Header.getUint(VField::OVFParameter::Znodes)),
+            static_cast<int>(field.Header.getUint(VField::OVFParameter::Ynodes)),
+            static_cast<int>(field.Header.getUint(VField::OVFParameter::Xnodes)),
+            static_cast<int>(field.pntDimension())
+        };
+    else
+        dims = {
+            static_cast<int>(field.pntCount()),
+            static_cast<int>(field.pntDimension())
+        };
+
+    bool result;
+    if(field.curDataInternalSize() == 4)
+        result = WSPutReal32Array(stdlink, field.getData<float>(), dims.data(), nullptr, depth);
+    else
+        result = WSPutReal64Array(stdlink, field.getData<double>(), dims.data(), nullptr, depth);
+
+    return result;
 }
 
 extern "C" void importWhole(const char* fileName)
@@ -236,11 +261,21 @@ extern "C" void importWhole(const char* fileName)
     }
     //and start outputting data
     WSPutFunction(stdlink, "List", fileHandle.cntSegments() );
+    std::size_t seg_cnt {0};
     for(const auto& vfield: fileHandle)
     {
+        //Output Header
+        //TODO: implement
+
+        //Output data
         if(!vfield.isAddressable())
-        { /*handle it*/ }
-        WSPutFunction(stdlink, "List", 0);
+        {
+            WSPutFunction(stdlink, "CompoundExpression", 2);
+            PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
+            WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+        }
+        else
+            OutputData(vfield);
     }
 
     WSEndPacket(stdlink);
