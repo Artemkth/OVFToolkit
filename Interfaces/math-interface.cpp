@@ -345,7 +345,7 @@ inline bool OutputMeshType(const VField::OVFHeader& head, bool write = false)
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue(ParamKeys.at(VField::OVFParameter::Mtype));
     if(!head.isSet(VField::OVFParameter::Mtype))
-        res = res && WSPutSymbol(stdlink, "Undefined") != 0;
+        return res && WSPutSymbol(stdlink, "Undefined") != 0;
     return res && PutValue(head.getMeshType() == VField::OVFHeader::MeshType::rectangular? "Rectangular" : "Irregular");
 }
 
@@ -456,7 +456,7 @@ bool OutputHeader(const VField::OVFHeader& head)
             OutputCoordIncrement,
             VField::OVFParameter::Bound,
             OutputBBox
-            );//currently fails because type is deduced to be rvalue :'(
+            );
 }
 
 extern "C" void importWhole(const char* fileName)
