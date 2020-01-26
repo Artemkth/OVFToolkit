@@ -6,6 +6,7 @@
 #include<type_traits>
 #include<vector>
 #include<optional>
+#include<map>
 //small convinience on *nix systems
 //TODO: replace with cmake detection later, CheckIncludeFile
 #if defined(__unix__) || defined(__LINUX__) || defined(__APPLE__)
@@ -18,6 +19,7 @@
 
 //and interfaces to ovfparser
 #include<OVFParser.h>
+#include<OVFDictionary.h>
 
 
 //glue code for mathematica's library
@@ -95,31 +97,31 @@ inline bool PutValue(const char* str)
 { return PutValue(std::string(str)); }
 //and very strong magic with lists, only real/integer
 //assumed to have 'data' method to access data, and 'size' to count elements
-template<typename T, template<typename> typename container>
-inline std::enable_if_t<std::is_integral_v<T> || std::is_floating_point_v<T>, bool> PutValue(const container<T>& val)
+template< typename T>
+inline std::enable_if_t<std::is_integral_v<typename T::value_type> || std::is_floating_point_v<typename T::value_type>, bool> PutValue(const T& val)
 {
     //TODO: futureproof by spliting the load by INT_MAX
     //(hack with putting Sequence functions with INT_MAX size)
     int size { val.size() }; //has to be int for the array input function
     auto ptr { val.data() };
-    if constexpr(std::is_integral_v<T>)
+    if constexpr(std::is_integral_v<typename T::value_type>)
     {
         //first need to check if type is signed or not
-        if constexpr(std::is_signed_v<T>)
+        if constexpr(std::is_signed_v<typename T::value_type>)
         {
-            if constexpr(std::is_same_v<T, std::int8_t>)
+            if constexpr(std::is_same_v<typename T::value_type, std::int8_t>)
                 return WSPutInteger8Array(stdlink, ptr, &size, nullptr, 1) != 0;
-            else if constexpr(std::is_same_v<T, std::int16_t>)
+            else if constexpr(std::is_same_v<typename T::value_type, std::int16_t>)
                 return WSPutInteger16Array(stdlink, ptr, &size, nullptr, 1) != 0;
-            else if constexpr(std::is_same_v<T, std::int32_t>)
+            else if constexpr(std::is_same_v<typename T::value_type, std::int32_t>)
                 return WSPutInteger32Array(stdlink, ptr, &size, nullptr, 1) != 0;
-            else if constexpr(std::is_same_v<T, std::int64_t>)
+            else if constexpr(std::is_same_v<typename T::value_type, std::int64_t>)
                 return WSPutInteger64Array(stdlink, ptr, &size, nullptr, 1) != 0;
             static_assert(true, "Unsupported type!");
         }
         else
         {
-            using U = typename ToSigned<T>::type;
+            using U = typename ToSigned<typename T::value_type>::type;
             U* copy {new U[size]};
             std::copy_n(val.data(), size, copy);
             bool result {};
@@ -135,11 +137,11 @@ inline std::enable_if_t<std::is_integral_v<T> || std::is_floating_point_v<T>, bo
     }
     else //is_floating_point_v
     {
-        if constexpr(std::is_same_v<T, float>)
+        if constexpr(std::is_same_v<typename T::value_type, float>)
             return WSPutReal32Array(stdlink, ptr, &size, nullptr, 1) != 0;
-        else if constexpr(std::is_same_v<T, double>)
+        else if constexpr(std::is_same_v<typename T::value_type, double>)
             return WSPutReal64Array(stdlink, ptr, &size, nullptr, 1) != 0;
-        else if constexpr(std::is_same_v<T, long double> && sizeof(long double) == 16)
+        else if constexpr(std::is_same_v<typename T::value_type, long double> && sizeof(long double) == 16)
             return WSPutReal128Array(stdlink, ptr, &size, nullptr, 1) != 0;
         static_assert(true, "Unsupported type!");
     }
@@ -248,6 +250,215 @@ bool OutputData(const VField::VField& field) //output data to mathematica
     return result;
 }
 
+//outputing header
+const std::map<
+    VField::OVFParameter,
+    std::string> ParamKeys
+{
+    {VField::OVFParameter::VersionString, "VersionString"},
+    {VField::OVFParameter::Title, "Title"},
+    {VField::OVFParameter::Desc, "Description"},
+    {VField::OVFParameter::Munit, "MeshUnits"},
+    {VField::OVFParameter::Vunit, "ValueUnits"},
+    {VField::OVFParameter::Vmult, "ValueMultiplier"},
+    {VField::OVFParameter::Vlabels, "ValueLabels"},
+    {VField::OVFParameter::Bound, "BoundingPolygon"},
+    {VField::OVFParameter::Mtype, "MeshType"},
+    {VField::OVFParameter::Xbase, "X0"},
+    {VField::OVFParameter::Ybase, "Y0"},
+    {VField::OVFParameter::Zbase, "Z0"},
+    {VField::OVFParameter::Xstep, "dX"},
+    {VField::OVFParameter::Ystep, "dY"},
+    {VField::OVFParameter::Zstep, "dZ"},
+    {VField::OVFParameter::Vmin, "MinVal"},
+    {VField::OVFParameter::Vmax, "MaxVal"},
+    {VField::OVFParameter::Xmin, "MinX"},
+    {VField::OVFParameter::Xmin, "MinY"},
+    {VField::OVFParameter::Xmin, "MinZ"},
+    {VField::OVFParameter::Xmin, "MaxX"},
+    {VField::OVFParameter::Xmin, "MaxY"},
+    {VField::OVFParameter::Xmin, "MaxZ"}
+};
+
+//putting a value from header
+template<VField::OVFParameter p>
+constexpr bool putVal(const VField::OVFHeader& head)
+{
+    //putting values out as rules
+    bool result{WSPutFunction(stdlink, "Rule", 2) != 0};
+    result = result && PutValue(ParamKeys.at(p));
+
+    if constexpr(paramIndex(p) == VField::pType::Uint)
+        return result && PutValue(head.getUint(p));
+    else if constexpr(paramIndex(p) == VField::pType::Float)
+        return result && PutValue(head.getFloat(p));
+    else if constexpr(paramIndex(p) == VField::pType::String)
+        return result && PutValue(head.getString(p));
+    //if everything else fails
+    static_assert(true, "Wrong, unhandled type of parameter!");
+}
+
+//a lot of duck-type magic
+template<typename T, T v>
+constexpr bool isOutputted(const VField::OVFHeader& head)
+{
+    if constexpr(std::is_same<T, VField::OVFParameter>::value)
+        return head.isSet(v);
+    else
+        //assuming first element is a predicate taking a header
+        return v(head, false);
+}
+template<typename T, T v>
+constexpr bool Output(const VField::OVFHeader& head)
+{
+    if constexpr(std::is_same<T, VField::OVFParameter>::value)
+        return !head.isSet(v) || putVal<v>(head);
+    else if(v(head, false))
+        return v(head, true);
+    return false;
+}
+
+template<typename... T>
+struct Wrapper{
+    Wrapper(T...) {}
+
+    template<T... args>
+    struct Wrapping{
+        static constexpr bool OutputAll(const VField::OVFHeader& head)
+        {
+            bool result {
+                WSPutFunction(stdlink, "List", 
+                        (0 + ... + (isOutputted<T, args>(head)? 1 : 0)) ) != 0 //count outputted parameters
+            };
+            return (result && ... && Output<T, args>(head));
+        }
+    };
+};
+
+#define OUTPUT_HEADER(head, args...) decltype(Wrapper{args})::Wrapping<args>::OutputAll(head)
+
+inline bool OutputMeshType(const VField::OVFHeader& head, bool write = false)
+{
+    if(!write)
+        return true;
+
+    bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
+    res = res && PutValue(ParamKeys.at(VField::OVFParameter::Mtype));
+    if(!head.isSet(VField::OVFParameter::Mtype))
+        res = res && WSPutSymbol(stdlink, "Undefined") != 0;
+    return res && PutValue(head.getMeshType() == VField::OVFHeader::MeshType::rectangular? "Rectangular" : "Irregular");
+}
+
+inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = false)
+{
+    if(!write)
+        return true;
+    constexpr std::array<VField::OVFParameter, 3> args{
+        VField::OVFParameter::Xstep,
+        VField::OVFParameter::Ystep,
+        VField::OVFParameter::Zstep
+    };
+    bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
+    res = res && PutValue("CellSize");
+    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);}))
+    {
+        std::array<VField::associatedType_t<VField::pType::Float>,3> val {
+            head.getFloat(VField::OVFParameter::Xstep),
+            head.getFloat(VField::OVFParameter::Ystep),
+            head.getFloat(VField::OVFParameter::Zstep)
+        };
+        res = res && PutValue(val);
+    }
+    //otherwise do it all manually :(
+    else
+    {
+        res = res && WSPutFunction(stdlink, "List", 3) != 0;
+        for(const auto& p: args)
+            res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+    }
+
+    return res;
+}
+inline bool OutputCoordOrigin(const VField::OVFHeader& head, bool write = false)
+{
+    if(!write)
+        return true;
+    constexpr std::array<VField::OVFParameter, 3> args{
+        VField::OVFParameter::Xbase,
+        VField::OVFParameter::Ybase,
+        VField::OVFParameter::Zbase
+    };
+    bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
+    res = res && PutValue("Origin");
+    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);}))
+    {
+        std::array<VField::associatedType_t<VField::pType::Float>,3> val {
+            head.getFloat(VField::OVFParameter::Xbase),
+            head.getFloat(VField::OVFParameter::Ybase),
+            head.getFloat(VField::OVFParameter::Zbase)
+        };
+        res = res && PutValue(val);
+    }
+    //otherwise do it all manually :(
+    else
+    {
+        res = res && WSPutFunction(stdlink, "List", 3) != 0;
+        for(const auto& p: args)
+            res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+    }
+
+    return res;
+}
+inline bool OutputBBox(const VField::OVFHeader& head, bool write = false)
+{
+    constexpr std::array<VField::OVFParameter, 6> args{
+        VField::OVFParameter::Xmin,
+        VField::OVFParameter::Xmax,
+        VField::OVFParameter::Ymin,
+        VField::OVFParameter::Ymax,
+        VField::OVFParameter::Zmin,
+        VField::OVFParameter::Zmax,
+    };
+    const bool any_present{std::any_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);})};
+    if(!write)
+        return any_present;
+
+    if(!any_present)
+        return true; //nothing to output
+
+    bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
+    res = res && PutValue("BoundingBox");
+    res = res && WSPutFunction(stdlink, "List", 3) != 0;
+    int i = 0;
+    for(const auto& p: args)
+    {
+        if(i++%2 == 0)
+            res = res && WSPutFunction(stdlink, "List", 2);
+        res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+    }
+
+    return res;
+}
+
+//function for outputting the header
+bool OutputHeader(const VField::OVFHeader& head)
+{
+    return OUTPUT_HEADER(head, 
+            VField::OVFParameter::VersionString,
+            VField::OVFParameter::Title,
+            VField::OVFParameter::Desc,
+            VField::OVFParameter::Vlabels,
+            VField::OVFParameter::Vunit,
+            VField::OVFParameter::Munit,
+            VField::OVFParameter::Vmult,
+            OutputMeshType,
+            OutputCoordOrigin,
+            OutputCoordIncrement,
+            VField::OVFParameter::Bound,
+            OutputBBox
+            );//currently fails because type is deduced to be rvalue :'(
+}
+
 extern "C" void importWhole(const char* fileName)
 {
     const auto fPath { checkFileName(fileName) };
@@ -264,8 +475,9 @@ extern "C" void importWhole(const char* fileName)
     std::size_t seg_cnt {0};
     for(const auto& vfield: fileHandle)
     {
+        WSPutFunction(stdlink, "List", 2);
         //Output Header
-        //TODO: implement
+        OutputHeader(vfield.Header);
 
         //Output data
         if(!vfield.isAddressable())
