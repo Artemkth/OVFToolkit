@@ -15,7 +15,7 @@
 ::void importWhole(const char*)
 :Begin:
 :Function:      importWhole
-:Pattern:       ImportOVF[x_String]
+:Pattern:       ImportOVF[x_String, Rule[_String,_]...]
 :Arguments:     {x}
 :ArgumentTypes: {String}
 :ReturnType:    Manual

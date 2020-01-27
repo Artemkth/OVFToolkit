@@ -5,8 +5,13 @@
 #include<string>
 #include<type_traits>
 #include<vector>
+#include<stack>
 #include<optional>
+#include<variant>
 #include<map>
+//for mapping types
+#include<memory>
+#include<stdexcept>
 //small convinience on *nix systems
 //TODO: replace with cmake detection later, CheckIncludeFile
 #if defined(__unix__) || defined(__LINUX__) || defined(__APPLE__)
@@ -457,6 +462,66 @@ bool OutputHeader(const VField::OVFHeader& head)
             VField::OVFParameter::Bound,
             OutputBBox
             );
+}
+
+//wrappers to interfaces for importing data from mathematica
+//                                               string for symbol types
+using math_atom = std::variant<long, double, std::string>;
+//ohboi
+class Expression;
+class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Expression>>> { };
+
+//parse input from Mathematica
+Expression ParseWSTPExpression()
+{ 
+    Expression result{};
+    //set root header to ROOT
+    result.emplace_back(math_atom{"ROOT"});
+    std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, 0}}};
+
+    int res{};
+    while(res=WSGetNext(stdlink) != WSTKERR)
+    {
+        const char * str{nullptr};
+        switch(res)
+        {
+            case WSTKINT:
+                workStack.top().first -> emplace_back(long{});
+                WSGetInteger64(stdlink, &std::get<long>(std::get<math_atom>(workStack.top().first -> back())));
+                break;
+
+            case WSTKREAL:
+                workStack.top().first -> emplace_back(double{});
+                WSGetReal64(stdlink, &std::get<double>(std::get<math_atom>(workStack.top().first -> back())));
+                break;
+
+            case WSTKSTR:
+                if( WSGetString(stdlink, &str) != 0)
+                {
+                    workStack.top().first -> emplace_back(std::string{ str });
+                    WSReleaseString(stdlink, str); 
+                }
+                break;
+
+            default:
+                int dim {};
+                if( res == WSTKSYM && WSGetSymbol(stdlink, &str) || 
+                    res == WSTKFUNC && WSGetFunction(stdlink, &str, &dim) )
+                {
+                    workStack.top().first -> emplace( std::make_unique<Expression> ({{{ std::string{str} }}}) );
+                    if( res == WSTKFUNC )
+                        workStack.emplace(
+                                std::make_pair(std::get<std::unique_ptr<Expression>>( workStack.top().first -> back() ).get() ,dim)
+                                );
+                }
+        }
+
+        //if at the end of a block pop last reference off of the stack top
+        if(workStack.top().second==0 && workStack.top().first!=&result)
+            workStack.pop();
+    }
+
+    return std::move(result);
 }
 
 extern "C" void importWhole(const char* fileName)
