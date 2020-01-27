@@ -474,17 +474,25 @@ class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Ex
 //parse input from Mathematica
 Expression ParseWSTPExpression()
 { 
+    //let mathematica get all of the data it wants to send ready
+    WSFlush(stdlink);
+
     Expression result{};
     //set root header to ROOT
     result.emplace_back(math_atom{"ROOT"});
-    std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, 0}}};
+    std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, 1}}};
 
-    int res{};
-    while(res=WSGetNext(stdlink) != WSTKERR)
+    while(WSReady(stdlink) && !workStack.empty())
     {
+        //decrement top by 1 each time we get a new value
+        workStack.top().second--;
         const char * str{nullptr};
-        switch(res)
+        auto type = WSGetNext(stdlink);
+        switch(type)
         {
+            case WSTKERR:
+                break;
+
             case WSTKINT:
                 workStack.top().first -> emplace_back(long{});
                 WSGetInteger64(stdlink, &std::get<long>(std::get<math_atom>(workStack.top().first -> back())));
@@ -505,11 +513,13 @@ Expression ParseWSTPExpression()
 
             default:
                 int dim {};
-                if( res == WSTKSYM && WSGetSymbol(stdlink, &str) || 
-                    res == WSTKFUNC && WSGetFunction(stdlink, &str, &dim) )
+                if( type == WSTKSYM && WSGetSymbol(stdlink, &str) != 0 || 
+                    type == WSTKFUNC && WSGetFunction(stdlink, &str, &dim) != 0 )
                 {
-                    workStack.top().first -> emplace( std::make_unique<Expression> ({{{ std::string{str} }}}) );
-                    if( res == WSTKFUNC )
+                    //TODO: figure out how to do next two in one move!
+                    workStack.top().first -> emplace_back( std::make_unique<Expression> () );
+                    std::get<std::unique_ptr<Expression>>(workStack.top().first -> back()) -> emplace_back(std::string{str});
+                    if( type == WSTKFUNC )
                         workStack.emplace(
                                 std::make_pair(std::get<std::unique_ptr<Expression>>( workStack.top().first -> back() ).get() ,dim)
                                 );
@@ -517,8 +527,14 @@ Expression ParseWSTPExpression()
         }
 
         //if at the end of a block pop last reference off of the stack top
-        if(workStack.top().second==0 && workStack.top().first!=&result)
+        while(!workStack.empty() && workStack.top().second == 0 && workStack.top().first != &result)
             workStack.pop();
+    }
+
+    if(workStack.size() != 1 && workStack.top().second != 0)
+    {
+        WSPutFunction(stdlink, "CompoundExpression", 2);
+        PostErrorMessage("OVFToolkit", "prserr");
     }
 
     return std::move(result);
@@ -535,6 +551,10 @@ extern "C" void importWhole(const char* fileName)
         WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("ImportOVF", "prserr", fileHandle.WorkLog());
     }
+    
+    //parse other parameters
+    auto OtherParams{ParseWSTPExpression()};
+
     //and start outputting data
     WSPutFunction(stdlink, "List", fileHandle.cntSegments() );
     std::size_t seg_cnt {0};
