@@ -13,19 +13,12 @@
 :Evaluate:      ImportOVF[x_,___]     := Message[OVFToolkit::chtype, x];           
 
 ::Functions exported
-::void importWhole(const char*)
+::void import(const char*)
 :Begin:
-:Function:      importWhole
+:Function:      import
 :Pattern:       ImportOVF[x_String, y:Rule[_String,_]...]
 :Arguments:     {x, y}
 :ArgumentTypes: {String, Manual}
 :ReturnType:    Manual
 :End:
-::void importPart(const char*)
-::Begin:
-::Function:      importPart
-::Pattern:       ImportOVF[x_String, sequence_]
-::Arguments:     {x}
-::ArgumentTypes: {String}
-::ReturnType:    Manual
-::End: 
+

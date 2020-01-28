@@ -508,15 +508,15 @@ std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagNam
 
     //guaranteed by how getRule was built
     const auto& replace_rule = std::get<std::unique_ptr<Expression>>(*srch_res) -> at(2);
-    if( replace_rule.index() != 1 || std::get<std::unique_ptr<Expression>>(replace_rule) -> isSymbol() )
+    if( replace_rule.index() != 1 || !std::get<std::unique_ptr<Expression>>(replace_rule) -> isSymbol() )
         //return nothing if replacement_rule is not a symbol!
         return std::nullopt;
     const auto& replace_symbol = std::get<std::unique_ptr<Expression>>(replace_rule);
 
     //else compare to two symbol definitions
-    if(replace_symbol -> getHeader() == "true")
+    if(replace_symbol -> getHeader() == "True")
         return true;
-    else if(replace_symbol -> getHeader() == "false")
+    else if(replace_symbol -> getHeader() == "False")
         return false;
     return std::nullopt;
 }
@@ -591,7 +591,7 @@ Expression ParseWSTPExpression()
     return std::move(result);
 }
 
-extern "C" void importWhole(const char* fileName)
+extern "C" void import(const char* fileName)
 {
     const auto fPath { checkFileName(fileName) };
     if(!fPath.has_value()) return; //all output is done by checkFileName when it cannot recover
@@ -605,25 +605,38 @@ extern "C" void importWhole(const char* fileName)
     
     //parse other parameters
     auto OtherParams{ParseWSTPExpression()};
+    const auto sendHeader { ParseFlag(OtherParams, "GetHeader") };
+    const auto sendData { ParseFlag(OtherParams, "GetData") };
+    const int segment_dim {  (sendHeader.value_or(true) ? 1 : 0) +
+                             (sendData.value_or(true)   ? 1 : 0)   };
 
     //and start outputting data
     WSPutFunction(stdlink, "List", fileHandle.cntSegments() );
-    std::size_t seg_cnt {0};
-    for(const auto& vfield: fileHandle)
+    auto begin = fileHandle.begin();
+    auto end   = fileHandle.end();
+    std::size_t seg_cnt{0};
+    for(; begin != end; ++begin)
     {
-        WSPutFunction(stdlink, "List", 2);
+        WSPutFunction(stdlink, "List", segment_dim);
         //Output Header
-        OutputHeader(vfield.Header);
+        if (sendHeader.value_or(true)) OutputHeader(begin.getHeader());
 
-        //Output data
-        if(!vfield.isAddressable())
+        //Output Data
+        if (sendData.value_or(true)) 
         {
-            WSPutFunction(stdlink, "CompoundExpression", 2);
-            PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
-            WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+            const auto field = *begin;
+
+            //Output data
+            if(!field.isAddressable())
+            {
+                WSPutFunction(stdlink, "CompoundExpression", 2);
+                PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
+                WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+            }
+            else
+                OutputData(field);
         }
-        else
-            OutputData(vfield);
+        seg_cnt++;
     }
 
     WSEndPacket(stdlink);

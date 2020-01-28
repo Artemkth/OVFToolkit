@@ -103,6 +103,8 @@ namespace VField{
             { return (*reinterpret_cast<const VFieldFile*>(parent))[pos]; }
             VField slice( const slice_type& Slice)
             { return parent -> readSlice(pos, Slice); }
+            const OVFHeader& getHeader()
+            { return parent -> getSegmentHeader(pos); }
 
             ConstFieldIterator& operator++()
             { pos++; return *this; }
@@ -123,6 +125,8 @@ namespace VField{
             { return (*parent)[pos]; }
             VField slice( const slice_type& Slice )
             { return parent -> readSlice(pos, Slice); }
+            const OVFHeader& getHeader()
+            { return parent -> getSegmentHeader(pos); }
 
             FieldIterator& operator++()
             { pos++; return *this; }
