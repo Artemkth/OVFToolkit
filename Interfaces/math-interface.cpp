@@ -469,7 +469,57 @@ bool OutputHeader(const VField::OVFHeader& head)
 using math_atom = std::variant<long, double, std::string>;
 //ohboi
 class Expression;
-class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Expression>>> { };
+class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Expression>>> {
+    public:
+        //method to tell if expression is symbol
+        bool isSymbol() const noexcept
+        { return size() == 1; }
+        // get header
+        const std::string& getHeader() const noexcept
+        { return std::get<std::string>(std::get<math_atom>(front())); }
+
+        //find iterator to a first 'Rule' expression in the current expression with a specified pattern
+        auto getRule(const std::string& rule) const
+        {
+            const std::string ruleHead {"Rule"}; 
+            //target expression root to match
+            auto begin = ++cbegin(); //skip the header of root expression
+            auto end = cend();
+            auto srch_res = std::find_if(begin, end, 
+                    [&](const std::variant<math_atom, std::unique_ptr<Expression>>& var)
+                    {
+                        if(var.index() != 1 || std::get<std::unique_ptr<Expression>>(var)->size() != 3) return false;
+                        const auto& sub_exp = std::get<std::unique_ptr<Expression>>(var).get();
+                        const auto& rulePatt = sub_exp -> at(1);
+                        return sub_exp -> getHeader() == ruleHead &&
+                            rulePatt.index()==0 && std::get<math_atom>(rulePatt).index() == 2 &&
+                            std::get<std::string>(std::get<math_atom>(rulePatt)) == rule;
+                    });
+            return srch_res;
+        }
+
+};
+
+std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagName)
+{
+    const auto srch_res = expr.getRule(flagName);
+    if(srch_res == expr.end())
+        return std::nullopt;
+
+    //guaranteed by how getRule was built
+    const auto& replace_rule = std::get<std::unique_ptr<Expression>>(*srch_res) -> at(2);
+    if( replace_rule.index() != 1 || std::get<std::unique_ptr<Expression>>(replace_rule) -> isSymbol() )
+        //return nothing if replacement_rule is not a symbol!
+        return std::nullopt;
+    const auto& replace_symbol = std::get<std::unique_ptr<Expression>>(replace_rule);
+
+    //else compare to two symbol definitions
+    if(replace_symbol -> getHeader() == "true")
+        return true;
+    else if(replace_symbol -> getHeader() == "false")
+        return false;
+    return std::nullopt;
+}
 
 //parse input from Mathematica
 Expression ParseWSTPExpression()
@@ -481,6 +531,7 @@ Expression ParseWSTPExpression()
     //set root header to ROOT
     result.emplace_back(math_atom{"ROOT"});
     std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, 1}}};
+    //next parse flags
 
     while(WSReady(stdlink) && !workStack.empty())
     {
@@ -522,7 +573,7 @@ Expression ParseWSTPExpression()
                     if( type == WSTKFUNC )
                         workStack.emplace(
                                 std::make_pair(std::get<std::unique_ptr<Expression>>( workStack.top().first -> back() ).get() ,dim)
-                                );
+                            );
                 }
         }
 
@@ -531,7 +582,7 @@ Expression ParseWSTPExpression()
             workStack.pop();
     }
 
-    if(workStack.size() != 1 && workStack.top().second != 0)
+    if(workStack.size() != 1)
     {
         WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("OVFToolkit", "prserr");
