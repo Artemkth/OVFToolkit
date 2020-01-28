@@ -13,12 +13,26 @@
 :Evaluate:      ImportOVF[x_,___]     := Message[OVFToolkit::chtype, x];           
 
 ::Functions exported
+::Importing data
 ::void import(const char*)
 :Begin:
 :Function:      import
-:Pattern:       ImportOVF[x_String, y:Rule[_String,_]...]
-:Arguments:     {x, y}
+:Pattern:       ImportOVF[fileName_String, options:Rule[_String,_]...]
+:Arguments:     {fileName, options}
 :ArgumentTypes: {String, Manual}
 :ReturnType:    Manual
 :End:
+
+:Evaluate:      ImportOVF::usage      = "ImportOVF[source, options...]\nImports vector field data from ovf file pointed to by 'source', returning Wolfram language representation of both its header and data sections. Options are 'GetData' and 'GetHeader', when set to False those will prevent the respective section from being imported."
+
+::void exportOVF(const char*)
+:Begin:
+:Function:      exportOVF
+:Pattern:       ExportOVF[fileName_String, data_?ArrayQ[#,2|4,NumericQ], header:{Rule[_String,_]..}]
+:Arguments:     {fileName, data, header}
+:ArgumentTypes: {String, Manual}
+:ReturnType:    Manual
+:End:
+
+:Evaluate:      ExportOVF::usage      = "ExportOVF[dest, data, header]\nExports vector field data into an OVF file compliant to version provided in header."
 

@@ -567,7 +567,6 @@ Expression ParseWSTPExpression()
                 if( type == WSTKSYM && WSGetSymbol(stdlink, &str) != 0 || 
                     type == WSTKFUNC && WSGetFunction(stdlink, &str, &dim) != 0 )
                 {
-                    //TODO: figure out how to do next two in one move!
                     workStack.top().first -> emplace_back( std::make_unique<Expression> () );
                     std::get<std::unique_ptr<Expression>>(workStack.top().first -> back()) -> emplace_back(std::string{str});
                     if( type == WSTKFUNC )
@@ -641,5 +640,11 @@ extern "C" void import(const char* fileName)
 
     WSEndPacket(stdlink);
     WSFlush(stdlink);
+}
+
+//exporting section
+extern "C" void exportOVF(const char* fName)
+{
+    const std::filesystem::path output {fName};
 }
 
