@@ -474,6 +474,14 @@ class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Ex
         //method to tell if expression is symbol
         bool isSymbol() const noexcept
         { return size() == 1; }
+        // check if value is numeric
+        bool isNumeric(const_iterator it) const
+        { 
+            if( it->index() != 0 )
+                return false; //nested expression or symbol
+            const auto& val = std::get<math_atom> (*it);
+            return val.index() == 0 || val.index() == 1;
+        }
         // get header
         const std::string& getHeader() const noexcept
         { return std::get<std::string>(std::get<math_atom>(front())); }
@@ -497,7 +505,6 @@ class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Ex
                     });
             return srch_res;
         }
-
 };
 
 std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagName)
@@ -522,15 +529,19 @@ std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagNam
 }
 
 //parse input from Mathematica
-Expression ParseWSTPExpression()
+Expression ParseWSTPExpression(int optc = 0)
 { 
+    //nothing to do if nothing is expected on output
+    if(optc == 0)
+        return {};
+
     //let mathematica get all of the data it wants to send ready
     WSFlush(stdlink);
 
     Expression result{};
     //set root header to ROOT
     result.emplace_back(math_atom{"ROOT"});
-    std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, 1}}};
+    std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, optc}}};
     //next parse flags
 
     while(WSReady(stdlink) && !workStack.empty())
@@ -577,11 +588,11 @@ Expression ParseWSTPExpression()
         }
 
         //if at the end of a block pop last reference off of the stack top
-        while(!workStack.empty() && workStack.top().second == 0 && workStack.top().first != &result)
+        while(!workStack.empty() && workStack.top().second == 0)
             workStack.pop();
     }
 
-    if(workStack.size() != 1)
+    if(!workStack.empty())
     {
         WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("OVFToolkit", "prserr");
@@ -590,7 +601,7 @@ Expression ParseWSTPExpression()
     return std::move(result);
 }
 
-extern "C" void import(const char* fileName)
+extern "C" void import(const char* fileName, int optc)
 {
     const auto fPath { checkFileName(fileName) };
     if(!fPath.has_value()) return; //all output is done by checkFileName when it cannot recover
@@ -603,7 +614,10 @@ extern "C" void import(const char* fileName)
     }
     
     //parse other parameters
-    auto OtherParams{ParseWSTPExpression()};
+    auto OtherParams{ParseWSTPExpression(optc)};
+    if( WSReady(stdlink) )
+    {/*TODO implement error throw */}
+
     const auto sendHeader { ParseFlag(OtherParams, "GetHeader") };
     const auto sendData { ParseFlag(OtherParams, "GetData") };
     const int segment_dim {  (sendHeader.value_or(true) ? 1 : 0) +
@@ -616,7 +630,7 @@ extern "C" void import(const char* fileName)
     std::size_t seg_cnt{0};
     for(; begin != end; ++begin)
     {
-        WSPutFunction(stdlink, "List", segment_dim);
+        if(segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
         //Output Header
         if (sendHeader.value_or(true)) OutputHeader(begin.getHeader());
 
@@ -642,9 +656,62 @@ extern "C" void import(const char* fileName)
     WSFlush(stdlink);
 }
 
+//now for parsing different types of sub-expressions
+//small helper to prevent wrong type from next template
+template<typename T, typename Variant>
+struct isVariantMember{static_assert(true, "isVariant is applicable to only variant");};
+template<typename T, typename... types>
+struct isVariantMember<T, std::variant<types...>> : public std::disjunction<std::is_same<T, types>...> {
+    private:
+        template <typename> struct tag {};
+    public:
+        static constexpr std::size_t index { std::variant<tag<types>...>(tag<T>()).index() };
+};
+
+template<typename T>
+std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
+                                ParseValue(const Expression& expr, const std::string& pattern)
+{
+    auto srch_res = expr.getRule(pattern);
+
+    //get some constants for later in compiletime
+    constexpr auto T_index { isVariantMember<T, math_atom>::index };
+    constexpr auto Int_index { isVariantMember<long, math_atom>::index };
+
+    //if no value was found throw empty value instead
+    if(srch_res == expr.end())
+        return std::nullopt;
+
+    if(std::get<std::unique_ptr<Expression>>(*srch_res) -> at(2).index() != 0)//symbol or expression
+        return std::nullopt;
+    const auto& val = std::get<math_atom>(std::get<std::unique_ptr<Expression>>(*srch_res) -> at(2));
+    
+    if(T_index == val.index())
+        return std::get<T>(val);
+    //else only in one case can we succeed
+    if constexpr (std::is_floating_point_v<T>)
+        if(val.index() == math_atom{long{}}.index() )
+            return std::get< Int_index > (val);
+
+    //else return nothing
+    return std::nullopt;
+}
+
 //exporting section
-extern "C" void exportOVF(const char* fName)
+extern "C" void exportOVF(const char* fName, int optc)
 {
     const std::filesystem::path output {fName};
+    //TODO: add expansion of the file path
+
+    //parse all other inputs
+    //first get the options
+    auto Options { ParseWSTPExpression(optc) };
+    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
+    //4 byte floats by default, but allow for double precision fields too 
+
+    //and create a VField header for future dumping, empty for now
+    VField::VField field{};
+
+    //parse options for BinarySize
 }
 
