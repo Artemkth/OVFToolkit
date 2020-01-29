@@ -32,6 +32,9 @@
 int main(int argc, char** argv)
 { return WSMain(argc, argv); }
 
+//global counter for expected return packets
+std::size_t skip_cnt{0};
+
 #ifdef EXPANDPATH
 auto ExpandPath(const std::string& fPath)
 {
@@ -160,13 +163,17 @@ inline void PostErrorMessage(
         const std::string& symbError,
         T... params)
 {
-    bool result { WSPutFunction(stdlink, "Message", 1 + sizeof...(T)) != 0 };
+    bool result { WSPutFunction(stdlink, "EvaluatePacket", 1) != 0 };
+    result = result && WSPutFunction(stdlink, "Message", 1 + sizeof...(T)) != 0; 
     result = result && WSPutFunction(stdlink, "MessageName", 2) != 0;
     result = result && WSPutSymbol(stdlink, symbName.c_str()) != 0;
     result = result && PutValue(symbError);
     //now real cock magic, I love fold expressions
     result = (result && ... && PutValue(params)); //by default will be true if parameter pack is empty
     if(!result) throw std::runtime_error("Failed to ouput an error message, PANIC!");
+
+    //increment ignored expression count
+    skip_cnt++;
 }
 //template for signiling failure
 inline bool PostFailure()
@@ -188,7 +195,6 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
     if(!std::filesystem::exists(fileName))
 #ifndef EXPANDPATH
     {
-        WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("General", "noopen", fileName);
         PostFailure();
         return std::nullopt;
@@ -200,13 +206,11 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
         auto expanded = ExpandPath(fileName);
         if( expanded.size() != 1 || !std::filesystem::exists(expanded[0]) )
         {   
-            WSPutFunction(stdlink, "CompoundExpression", 2);
             PostErrorMessage("General", "noopen", expanded.size()==1? expanded[0] : fileName);
             PostFailure();
             return std::nullopt;
         }
         fPath = expanded[0];
-        WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage( "OVFToolkit", "fsub", fileName, expanded[0] );
     }
     else
@@ -217,7 +221,6 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
     if( !std::filesystem::is_regular_file(status) || 
         (status.permissions() & any_read) == std::filesystem::perms::none )
     {
-        WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("OVFToolkit", "notperm", "read", fPath.c_str());
         PostFailure();
         return std::nullopt;
@@ -471,6 +474,13 @@ using math_atom = std::variant<long, double, std::string>;
 class Expression;
 class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Expression>>> {
     public:
+        //constructors
+        Expression() = default;
+        Expression(std::initializer_list<math_atom> init){
+            for(auto& val: init)
+                emplace_back(std::move(val));
+        }
+
         //method to tell if expression is symbol
         bool isSymbol() const noexcept
         { return size() == 1; }
@@ -531,16 +541,24 @@ std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagNam
 //parse input from Mathematica
 Expression ParseWSTPExpression(int optc = 0)
 { 
+    //if there are return packets to be skipped try to skip them first
+    //WSTestHead automatically revinds if it fails
+    //need to flush all writes before calling WSReady!
+    WSFlush(stdlink);
+    while(skip_cnt != 0 && WSReady(stdlink))
+    { 
+        if( WSTestHead(stdlink, "ReturnPacket", nullptr) && WSNewPacket(stdlink) != 0) 
+            --skip_cnt;
+        else
+            break;
+    }
+
     //nothing to do if nothing is expected on output
     if(optc == 0)
         return {};
 
-    //let mathematica get all of the data it wants to send ready
-    WSFlush(stdlink);
-
-    Expression result{};
+    Expression result{"ROOT"};
     //set root header to ROOT
-    result.emplace_back(math_atom{"ROOT"});
     std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, optc}}};
     //next parse flags
 
@@ -578,8 +596,7 @@ Expression ParseWSTPExpression(int optc = 0)
                 if( type == WSTKSYM && WSGetSymbol(stdlink, &str) != 0 || 
                     type == WSTKFUNC && WSGetFunction(stdlink, &str, &dim) != 0 )
                 {
-                    workStack.top().first -> emplace_back( std::make_unique<Expression> () );
-                    std::get<std::unique_ptr<Expression>>(workStack.top().first -> back()) -> emplace_back(std::string{str});
+                    workStack.top().first -> emplace_back( std::make_unique<Expression> (std::initializer_list<math_atom>({str})) );
                     if( type == WSTKFUNC )
                         workStack.emplace(
                                 std::make_pair(std::get<std::unique_ptr<Expression>>( workStack.top().first -> back() ).get() ,dim)
@@ -608,10 +625,7 @@ extern "C" void import(const char* fileName, int optc)
     //next open the file finally
     const VField::VFieldFile fileHandle(fPath.value().c_str());
     if(!fileHandle.WorkLog().empty())
-    {
-        WSPutFunction(stdlink, "CompoundExpression", 2);
         PostErrorMessage("ImportOVF", "prserr", fileHandle.WorkLog());
-    }
     
     //parse other parameters
     auto OtherParams{ParseWSTPExpression(optc)};
@@ -642,7 +656,6 @@ extern "C" void import(const char* fileName, int optc)
             //Output data
             if(!field.isAddressable())
             {
-                WSPutFunction(stdlink, "CompoundExpression", 2);
                 PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
                 WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
             }
@@ -653,7 +666,6 @@ extern "C" void import(const char* fileName, int optc)
     }
 
     WSEndPacket(stdlink);
-    WSFlush(stdlink);
 }
 
 //now for parsing different types of sub-expressions
@@ -700,9 +712,13 @@ std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
 //exporting section
 extern "C" void exportOVF(const char* fName, int optc)
 {
+#ifdef EXPANDPATH
+    auto expansions = ExpandPath(fName);
+    if(expansions.size() != 1)
+    {/*TODO handle error*/}
+     
+#endif //EXPANDPATH
     const std::filesystem::path output {fName};
-    //TODO: add expansion of the file path
-
     //parse all other inputs
     //first get the options
     auto Options { ParseWSTPExpression(optc) };
@@ -712,6 +728,12 @@ extern "C" void exportOVF(const char* fName, int optc)
     //and create a VField header for future dumping, empty for now
     VField::VField field{};
 
-    //parse options for BinarySize
+    //on success end by returning a 'Null'
+    WSPutFunction(stdlink, "EvaluatePacket", 1);
+    PostErrorMessage("ImportOVF", "argx"); 
+    WSFlush(stdlink);
+    auto response {ParseWSTPExpression(1)};
+
+    WSPutSymbol(stdlink, "Null");
 }
 
