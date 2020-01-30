@@ -645,6 +645,7 @@ void deinit()
                     //throw if it any other packet
                     throw std::runtime_error("Got an unhandled packet type!");
             }
+            WSDestroyMark(stdlink, mark);
         }
     }
 
