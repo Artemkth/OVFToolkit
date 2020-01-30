@@ -152,7 +152,7 @@ namespace VField{
         { OVFParameter::Zmax,    regexToken("zmax")             },
         { OVFParameter::Bound,   regexToken("boundary")         },
         { OVFParameter::Vmax,    regexToken("ValueRangeMaxMag") },
-        { OVFParameter::Vmin,    regexToken("ValueRangeMinMax") },
+        { OVFParameter::Vmin,    regexToken("ValueRangeMinMag") },
         { OVFParameter::Mtype,   regexToken("meshtype")         },
         { OVFParameter::Pcount,  regexToken("pointcount")       },
         { OVFParameter::Xbase,   regexToken("xbase")            },
@@ -249,6 +249,10 @@ namespace VField{
             const auto pos = file.tellg(); //store the initial position in case one needs to seek back
 
             std::getline(file, buffer); line_cnt++;
+            //TODO: evaluate this since it is non-standard conforming, but both mumax and oommf do it
+            if(buffer == "" && file.eof())
+                break;
+
             if(!file.good() && !file.eof()) //any error bit set but EOF
             {
                 logMessage((std::string)"VFieldFile::read: " + ((file.rdstate()&std::ios_base::badbit)? "Unr":"R") +
@@ -651,6 +655,9 @@ namespace VField{
         auto DataEndPos {file.tellg()};
         std::string closingString{""};
         std::getline(file, closingString);
+        //TODO: check if this is needed, since oommf is specified to not have this issue
+        if(closingString == "")
+            std::getline(file, closingString);
         if( file.good() && std::regex_match(closingString, regexTokenValue("End","Data\\s+.+?")))
         {
             //set count if it was not known for sure previously
@@ -676,7 +683,7 @@ namespace VField{
                     return "readData: reached the end of file searching for end of data manually ";
             }
             log = "Found the end of data manually";
-            if( isBinary)
+            if( isBinary )
                 cnt = (DataEndPos - DataBeginPos)/internalSize - 1; //last constant for test value
             else//is text
             {
