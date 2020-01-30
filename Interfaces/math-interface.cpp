@@ -618,6 +618,48 @@ Expression ParseWSTPExpression(int optc = 0)
     return std::move(result);
 }
 
+//cleans up stdlink after 
+void deinit()
+{
+    ParseWSTPExpression(0);
+    if(WSError(stdlink) != WSEOK)
+        throw std::runtime_error("Unhandled error occured on link!");
+
+    if(WSReady(stdlink) || skip_cnt != 0)
+    {
+        if(WSNewPacket(stdlink) == 0)
+            throw std::runtime_error("Unhandled error occured on link!");
+        PostErrorMessage("OVFToolkit","unhpack");
+        WSFlush(stdlink);
+        //following will block if there is a return packet to wait for
+        while(WSReady(stdlink) || skip_cnt != 0)
+        {
+            auto mark = WSCreateMark(stdlink);
+            switch(WSNextPacket(stdlink))
+            {
+                case ILLEGALPKT:
+                    throw std::runtime_error("Unhandled error occured on link!");
+
+                case RETURNPKT:
+                    --skip_cnt;
+                    if(WSNewPacket(stdlink) == 0)
+                        throw std::runtime_error("Unhandled error occured on link!");
+                    break;
+
+                case CALLPKT:
+                    //SEARCHING...., SEEK AND DESTROY
+                    WSSeekMark(stdlink, mark, 0); 
+                    WSDestroyMark(stdlink, mark); 
+                    return;
+
+                default:
+                    //throw if it any other packet
+                    throw std::runtime_error("Got an unhandled packet type!");
+            }
+        }
+    }
+}
+
 extern "C" void import(const char* fileName, int optc)
 {
     const auto fPath { checkFileName(fileName) };
@@ -665,6 +707,8 @@ extern "C" void import(const char* fileName, int optc)
         seg_cnt++;
     }
 
+    //clean up after ourselfs
+    deinit();
     WSEndPacket(stdlink);
 }
 
@@ -722,18 +766,16 @@ extern "C" void exportOVF(const char* fName, int optc)
     //parse all other inputs
     //first get the options
     auto Options { ParseWSTPExpression(optc) };
-    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
     //4 byte floats by default, but allow for double precision fields too 
+    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
+    //if(ByteSize != 4 && ByteSize != 8)
+
 
     //and create a VField header for future dumping, empty for now
     VField::VField field{};
 
     //on success end by returning a 'Null'
-    WSPutFunction(stdlink, "EvaluatePacket", 1);
-    PostErrorMessage("ImportOVF", "argx"); 
-    WSFlush(stdlink);
-    auto response {ParseWSTPExpression(1)};
-
+    deinit();
     WSPutSymbol(stdlink, "Null");
 }
 
