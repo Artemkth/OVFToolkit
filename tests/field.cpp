@@ -62,8 +62,8 @@ int main()
     //test features requiring Weak Addressibility (ability to traverse points of internal array)
     {
         //make copies and keep originals of fields for later
-        VField::VField tmpRegular(commonHeader, pCount * Pdim, const_cast<const double*>(data));
-        VField::VField tmpIrregular(commonHeader, pCount * (Pdim + 3), const_cast<const double*>(irrData));
+        VField::VField tmpRegular(commonHeader, pCount * Pdim, data);
+        VField::VField tmpIrregular(commonHeader, pCount * (Pdim + 3), irrData);
         tmpRegular.Header.setMesh(VField::OVFHeader::MeshType::rectangular);
         tmpIrregular.Header.setMesh(VField::OVFHeader::MeshType::irregular);
         //this should be enough to make both weakly addressable!

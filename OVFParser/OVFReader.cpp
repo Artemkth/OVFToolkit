@@ -760,10 +760,10 @@ namespace VField{
                                 res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
                         std::swap(res, buffer);
                         delete[] res;
-                        out.setData(buffer, importDepth / stride);
+                        out.insertData(buffer, importDepth / stride);
                         return log;
                     }
-                    out.setData(buffer, importDepth);
+                    out.insertData(buffer, importDepth);
                     return log; 
                 }
                 if(internalSize == 8)
@@ -804,10 +804,10 @@ namespace VField{
                                 res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
                         std::swap(res, buffer);
                         delete[] res;
-                        out.setData(buffer, importDepth / stride);
+                        out.insertData(buffer, importDepth / stride);
                         return log;
                     }
-                    out.setData(buffer, importDepth);
+                    out.insertData(buffer, importDepth);
                     return log; 
                 }
             }
@@ -872,10 +872,10 @@ namespace VField{
                             res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
                     std::swap(res, buffer);
                     delete[] res;
-                    out.setData(buffer, importDepth / stride);
+                    out.insertData(buffer, importDepth / stride);
                     return log;
                 }
-                out.setData(buffer, importDepth);
+                out.insertData(buffer, importDepth);
                 return log; 
             }
             file.seekg(AfterDataEnd);
@@ -972,7 +972,7 @@ namespace VField{
         for(;begin <= end; begin  += stride)
             for(std::size_t i = 0; i < dim; i++)
                 buffer[dim * begin + i] = (beginIt + begin)[i];
-        val.setData(buffer, newSize);
+        val.insertData(buffer, newSize);
         return val;
     }
     //and slice for rectangular grid
@@ -1040,7 +1040,7 @@ namespace VField{
             val.Header.at<pType::Float>(OVFParameter::Zstep) *= slices[8];
         }
 
-        val.setData(buffer, vCount);
+        val.insertData(buffer, vCount);
         return val;
     }
 

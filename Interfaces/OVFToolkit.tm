@@ -5,7 +5,6 @@
 :Evaluate:      OVFToolkit::chtype    = "First argument \"`1`\" is not a valid file specification" 
 :Evaluate:      OVFToolkit::notperm   = "Was not permitted to `1` \"`2`\""
 :Evaluate:      OVFToolkit::prserr    = "Could not parse additional arguments"
-:Evaluate:      OVFToolkit::unhpack   = "Unhandled packets were found on the link, skipping all of them!"
 :Evaluate:      ImportOVF::argx       = "ImportOVF called with 0 parameters, at least one was expected"
 :Evaluate:      ImportOVF::prserr     = "Received following errors while parsing a file:\n `1`"
 :Evaluate:      ImportOVF::naddr      = "Data in segment `1` of the file \"`2`\" is not addressible!!"
@@ -24,6 +23,7 @@
 :End:
 
 :Evaluate:      ImportOVF::usage      = "ImportOVF[source, options...]\nImports vector field data from ovf file pointed to by 'source', returning Wolfram language representation of both its header and data sections. Options are 'GetData' and 'GetHeader', when set to False those will prevent the respective section from being imported."
+:Evaluate:      ExportOVF::badsize    = "Got a bad size `1` for internal data, expected it to be 4 or 8. Proceeding with the defaul value of 4."
 
 ::void exportOVF(const char*, int)
 :Begin:

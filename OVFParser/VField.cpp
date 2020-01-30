@@ -289,11 +289,11 @@ namespace VField{
     }
     
     //setters
-    void VField::setData(float* arr, std::size_t size) noexcept
+    void VField::insertData(float* arr, std::size_t size) noexcept
     {
         *data = std::move(StorageArray(arr, size));
     }
-    void VField::setData(double* arr, std::size_t size) noexcept
+    void VField::insertData(double* arr, std::size_t size) noexcept
     {
         *data = std::move(StorageArray(arr, size));
     }

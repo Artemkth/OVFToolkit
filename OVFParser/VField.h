@@ -64,9 +64,6 @@ namespace VField{
             { Header.set(OVFParameter::VersionString, version); }
             //constructors for fully populating the internals
             template<typename T>
-            explicit VField(const OVFHeader& head, std::size_t size = 0, T* ref = nullptr)       : VField()
-            { Header = head; if(ref!=nullptr) setData(ref, size); }
-            template<typename T>
             explicit VField(const OVFHeader& head, std::size_t size = 0, const T* ref = nullptr) : VField()
             { Header = head; if(ref!=nullptr) setData(ref, size); }
             ~VField();
@@ -104,8 +101,8 @@ namespace VField{
             
             //data access methods
             //setting data to whatever, clears previous data 
-            void setData(float*, std::size_t) noexcept;
-            void setData(double*, std::size_t) noexcept;
+            void insertData(float*, std::size_t) noexcept;
+            void insertData(double*, std::size_t) noexcept;
             //same but with a copy, indicated by pointer being constant
             //throw when out of memory
             void setData(const float*, std::size_t);

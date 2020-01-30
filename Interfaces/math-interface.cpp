@@ -541,18 +541,6 @@ std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagNam
 //parse input from Mathematica
 Expression ParseWSTPExpression(int optc = 0)
 { 
-    //if there are return packets to be skipped try to skip them first
-    //WSTestHead automatically revinds if it fails
-    //need to flush all writes before calling WSReady!
-    WSFlush(stdlink);
-    while(skip_cnt != 0 && WSReady(stdlink))
-    { 
-        if( WSTestHead(stdlink, "ReturnPacket", nullptr) && WSNewPacket(stdlink) != 0) 
-            --skip_cnt;
-        else
-            break;
-    }
-
     //nothing to do if nothing is expected on output
     if(optc == 0)
         return {};
@@ -562,6 +550,8 @@ Expression ParseWSTPExpression(int optc = 0)
     std::stack<std::pair<Expression*, std::size_t>> workStack {{{&result, optc}}};
     //next parse flags
 
+    //need to flush all writes before calling WSReady!
+    WSFlush(stdlink);
     while(WSReady(stdlink) && !workStack.empty())
     {
         //decrement top by 1 each time we get a new value
@@ -621,26 +611,25 @@ Expression ParseWSTPExpression(int optc = 0)
 //cleans up stdlink after 
 void deinit()
 {
-    ParseWSTPExpression(0);
     if(WSError(stdlink) != WSEOK)
         throw std::runtime_error("Unhandled error occured on link!");
 
-    if(WSReady(stdlink) || skip_cnt != 0)
+    WSFlush(stdlink);
+    if( skip_cnt != 0 || WSReady(stdlink) )
     {
         if(WSNewPacket(stdlink) == 0)
             throw std::runtime_error("Unhandled error occured on link!");
-        PostErrorMessage("OVFToolkit","unhpack");
         WSFlush(stdlink);
         //following will block if there is a return packet to wait for
-        while(WSReady(stdlink) || skip_cnt != 0)
+        while( skip_cnt != 0 || WSReady(stdlink) )
         {
             auto mark = WSCreateMark(stdlink);
             switch(WSNextPacket(stdlink))
             {
-                case ILLEGALPKT:
-                    throw std::runtime_error("Unhandled error occured on link!");
-
                 case RETURNPKT:
+                    if(skip_cnt == 0)
+                        throw std::runtime_error("Got an unexpected ReturnPacket!");
+
                     --skip_cnt;
                     if(WSNewPacket(stdlink) == 0)
                         throw std::runtime_error("Unhandled error occured on link!");
@@ -652,12 +641,16 @@ void deinit()
                     WSDestroyMark(stdlink, mark); 
                     return;
 
-                default:
+                default: //including INVALIDPKT
                     //throw if it any other packet
                     throw std::runtime_error("Got an unhandled packet type!");
             }
         }
     }
+
+    //if there were some packets left
+    if(skip_cnt != 0)
+        throw std::runtime_error("Didn't find all of the return packets!");
 }
 
 extern "C" void import(const char* fileName, int optc)
@@ -709,7 +702,6 @@ extern "C" void import(const char* fileName, int optc)
 
     //clean up after ourselfs
     deinit();
-    WSEndPacket(stdlink);
 }
 
 //now for parsing different types of sub-expressions
@@ -753,6 +745,67 @@ std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
     return std::nullopt;
 }
 
+//read data from WSTP
+VField::VField ParseWSTPData(std::size_t ByteSize)
+{
+    //fields for storing information from link
+    int* dims {nullptr};
+    int depth {0};
+    char** headers {nullptr};
+
+    //and create a VField header for future dumping, empty for now
+    VField::VField field{}; //and import the data into it
+    switch(ByteSize)
+    {
+        //switch is for later if I decide to add long double
+        case 8:
+            {
+                double* data {nullptr};
+                
+                if(WSGetReal64Array(stdlink, &data, &dims, &headers, &depth) == 0 || (depth != 2 && depth != 4))
+                    throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+                std::size_t dataPts {1};
+                for(std::size_t i = 0; i < depth; i++)
+                    dataPts *= dims[i];
+
+                //put data into VField
+                field.insertData(data, dataPts);
+                break;
+            }
+        default:
+            float* data {nullptr};
+            if(WSGetReal32Array(stdlink, &data, &dims, &headers, &depth) == 0 || (depth != 2 && depth != 4))
+                throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+            std::size_t dataPts {1};
+            for(std::size_t i = 0; i < depth; i++)
+                dataPts *= dims[i];
+
+            field.insertData(data, dataPts);
+    }
+    VField::OVFHeader& head {field.Header};
+    //first deduce mesh type
+    if(depth == 2)
+    {
+        head.setMesh(VField::OVFHeader::MeshType::irregular);
+        head.at<VField::pType::Uint>(VField::OVFParameter::Pcount) = dims[0];
+        if(dims[1] > 3)
+            head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = dims[1] - 3;
+        //else skip
+    }
+    else
+    {
+        head.setMesh(VField::OVFHeader::MeshType::rectangular);
+
+        head.at<VField::pType::Uint>(VField::OVFParameter::Znodes) = dims[0];
+        head.at<VField::pType::Uint>(VField::OVFParameter::Ynodes) = dims[1];
+        head.at<VField::pType::Uint>(VField::OVFParameter::Xnodes) = dims[2];
+        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim)   = dims[3];
+    }
+
+    WSReleaseReal64Array(stdlink, nullptr, dims, headers, depth);
+    return field;
+}
+
 //exporting section
 extern "C" void exportOVF(const char* fName, int optc)
 {
@@ -768,11 +821,11 @@ extern "C" void exportOVF(const char* fName, int optc)
     auto Options { ParseWSTPExpression(optc) };
     //4 byte floats by default, but allow for double precision fields too 
     const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
-    //if(ByteSize != 4 && ByteSize != 8)
+    if(ByteSize != 4 && ByteSize != 8)
+        PostErrorMessage("ExportOVF", "badsize", ByteSize);
 
-
-    //and create a VField header for future dumping, empty for now
-    VField::VField field{};
+    auto field {ParseWSTPData(ByteSize)};
+    auto HeaderRules {ParseWSTPExpression(1)};
 
     //on success end by returning a 'Null'
     deinit();
