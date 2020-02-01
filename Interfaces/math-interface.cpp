@@ -813,10 +813,17 @@ extern "C" void exportOVF(const char* fName, int optc)
 #ifdef EXPANDPATH
     auto expansions = ExpandPath(fName);
     if(expansions.size() != 1)
-    {/*TODO handle error*/}
-     
-#endif //EXPANDPATH
+    {
+        PostErrorMessage("ExportOVF", "ambig", fName, expansions.size());
+        deinit();
+        WSPutSymbol(stdlink, "$Failed");
+        return;
+    }
+    const std::filesystem::path output {expansions.front()};
+#else
     const std::filesystem::path output {fName};
+#endif //EXPANDPATH
+
     //parse all other inputs
     //first get the options
     auto Options { ParseWSTPExpression(optc) };
