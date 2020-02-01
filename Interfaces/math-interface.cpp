@@ -515,6 +515,12 @@ class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Ex
                     });
             return srch_res;
         }
+
+        bool testHeader(const std::string& head) const
+        {
+            //first element is assumed to be a string by construction
+            return std::get<std::string>(std::get<math_atom>(front())) == head;
+        }
 };
 
 std::optional<bool> ParseFlag(const Expression& expr, const std::string& flagName)
@@ -807,6 +813,165 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
     return field;
 }
 
+//set a field p with a math_atom
+void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& atom)
+{
+    switch(paramIndex(p))
+    {
+        case VField::pType::String:
+            if(atom.index() != 2)
+            {
+                PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a string");
+                return;
+            }
+            head.set(p, std::get<std::string>(atom));
+            break;
+        case VField::pType::Float:
+            if(atom.index() == 2)
+            {
+                PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a numeric value");
+                return;
+            }
+            if(atom.index() == 0)
+                head.set(p, static_cast<VField::associatedType_t<VField::pType::Float>>(std::get<0>(atom)));
+            else if(atom.index() == 1)
+                head.set(p, static_cast<VField::associatedType_t<VField::pType::Float>>(std::get<1>(atom)));
+            break;
+        case VField::pType::Uint:
+            if(atom.index() != 0)
+            {
+                PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a integer");
+                return;
+            }
+            head.set(p, static_cast<VField::associatedType_t<VField::pType::Uint>>(std::get<0>(atom)));
+            break;
+
+        default:
+            throw std::runtime_error("SetField called with non-numeric target type!");
+    }
+}
+
+//function to set fields from vector of pairs
+using set_list = std::vector<std::pair<VField::OVFParameter, const math_atom*>>;
+inline void SetBunch(VField::VField& field, const set_list& vals)
+{
+    for(const auto& x: vals)
+    {
+        if(x.second == nullptr)
+            field.DeduceField(x.first, true);
+        else
+            SetField(field.Header, x.first, *x.second);
+    }
+}
+
+//mapping from mathematica string tokens to OVFParameter tokens
+const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(const Expression*)>> TokenMap{
+    {   "VersionString",        VField::OVFParameter::VersionString     },
+    {   "Title",                VField::OVFParameter::Title             },
+    {   "Description",          VField::OVFParameter::Munit             },
+    {   "MeshUnits",            VField::OVFParameter::Vunit             },
+    {   "ValueUnits",           VField::OVFParameter::Vmult             },
+    {   "ValueLabels",          VField::OVFParameter::Vlabels           },
+    {   "BoundingPolygon",      VField::OVFParameter::Bound             },
+    {   "X0",                   VField::OVFParameter::Xbase             },
+    {   "Y0",                   VField::OVFParameter::Ybase             },
+    {   "Z0",                   VField::OVFParameter::Zbase             },
+    {   "dX",                   VField::OVFParameter::Xstep             },
+    {   "dY",                   VField::OVFParameter::Ystep             },
+    {   "dZ",                   VField::OVFParameter::Zstep             },
+    {   "MinVal",               VField::OVFParameter::Vmin              },
+    {   "MaxVal",               VField::OVFParameter::Vmax              },
+    {   "MinX",                 VField::OVFParameter::Xmin              },
+    {   "MinY",                 VField::OVFParameter::Ymin              },
+    {   "MinZ",                 VField::OVFParameter::Zmin              },
+    {   "MaxX",                 VField::OVFParameter::Xmax              },
+    {   "MaxY",                 VField::OVFParameter::Ymax              },
+    {   "MaxZ",                 VField::OVFParameter::Zmax              },
+    //less trivial rules
+    {   "Origin", [](const Expression* expr) -> set_list
+        {
+            //a small dandy list of values we try to replace
+            constexpr std::array<VField::OVFParameter, 3> targetParams{
+                VField::OVFParameter::Xbase,
+                VField::OVFParameter::Ybase,
+                VField::OVFParameter::Zbase
+            };
+
+            set_list res {};
+
+            //main logic
+            if( expr->isSymbol() && expr->testHeader("Default") )
+            {
+                for (const auto& x: targetParams)
+                    res.push_back({x, nullptr}); //try to deduce the field with default value
+                return res;
+            }
+            if( expr -> testHeader("List") && expr -> size() == targetParams.size() + 1 )
+            {
+                //if it is a correct shaped list, set parameters from it
+                auto it = ++ expr->begin();
+                for(const auto& x: targetParams)
+                {
+                    if( it -> index() == 1 )
+                    {
+                        const auto& subexp = *std::get<std::unique_ptr<Expression>>(*it);
+                        if(subexp.isSymbol() && subexp.testHeader("Default"))
+                            res.push_back({x, nullptr});
+                        else
+                            PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(x), "either a numeric value or Default in the list");
+                    }
+                    else
+                        res.push_back({x, &std::get<math_atom>(*it)});
+                }
+            }
+            //else do nothing LULW
+            PostErrorMessage("ExportOVF", "badexp", "Origin", "either a length 3 list or Default");
+            return {};
+        }
+    },
+    {   "CellSize", [](const Expression* expr) -> set_list
+        {
+            //a small dandy list of values we try to replace
+            constexpr std::array<VField::OVFParameter, 3> targetParams{
+                VField::OVFParameter::Xstep,
+                VField::OVFParameter::Ystep,
+                VField::OVFParameter::Zstep
+            };
+
+            set_list res {};
+
+            //main logic
+            if( expr->isSymbol() && expr->testHeader("Default") )
+            {
+                for (const auto& x: targetParams)
+                    res.push_back({x, nullptr}); //try to deduce the field with default value
+                return res;
+            }
+            if( expr -> testHeader("List") && expr -> size() == targetParams.size() + 1 )
+            {
+                //if it is a correct shaped list, set parameters from it
+                auto it = ++ expr->begin();
+                for(const auto& x: targetParams)
+                {
+                    if( it -> index() == 1 )
+                    {
+                        const auto& subexp = *std::get<std::unique_ptr<Expression>>(*it);
+                        if(subexp.isSymbol() && subexp.testHeader("Default"))
+                            res.push_back({x, nullptr});
+                        else
+                            PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(x), "either a numeric value or Default in the list");
+                    }
+                    else
+                        res.push_back({x, &std::get<math_atom>(*it)});
+                }
+            }
+            //else do nothing LULW
+            PostErrorMessage("ExportOVF", "badexp", "CellSize", "either a length 3 list or Default");
+            return {};
+        }
+    }
+};
+
 //exporting section
 extern "C" void exportOVF(const char* fName, int optc)
 {
@@ -826,14 +991,14 @@ extern "C" void exportOVF(const char* fName, int optc)
 
     //parse all other inputs
     //first get the options
-    auto Options { ParseWSTPExpression(optc) };
+    const auto Options { ParseWSTPExpression(optc) };
     //4 byte floats by default, but allow for double precision fields too 
     const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
     if(ByteSize != 4 && ByteSize != 8)
         PostErrorMessage("ExportOVF", "badsize", ByteSize);
 
     auto field {ParseWSTPData(ByteSize)};
-    auto HeaderRules {ParseWSTPExpression(1)};
+    const auto HeaderRules {ParseWSTPExpression(1)};
 
     //on success end by returning a 'Null'
     deinit();
