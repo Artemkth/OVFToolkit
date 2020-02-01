@@ -24,6 +24,7 @@
 
 //and interfaces to ovfparser
 #include<OVFParser.h>
+#include<OVFWriter.h>
 #include<OVFDictionary.h>
 
 
@@ -858,10 +859,11 @@ using set_list = std::vector<std::pair<VField::OVFParameter, const math_atom*>>;
 const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(const Expression*)>> TokenMap{
     {   "VersionString",        VField::OVFParameter::VersionString     },
     {   "Title",                VField::OVFParameter::Title             },
-    {   "Description",          VField::OVFParameter::Munit             },
-    {   "MeshUnits",            VField::OVFParameter::Vunit             },
-    {   "ValueUnits",           VField::OVFParameter::Vmult             },
+    {   "Description",          VField::OVFParameter::Desc              },
+    {   "MeshUnits",            VField::OVFParameter::Munit             },
+    {   "ValueUnits",           VField::OVFParameter::Vunit             },
     {   "ValueLabels",          VField::OVFParameter::Vlabels           },
+    {   "ValueMultiplier",      VField::OVFParameter::Vmult             },
     {   "BoundingPolygon",      VField::OVFParameter::Bound             },
     {   "X0",                   VField::OVFParameter::Xbase             },
     {   "Y0",                   VField::OVFParameter::Ybase             },
@@ -915,6 +917,8 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
 
                     ++it;
                 }
+
+                return res;
             }
             //else do nothing LULW
             PostErrorMessage("ExportOVF", "badexp", "Origin", "either a length 3 list or Default");
@@ -1028,11 +1032,21 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
                         std::advance(curParam, 2);
                     }
                 }
+
+                return res;
             }
             PostErrorMessage("ExportOVF", "badexp", "BoundingBox", "either a length 3 list or Default");
             return {};
         }
     }
+};
+
+const std::vector<std::string> DoNotSearchList{
+    "MeshType",
+    "PointCount",
+    "XNodes",
+    "YNodes",
+    "ZNodes"
 };
 
 //parse header expression into fields in header
@@ -1054,6 +1068,12 @@ void ParseWSTPHeader(const Expression& expr, VField::VField& field)
         
         if(search_it == TokenMap.end())
         {
+            if( std::find(DoNotSearchList.begin(), DoNotSearchList.end(), token_name) != DoNotSearchList.end() )
+            {
+                PostErrorMessage("ExportOVF", "redund", token_name );
+                continue;
+            }
+
             PostErrorMessage("ExportOVF", "unktok", token_name );
             continue;
         }
@@ -1124,12 +1144,29 @@ extern "C" void exportOVF(const char* fName, int optc)
     const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
     if(ByteSize != 4 && ByteSize != 8)
         PostErrorMessage("ExportOVF", "badsize", ByteSize);
+    const bool Validate { ParseFlag(Options, "Validate").value_or(false) };
 
     auto field { ParseWSTPData(ByteSize) };
     const auto HeaderRules { ParseWSTPExpression(1) };
 
     //try and parse the header fields
     ParseWSTPHeader( HeaderRules, field );
+
+    //check if header is valid
+    if( Validate && !field.isValid() )
+    {
+        PostErrorMessage("ExportOVF", "noncomp", field.ValidationReport());
+
+        deinit();
+        WSPutSymbol(stdlink, "$Failed");
+    }
+    else
+    {
+        auto log { WriteOVF( output.c_str(), field ) };
+
+        if(!log.empty())
+            PostErrorMessage("ExportOVF", "expfail", log);
+    }
 
     //on success end by returning a 'Null'
     deinit();
