@@ -853,16 +853,6 @@ void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& 
 
 //function to set fields from vector of pairs
 using set_list = std::vector<std::pair<VField::OVFParameter, const math_atom*>>;
-inline void SetBunch(VField::VField& field, const set_list& vals)
-{
-    for(const auto& x: vals)
-    {
-        if(x.second == nullptr)
-            field.DeduceField(x.first, true);
-        else
-            SetField(field.Header, x.first, *x.second);
-    }
-}
 
 //mapping from mathematica string tokens to OVFParameter tokens
 const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(const Expression*)>> TokenMap{
@@ -922,6 +912,8 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
                     }
                     else
                         res.push_back({x, &std::get<math_atom>(*it)});
+
+                    ++it;
                 }
             }
             //else do nothing LULW
@@ -963,14 +955,150 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
                     }
                     else
                         res.push_back({x, &std::get<math_atom>(*it)});
+
+                    ++it;
                 }
+                return res;
             }
             //else do nothing LULW
             PostErrorMessage("ExportOVF", "badexp", "CellSize", "either a length 3 list or Default");
             return {};
         }
+    },
+    {   "BoundingBox", [](const Expression* expr) -> set_list
+        {
+            //a small dandy list of values we try to replace
+            constexpr std::array<VField::OVFParameter, 6> targetParams{
+                VField::OVFParameter::Xmin,
+                VField::OVFParameter::Xmax,
+                VField::OVFParameter::Ymin,
+                VField::OVFParameter::Ymax,
+                VField::OVFParameter::Zmin,
+                VField::OVFParameter::Zmax
+            };
+
+            set_list res {};
+
+            //main logic
+            if( expr->isSymbol() && expr->testHeader("Default") )
+            {
+                for (const auto& x: targetParams)
+                    res.push_back({x, nullptr}); //try to deduce the field with default value
+                return res;
+            }
+            if( expr -> testHeader("List") && expr -> size() == 4 )
+            {
+                auto curParam = targetParams.begin();
+                for(auto it = ++ expr -> begin(); it != expr -> end(); ++it)
+                {
+                    if(it -> index() == 0)
+                    {
+                        PostErrorMessage("ExportOVF", "badexp", "BoundingBox", "either Default or nested list");
+                        std::advance(curParam, 2);
+                        continue;
+                    }
+
+                    //else try to get if it is a list
+                    const Expression& nested { *std::get<std::unique_ptr<Expression>>(*it) };
+                    if(nested.isSymbol() && nested.testHeader("Default"))
+                        for(std::size_t i = 0; i < 2; i++)
+                            res.push_back({*curParam++, nullptr});
+                    else if(nested.testHeader("List") && nested.size() == 3)
+                    {
+                        auto n_it = ++nested.begin();
+                        for(;n_it != nested.end(); ++n_it)
+                        {
+                            if( n_it -> index() == 1 )
+                            {
+                                const auto& subexp = *std::get<std::unique_ptr<Expression>>(*n_it);
+                                if(subexp.isSymbol() && subexp.testHeader("Default"))
+                                    res.push_back({*curParam, nullptr});
+                                else
+                                    PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(*curParam), "either a numeric value or Default in the list");
+                            }
+                            else
+                                res.push_back({*curParam, &std::get<math_atom>(*n_it)});
+
+                            ++curParam;
+                        }
+                    }
+                    else
+                    {
+                        PostErrorMessage("ExportOVF", "badexp", "BoundingBox", "either Default or nested list");
+                        std::advance(curParam, 2);
+                    }
+                }
+            }
+            PostErrorMessage("ExportOVF", "badexp", "BoundingBox", "either a length 3 list or Default");
+            return {};
+        }
     }
 };
+
+//parse header expression into fields in header
+void ParseWSTPHeader(const Expression& expr, VField::VField& field)
+{
+    set_list token_queue {};
+
+    //get reference to subexpression with the list of rules
+    //insured by the pattern in mathematica, only differe if there is a glitch in the link
+    const auto& FieldList { *std::get<std::unique_ptr<Expression>>( expr.back() ) };
+
+    auto begin = ++FieldList.begin(); //Skip header
+    auto end = FieldList.end();
+    for(; begin != end; ++begin )
+    {
+        const auto& RuleExpr { *std::get<std::unique_ptr<Expression>>( *begin ) };
+        const std::string& token_name { std::get<std::string>(std::get<math_atom>( RuleExpr.at(1) )) };
+        const auto search_it = TokenMap.find( token_name ); // find a handler for this rule's pattern
+        
+        if(search_it == TokenMap.end())
+        {
+            PostErrorMessage("ExportOVF", "unktok", token_name );
+            continue;
+        }
+
+        //else process token into the queue
+        if( search_it->second.index()==0 )
+        {
+            if( RuleExpr.at(2).index()==0 )//expression is math_atom
+                token_queue.push_back( {std::get<VField::OVFParameter>(search_it->second), &std::get<math_atom>(RuleExpr.at(2))} );
+            else
+            {
+                const auto& special = *std::get<std::unique_ptr<Expression>>(RuleExpr.at(2));
+                if(special.isSymbol() && special.testHeader("Default"))
+                    token_queue.push_back( {std::get<VField::OVFParameter>(search_it->second), nullptr} );
+                else
+                    PostErrorMessage("ExportOVF", "badexp", token_name,
+                        "atomic value or Default, got an unknown expression/symbol.");
+            }
+        }
+        else //special import rule
+        {
+            auto handler = std::get<set_list (*)(const Expression*)>( search_it -> second );
+
+            if( RuleExpr.at(2).index()==0 )
+                PostErrorMessage( "ExportOVF", "badexp", token_name,
+                        "expression or symbol, got an atomic value instead!" );
+            else
+            {
+                const auto sub_list { handler( std::get<std::unique_ptr<Expression>>(RuleExpr.at(2)).get() ) };
+
+                //and append it
+                token_queue.insert( token_queue.end(), sub_list.begin(), sub_list.end() );
+            }
+        }
+    }
+
+    //and convert them to OVFHeader fields
+    for(const auto& x: token_queue)
+    {
+        if(x.second == nullptr)
+            field.DeduceField(x.first, true);
+        else
+            SetField(field.Header, x.first, *x.second);
+    }
+}
 
 //exporting section
 extern "C" void exportOVF(const char* fName, int optc)
@@ -997,8 +1125,11 @@ extern "C" void exportOVF(const char* fName, int optc)
     if(ByteSize != 4 && ByteSize != 8)
         PostErrorMessage("ExportOVF", "badsize", ByteSize);
 
-    auto field {ParseWSTPData(ByteSize)};
-    const auto HeaderRules {ParseWSTPExpression(1)};
+    auto field { ParseWSTPData(ByteSize) };
+    const auto HeaderRules { ParseWSTPExpression(1) };
+
+    //try and parse the header fields
+    ParseWSTPHeader( HeaderRules, field );
 
     //on success end by returning a 'Null'
     deinit();

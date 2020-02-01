@@ -26,6 +26,7 @@
 :Evaluate:      ExportOVF::badsize    = "Got a bad size `1` for internal data, expected it to be 4 or 8. Proceeding with the defaul value of 4."
 :Evaluate:      ExportOVF::ambig      = "The filename for export \"`1`\" is ambiguous, got `2` alternatives!"
 :Evaluate:      ExportOVF::badexp     = "Bad header expression at header token \"`1`\": expected `2`"
+:Evaluate:      ExportOVF::unkntok    = "Unknow token \"`1`\" in a header rule!"
 
 ::void exportOVF(const char*, int)
 :Begin:
