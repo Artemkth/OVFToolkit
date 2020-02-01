@@ -30,6 +30,7 @@
 :Evaluate:      ExportOVF::redund     = "Header field \"`1`\" is redundant, it is ignored in favor of value deduced from the array's shape!"
 :Evaluate:      ExportOVF::noncomp    = "The field received tested to be noncompliant with the standard, validation report:\n `1`"
 :Evaluate:      ExportOVF::expfail    = "Errors occured exporting the field! WriteOVF returned: \n `1`"
+:Evaluate:      ExportOVF::dedfail    = "Failed to deduce the following parameters: `1`"
 
 ::void exportOVF(const char*, int)
 :Begin:

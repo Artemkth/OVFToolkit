@@ -37,7 +37,7 @@ namespace VField{
     //and a method to check if grid is defined
     std::tuple<bool, std::string, std::vector<OVFParameter>> isGridDefined(const OVFHeader& ref)
     {
-        const std::string prefix = "Checking if grid was defined:\n";
+        const std::string prefix = "Checking if grid was defined: ";
         std::vector<OVFParameter> problemParams{};
         
         if(!ref.isSet(OVFParameter::Mtype))
@@ -94,6 +94,7 @@ namespace VField{
     //checking if strings are single line
     std::tuple<bool, std::string, std::vector<OVFParameter>> CheckStrings(const OVFHeader& ref)
     {
+        std::string log = "Checking if string parameters are compliant: ";
         std::vector<OVFParameter> faultyStrings{};
         for(const auto& x: StringParamList)
         {
@@ -106,9 +107,9 @@ namespace VField{
                 faultyStrings.push_back(x);
         }
         if(faultyStrings.empty())
-            return {true, "", faultyStrings};
+            return {true, log + "SUCCESS", faultyStrings};
 
-        std::string log { "The following string parameters have a newline in them: "};
+        log +=  "\nThe following string parameters have a newline in them: ";
         for(const auto& x: faultyStrings)
         {
             log += "\n";
@@ -220,7 +221,7 @@ namespace VField{
     const auto OVF1Rules = std::vector<validator>{
         [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
         {
-            const std::string prefix = "Checking if all required fields were filled";
+            const std::string prefix = "Checking if all required fields were filled: ";
             std::vector<OVFParameter> problemParams{};
             //check if all required field are present
             const auto RequiredParameters = DictionaryHelpers::make_array(
@@ -281,7 +282,7 @@ namespace VField{
     const auto OVF2Rules = std::vector<validator>{
         [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>> 
         {
-            const std::string prefix = "Checking if all required fields were filled";
+            const std::string prefix = "Checking if all required fields were filled: ";
             //check if all required field are present
             const auto RequiredParameters = DictionaryHelpers::make_array(
                 OVFParameter::Title,
@@ -305,7 +306,7 @@ namespace VField{
                 return {true, prefix + "SUCCESS", {}};
             
             //else form error message
-            std::string errMessage{"Following required parameters(for OVF 1.0) were not found:"};
+            std::string errMessage{"Following required parameters(for OVF 2.0) were not found:"};
             for(const auto& x: missingList)
             {
                 errMessage += "\n\t";
@@ -325,23 +326,23 @@ namespace VField{
             if(!ref.isSet(OVFParameter::Vdim))
                 return {false, prefix + "Value dimensions are not set yet", {OVFParameter::Vdim}};
             std::size_t num {0};
-            if((num = countTokens(ref.at<pType::String>(OVFParameter::Vunit))) != ref.at<pType::Uint>(OVFParameter::Vdim))
+            if((num = countTokens(ref.at<pType::String>(OVFParameter::Vunit))) != ref.at<pType::Uint>(OVFParameter::Vdim) && num != 1)
                 return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit), {OVFParameter::Vunit}};
             return {true, prefix + "SUCCESS", {}};
         },
         //check if value labels has correct number of tokens
         [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
         {
-            const std::string prefix = "Checking if 'valuelabels' is ill-formed:\n";
+            const std::string prefix = "Checking if 'valuelabels' is ill-formed: ";
             //should not reach here normally
             if(!ref.isSet(OVFParameter::Vlabels))
-                return {false, prefix + "Value labels are not set yet", {OVFParameter::Vlabels}};
+                return {false, prefix + "Value labels are not set yet\n", {OVFParameter::Vlabels}};
             if(!ref.isSet(OVFParameter::Vdim))
-                return {false, prefix + "Value dimensions are not set yet", {OVFParameter::Vdim}};
+                return {false, prefix + "Value dimensions are not set yet\n", {OVFParameter::Vdim}};
             std::size_t num {countTokens(ref.at<pType::String>(OVFParameter::Vlabels))};
             if(num != 1 && num != ref.at<pType::Uint>(OVFParameter::Vdim))
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit), {OVFParameter::Vlabels}};
-            return {true, prefix + "SUCCESS", {}};
+                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit) + "\n", {OVFParameter::Vlabels}};
+            return {true, prefix + "SUCCESS\n", {}};
         }
     };
     //OMEGA map for rulesets
@@ -469,8 +470,7 @@ namespace VField{
     //report generator
     std::string VField::ValidationReport()
     {
-        return (std::string)"Generating a VField class validation report: \n" +
-               /*+*/        Header.ValidationReport() +
+        return              Header.ValidationReport() +
                /*+*/        "The data is compliant with describing header: \"" + (isAddressable()? "true":"false") + '\"';
     }
     
@@ -491,23 +491,29 @@ namespace VField{
                 return {true, 1. };
             }
         },
-        //default value for the base are at (0, 0, 0)
+        //default value for the base are at (Xstep, Ystep, Zstep)/2 
         {
             OVFParameter::Xbase,
-            [](const VField&) -> sub_pair_t<pType::Float> {
-                return {true, 0. };
+            [](const VField& field) -> sub_pair_t<pType::Float> {
+                if(field.Header.isSet(OVFParameter::Xstep))
+                    return {true, field.Header.getFloat(OVFParameter::Xstep)/2 };
+                else return {false, 0};
             }
         },
         {
             OVFParameter::Ybase,
-            [](const VField&) -> sub_pair_t<pType::Float> {
-                return {true, 0. };
+            [](const VField& field) -> sub_pair_t<pType::Float> {
+                if(field.Header.isSet(OVFParameter::Ystep))
+                    return {true, field.Header.getFloat(OVFParameter::Ystep)/2 };
+                else return {false, 0};
             }
         },
         {
             OVFParameter::Zbase,
-            [](const VField&) -> sub_pair_t<pType::Float> {
-                return {true, 0. };
+            [](const VField& field) -> sub_pair_t<pType::Float> {
+                if(field.Header.isSet(OVFParameter::Zstep))
+                    return {true, field.Header.getFloat(OVFParameter::Zstep)/2 };
+                else return {false, 0};
             }
         }
     };

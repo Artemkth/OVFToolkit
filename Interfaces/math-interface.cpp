@@ -939,9 +939,8 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
             //main logic
             if( expr->isSymbol() && expr->testHeader("Default") )
             {
-                for (const auto& x: targetParams)
-                    res.push_back({x, nullptr}); //try to deduce the field with default value
-                return res;
+                PostErrorMessage("ExportOVF", "badexp", "CellSize", "triplet of values, defaults are not allowed!");
+                return {};
             }
             if( expr -> testHeader("List") && expr -> size() == targetParams.size() + 1 )
             {
@@ -953,9 +952,9 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
                     {
                         const auto& subexp = *std::get<std::unique_ptr<Expression>>(*it);
                         if(subexp.isSymbol() && subexp.testHeader("Default"))
-                            res.push_back({x, nullptr});
+                            PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(x), "a numeric value (got Default, not allowed)!");
                         else
-                            PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(x), "either a numeric value or Default in the list");
+                            PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(x), "a numeric value");
                     }
                     else
                         res.push_back({x, &std::get<math_atom>(*it)});
@@ -965,7 +964,7 @@ const std::map<std::string, std::variant<VField::OVFParameter, set_list (*)(cons
                 return res;
             }
             //else do nothing LULW
-            PostErrorMessage("ExportOVF", "badexp", "CellSize", "either a length 3 list or Default");
+            PostErrorMessage("ExportOVF", "badexp", "CellSize", "a length 3 list of numeric values!");
             return {};
         }
     },
@@ -1111,12 +1110,39 @@ void ParseWSTPHeader(const Expression& expr, VField::VField& field)
     }
 
     //and convert them to OVFHeader fields
+    std::vector<VField::OVFParameter> defParams{};
     for(const auto& x: token_queue)
     {
         if(x.second == nullptr)
-            field.DeduceField(x.first, true);
+        {
+            if(!field.DeduceField(x.first, true))
+                defParams.push_back(x.first);
+        }
         else
             SetField(field.Header, x.first, *x.second);
+    }
+    std::size_t itCounter {0};
+    while(!defParams.empty() && itCounter++ < 3)//makes up for 5 total passes
+    {
+        std::vector<VField::OVFParameter> left{};
+        for(const auto& x: defParams)
+            if(!field.DeduceField(x, true))
+                left.push_back(x);
+        if(left.size() == defParams.size())
+            break;
+        defParams = std::move(left);
+    }
+
+    if(!defParams.empty())
+    {
+        std::string col{""};
+        for(auto it = defParams.begin(); it != defParams.end(); ++it)
+        {
+            if (it != defParams.begin())
+                col += ", ";
+            col += (ParamKeys.at(*it));
+        }
+        PostErrorMessage("ExportOVF", "dedfail", col);
     }
 }
 
@@ -1159,6 +1185,7 @@ extern "C" void exportOVF(const char* fName, int optc)
 
         deinit();
         WSPutSymbol(stdlink, "$Failed");
+        return; //!
     }
     else
     {
