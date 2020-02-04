@@ -664,7 +664,11 @@ void deinit()
 extern "C" void import(const char* fileName, int optc)
 {
     const auto fPath { checkFileName(fileName) };
-    if(!fPath.has_value()) return; //all output is done by checkFileName when it cannot recover
+    if(!fPath.has_value()) 
+    {
+        deinit();
+        return; //all output is done by checkFileName when it cannot recover
+    }
     //next open the file finally
     const VField::VFieldFile fileHandle(fPath.value().c_str());
     if(!fileHandle.WorkLog().empty())
