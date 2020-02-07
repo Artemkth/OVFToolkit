@@ -8,7 +8,7 @@ project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library
 set(CMAKE_CXX_STANDARD 17)              #a lot of c++17 features used in core
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 # using boost for endianess, need to check if it is available!
-find_package(Boost 1.58.0 REQUIRED)
+find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
 
 
 #library build file
@@ -16,9 +16,36 @@ include(GenerateExportHeader)
 #like in windows make only certain function exported
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
+
 #find interfaces for Mathematica
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake/Mathematica" ${CMAKE_MODULE_PATH})
 find_package(Mathematica COMPONENTS WSTP)
+
+#find fftw frameworks and other components for time fourier of magnetization files
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake/findFFTW" ${CMAKE_MODULE_PATH})
+#try to find FFTW(3.0), cuFFTW and GSL for fourier analysis
+find_package(FFTW COMPONENTS FLOAT_THREADS_LIB)
+find_package(GSL)
+include(CheckLanguage)
+CHECK_LANGUAGE(CUDA)
+IF(CMAKE_CUDA_COMPILER)
+    ENABLE_LANGUAGE(CUDA)
+    SET(CUDA_FOUND On)
+ELSE()
+    MESSAGE(STATUS "Cuda was not found!")
+ENDIF()
+#TODO: implement backend switching later
+set(BUILD_FFUTIL (FFTW_FOUND AND CUDA_FOUND) AND GSL_FOUND)
+IF(BUILD_FFUTIL)
+    SET(FFMESSAGE "Building fourier analysis utility with following fftw engines: ")
+    IF(FFTW_FOUND)
+        STRING(APPEND FFMESSAGE "FFTW, ")
+    ENDIF()
+    IF(CUDA_FOUND)
+        STRING(APPEND FFMESSAGE "cuFFTW v." ${CMAKE_CUDA_COMPILER_VERSION})
+    ENDIF()
+    MESSAGE(STATUS ${FFMESSAGE})
+ENDIF()
 
 #ovfparser library
 add_library(ovfparser
@@ -43,7 +70,15 @@ target_include_directories(ovfparser
                            #config header
                            "${PROJECT_BINARY_DIR}"
                           )
-# add the multithread support libs later if needed, otherwise no extra links needed
+
+#build recepy for fft util
+IF(BUILD_FFUTIL)
+    add_executable(ovf-batchfft
+        util/fft-util.cpp)
+
+    target_link_libraries(ovf-batchfft PUBLIC ovfparser FFTW::FloatThreads GSL::gsl Boost::program_options)
+    target_include_directories(ovf-batchfft PRIVATE ${PROJECT_BINARY_DIR})
+ENDIF()
 
 #and install information for library
 set(INCLUDE_INSTALL_DIR "${INSTALL_DIR}/include/OVFParser")
