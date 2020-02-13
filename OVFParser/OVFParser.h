@@ -50,8 +50,10 @@ namespace VField{
         { read(name, prefetch); }
         VFieldFile(const VFieldFile&) noexcept;
         VFieldFile& operator= (const VFieldFile&) noexcept;
-        VFieldFile(VFieldFile&&) = default;
-        VFieldFile& operator= (VFieldFile&&) = default;
+        VFieldFile(VFieldFile&& ref)
+        { std::swap(fPath, ref.fPath); std::swap(data, ref.data); }
+        VFieldFile& operator= (VFieldFile&& ref)
+        { std::swap(fPath, ref.fPath); std::swap(data, ref.data); return *this; }
         ~VFieldFile() noexcept;
 
         //interfaces

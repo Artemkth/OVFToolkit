@@ -7,6 +7,8 @@ project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library
 # C++ standard
 set(CMAKE_CXX_STANDARD 17)              #a lot of c++17 features used in core
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+# also need some parallelization libs
+find_package(Threads REQUIRED)
 # using boost for endianess, need to check if it is available!
 find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
 
@@ -76,7 +78,7 @@ IF(BUILD_FFUTIL)
     add_executable(ovf-batchfft
         util/fft-util.cpp)
 
-    target_link_libraries(ovf-batchfft PUBLIC ovfparser FFTW::FloatThreads GSL::gsl Boost::program_options)
+    target_link_libraries(ovf-batchfft PUBLIC ovfparser Threads::Threads FFTW::FloatThreads GSL::gsl Boost::program_options)
     target_include_directories(ovf-batchfft PRIVATE ${PROJECT_BINARY_DIR})
 ENDIF()
 

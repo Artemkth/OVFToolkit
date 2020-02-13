@@ -5,11 +5,16 @@
 #include<string>
 #include<regex>
 #include<algorithm>
+#include<optional>
+#include<type_traits>
 
 //headers for parallelization, hurray for atomic future :D
 #include<atomic>
 #include<future>
 #include<thread>
+
+//c functions for convinience
+#include<cstdlib>
 
 //parsing program options
 #include<boost/program_options.hpp>
@@ -24,7 +29,7 @@
 using fname_type = std::string;
 
 //prefetch metadata, form it into arrays of times and metadata
-auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& regex_str, std::atomic<std::size_t>& progCnt)
+auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& regex_str, std::atomic<std::size_t>& progCnt, std::atomic<const fname_type::value_type*>& curStr)
 {
     //compile the regex for getting time stamp as best as we can
     std::regex timeRegex( regex_str, std::regex_constants::ECMAScript | std::regex_constants::optimize );
@@ -32,26 +37,140 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
     //get the hint for how much thread can run on a machine, and if it is non-zero target at most 4 threads
     //otherwise run import single thread
     const auto concHint = std::thread::hardware_concurrency();
-    const std::size_t tCount {concHint == 0 ? 1 : std::min<decltype(concHint)>(concHint, 4)};
+    const auto fCount = fList.size();
+    const std::size_t tCount {std::min<std::size_t>(concHint == 0 ? 1 : std::min<std::size_t>(concHint, 4), fCount)};
 
-    //main worker lambda
-    auto worker = [&] () -> auto {}; 
+    //main worker lambda, checkerboard process the file list
+    auto worker = [&] (std::size_t shift) -> auto 
+    {
+        std::vector< std::pair<std::optional<double>, VField::VFieldFile> > results{};
+        results.reserve( fList.size()/tCount + 1 ); //reserve space since we roughly know the size
+        const auto regexThreadCopy = timeRegex;
+        VField::VFieldFile handle{}; 
+        std::smatch pat_matches{};
+
+        auto begin = fList.begin();
+        std::advance( begin, shift );
+        auto end = fList.end();
+        while( begin < end )
+        {
+            handle.read( *begin, true ); //only fetch the header, TODO: check if I want to output some file errors in here
+            //if file is not single segment, give up LULW
+            if( handle.cntSegments()!=1 )
+            {
+                std::cerr << "Encountered bad segment count in file: \"" << *begin << "\": " << handle.cntSegments() << "\n";
+                results.push_back({std::nullopt, {}});
+                std::advance( begin, tCount ); ++progCnt;
+                //set last file to the one we processed 
+                curStr = begin -> c_str();
+                continue;
+            }
+
+            std::optional<double> time {std::nullopt};
+            //and then check if header is oiro
+            const VField::OVFHeader& ref = handle.getSegmentHeader(0);
+            if( ref.isSet(VField::OVFParameter::Desc) && std::regex_search( ref.getString(VField::OVFParameter::Desc), pat_matches, regexThreadCopy ) )
+            {
+                char* ret {nullptr};
+                auto str = pat_matches[1].str();
+                double val = strtod(str.c_str(), &ret);
+                if( ret != str.c_str() )
+                    time = val;
+            }
+            else //could not parse time
+                std::cerr << "Could not parse time from 'Description' field in file \"" << *begin << "\", with regular expression \""<< regex_str <<"\"."
+                             "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
+            results.push_back({time, handle});
+
+            //set last file to the one we processed 
+            curStr = begin -> c_str();
+
+            std::advance( begin, tCount ); ++progCnt;
+        }
+
+        return results;
+    }; 
+
+    //vector of futures with results of prefetching
+    progCnt = 0;
+    std::vector<std::future<
+        std::vector< std::pair<std::optional<double>, VField::VFieldFile> >
+        >> resultFuture{}; resultFuture.reserve(tCount);
+    //initialize with async, last future is set to deferred to not waste a good thread LULW
+    for(std::size_t i = 0; i < tCount - 1; i++)
+        resultFuture.push_back(std::async( std::launch::async, worker, i));
+    //alternative is creating promise and then forwarding result through it
+    resultFuture.push_back( std::async( std::launch::deferred, worker, tCount - 1) );
+    std::vector< std::vector<std::pair<std::optional<double>, VField::VFieldFile>> > results{}; results.reserve(tCount);
+    for(auto& x: resultFuture)
+        results.push_back( x.get() );
+
+    //and reshape data to fill in the return structure
+    std::vector<std::optional<double>> times{};   times.reserve(fCount);
+    std::vector<VField::VFieldFile>    handles{}; handles.reserve(fCount);
+    for(std::size_t i = 0; i < fCount; i++)
+    {
+        auto& value = results[ i%tCount ][ i/tCount ];
+        times.push_back( std::move(value.first) );
+        handles.push_back( std::move(value.second) );
+    }
+
+    return std::make_pair(std::move(times), std::move(handles));
 }
+
+class CMDMonitor
+{
+    private:
+        std::ostream& out;
+        std::size_t cCount {};//count of max possible characters in current line
+        bool ready {false};
+
+        //static magic
+        static constexpr const char* cOff = "\e[?25l";
+        static constexpr const char* cOn = "\e[?25h";
+
+        void pad_n(std::size_t n)
+        {out << std::string(n, ' ');}
+
+    public:
+        CMDMonitor(std::ostream& out_): out(out_), ready(true), cCount(0) { out << cOff;}
+        ~CMDMonitor() {if (ready) out << cOn << '\n' << std::flush;}
+        CMDMonitor(const CMDMonitor&) = delete; //DAS IST VERBOTTEN
+        CMDMonitor& operator= (const CMDMonitor&) = delete;//DIESER AUCH
+
+        //update
+        void update(const std::string& str)
+        { 
+            if(!ready)
+                throw std::logic_error("Tried updating without initializing!");
+            out << str;
+
+            if( str.length() > cCount )
+                pad_n( str.length() - cCount );
+            cCount = str.length();
+            out << '\r' << std::flush;
+        }
+};
 
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 int main(int argc, char** argv)
 {
     std::vector<fname_type> fileList{};
+    std::string TimeRegExStr {};
     //first parse command-line options
     try
     {
+        //TODO: write code to get console width to make description more easily readable
+        //https://stackoverflow.com/questions/1022957/getting-terminal-width-in-c
+        //https://docs.microsoft.com/en-us/windows/console/getconsolescreenbufferinfo?redirectedfrom=MSDN
         boost::program_options::options_description desc("Usage: ovf-batch [options] files...\nOptions");
         //populate options list
         desc.add_options()
             ("help,h", "Produce this help message.")
             ("version,v", "Get this software's version information.")
-            ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required(), "Time sequence of vector fields in .ovf files." );
+            ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required(), "Time sequence of vector fields in .ovf files." )
+            ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.");
 
         //set position of input-files to automatically them without a switch
         boost::program_options::positional_options_description pos_desc;
@@ -111,6 +230,53 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+
+    //evaluation monitors
+    std::atomic<std::size_t> importedCount {};
+    std::atomic<const fname_type::value_type*> lastFile { "No file imported yet." };
+
+    auto importMonitor = [&] () -> void 
+    {
+        CMDMonitor monitor(std::cout);
+        const auto expSize = fileList.size();
+        const auto expSizeStr = std::to_string(expSize);
+
+        std::string message {};
+        const auto cnt = std::to_string(expSize);
+
+        bool lastRun = true;
+        while(true)
+        {
+            std::string message { "File " };
+            const std::size_t cCount = importedCount;
+            const auto name = std::string { lastFile };
+            const auto cCountStr = std::to_string(importedCount);
+
+            message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
+            message += cCountStr;
+            message += '/';
+            message += expSizeStr;
+            message += ": \"";
+            message += name;
+            message += '\"';
+
+            monitor.update(message);
+            if( cCount >= expSize )
+                break;
+
+            using namespace std::chrono_literals;
+            std::this_thread::sleep_for(100ms);
+        } 
+    };
+
+    //time prefetch phase for profiling
+    std::thread watch(importMonitor);
+    auto t_before = std::chrono::steady_clock::now();
+    auto [times, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
+    auto t_after = std::chrono::steady_clock::now();
+    watch.join();
+
+    std::cout << "Done pre-fetching .ovf metadata for " << fileList.size() << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
 
     //list of prefetched data
     return 0;
