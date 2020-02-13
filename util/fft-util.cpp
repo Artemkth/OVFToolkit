@@ -272,11 +272,88 @@ int main(int argc, char** argv)
     //time prefetch phase for profiling
     std::thread watch(importMonitor);
     auto t_before = std::chrono::steady_clock::now();
-    auto [times, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
+    auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
     auto t_after = std::chrono::steady_clock::now();
     watch.join();
 
+    std::vector<double> times{}; times.reserve( fileList.size() );
     std::cout << "Done pre-fetching .ovf metadata for " << fileList.size() << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
+    {
+        //check the times
+        auto dOptIt = timeOpt.cbegin();
+        auto dOptEnd = timeOpt.cend();
+        auto fileIt = file_handles.cbegin();
+        std::string noTSFiles{};
+        std::string dupTSFiles{};
+        bool encounteredDup {false};
+
+        //iterators for duplicate checks
+        std::vector<VField::VFieldFile>::const_iterator curFileIt {};
+
+        //first loop. merged duplicate check and time set check
+        for(; dOptIt != dOptEnd; ++dOptIt)
+        {
+            if( !dOptIt -> has_value() )
+                noTSFiles += (std::string)( noTSFiles.empty() ? "" :", ") + fileIt -> getCurrentPath();
+            else
+            {
+                if(times.empty())
+                { curFileIt = fileIt; }
+                if(!times.empty() && times.front() == *dOptIt)
+                {
+                    if(!encounteredDup)
+                    {
+                        if(!dupTSFiles.empty()) dupTSFiles += '\n';
+                        dupTSFiles += (std::string)"t=" + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
+                    }
+                    else
+                        dupTSFiles += (std::string)", ";
+
+                    dupTSFiles += (std::string)"\"" + fileIt -> getCurrentPath() + '\"';
+                }
+                times.push_back( dOptIt -> value() );
+            }
+
+            fileIt++;
+        }
+
+        //duplicate check loop, starts from second value
+        if(times.size() == fileList.size())   //equivalent to noTSFiles.empty()
+        {
+            auto cValIt = ++times.cbegin();
+            auto endIt = times.cend();
+            while(++cValIt != endIt)
+            {
+                //reset for next run
+                curFileIt++;
+                if(encounteredDup) dupTSFiles += '\n';
+                encounteredDup = false;
+
+                auto startVal = cValIt;
+                while( ++startVal != endIt )
+                    if ( *startVal == *cValIt )
+                    {
+                        if(!encounteredDup)
+                        {
+                            if(!dupTSFiles.empty()) dupTSFiles += '\n';
+                            dupTSFiles += (std::string)"t=" + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
+                        }
+                        else
+                            dupTSFiles += (std::string)", ";
+
+                        dupTSFiles += (std::string)"\"" + fileIt -> getCurrentPath() + '\"';
+                    }
+            }
+        }
+
+        //outputting stuff
+        if( !noTSFiles.empty() )
+            std::cout << "Following files were found to have no time stamp: " << noTSFiles << "\n";
+        if( !dupTSFiles.empty() )
+            std::cout << "Following timestamps were duplicated:\n" << dupTSFiles << "\n";
+        if( !noTSFiles.empty() || !dupTSFiles.empty() )
+            std::cout << "Aborting!\n";
+    }
 
     //list of prefetched data
     return 0;

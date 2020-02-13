@@ -36,7 +36,7 @@
 :Begin:
 :Function:      exportOVF
 :Pattern:       ExportOVF[fileName_String, data_?(ArrayQ[#,2|4,NumericQ]&), header:{Rule[_String,_]..}, options:Rule[_String,_]...]
-:Arguments:     {fileName, Length@List@options, options, data, header }
+:Arguments:     {fileName, Length@List@options, options, N[data], N[header] }
 :ArgumentTypes: {String, Integer32, Manual}
 :ReturnType:    Manual
 :End:
