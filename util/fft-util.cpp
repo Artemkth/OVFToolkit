@@ -6,15 +6,13 @@
 #include<regex>
 #include<algorithm>
 #include<optional>
+#include<cmath>
 #include<type_traits>
 
 //headers for parallelization, hurray for atomic future :D
 #include<atomic>
 #include<future>
 #include<thread>
-
-//c functions for convinience
-#include<cstdlib>
 
 //parsing program options
 #include<boost/program_options.hpp>
@@ -183,16 +181,17 @@ auto Average(const T& array)
 {
     using value_type = typename T::value_type;
     static_assert(std::is_arithmetic_v<value_type>, "Cannot calculate average of non-arithmetic type!");
-    constexpr value_type epsilon = std::numeric_limits<T>::epsilon();
+    constexpr value_type epsilon = std::numeric_limits<value_type>::epsilon();
 
     std::vector< std::pair<std::size_t, value_type> > accum{{0u, static_cast<value_type>(0)}};
     for(const auto& x: array)
     {
-        if( epsilon != 0 && 1000 * x/epsilon < accum.top().second )//if current bucket is getting to a point where new value will be a rounding error, make a new one
+        //if current bucket is getting to a point where new value will be a rounding error, make a new one
+        if( epsilon != 0 && accum.back().second != 0 && std::abs(x / accum.back().second) < 100 * epsilon )
             accum.push_back( {0u, static_cast<value_type>(0) } );
 
-        accum.top().first++;
-        accum.top().second += x;
+        accum.back().first++;
+        accum.back().second += x;
     }
 
     while( accum.size() > 1 )
@@ -203,8 +202,9 @@ auto Average(const T& array)
         accum.pop_back();
     }
 
-    return accum.front().first / accum.front().second;
+    return accum.front().second / accum.front().first;
 }
+
 template<typename... T>
 class sort_helper : public std::tuple<std::decay_t<T>* ...>
 {
@@ -487,8 +487,27 @@ int main(int argc, char** argv)
     }
 
     //work on time array to set some more options
-    double trueStep{}; bool reinterp {false};
-    {}
+    double trueStep{ (times.back() - times.front())/(times.size() - 1) }; bool reinterp {false};
+    {
+        std::vector<double> distances(++times.begin(), times.end());
+        auto dIt = distances.begin();
+        auto tIt = times.cbegin(); auto tEnd = --times.cend();
+        while( tIt != tEnd )
+            *dIt++ -= *tIt++ ;
+
+        //TODO: evaluate as candidates for loop merger if compiler doesn't do that itself
+        auto avTstep = Average(distances);
+        auto maxTstep = std::max_element(distances.begin(), distances.end());
+        auto minTstep = std::min_element(distances.begin(), distances.end());
+
+        for(auto& x: distances) //square the distances for next step
+            x *= x;
+        auto TstepDisp = std::sqrt( Average(distances) - avTstep * avTstep );
+
+        //output info about time steps
+        std::cout << "Input array has even time step of " << trueStep << " seconds. Average time step is " << avTstep << " seconds, and time step dispersion is "
+                        << TstepDisp << " seconds. \n";
+    }
 
     return 0;
 }
