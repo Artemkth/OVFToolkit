@@ -178,6 +178,55 @@ std::string printMemSize(std::size_t size)
     return roundFloat( (double)size / 1152921504606846976 ) + "EB";
 }
 
+template<typename T>
+auto Average(const T& array)
+{
+    using value_type = typename T::value_type;
+    static_assert(std::is_arithmetic_v<value_type>, "Cannot calculate average of non-arithmetic type!");
+    constexpr value_type epsilon = std::numeric_limits<T>::epsilon();
+
+    std::vector< std::pair<std::size_t, value_type> > accum{{0u, static_cast<value_type>(0)}};
+    for(const auto& x: array)
+    {
+        if( epsilon != 0 && 1000 * x/epsilon < accum.top().second )//if current bucket is getting to a point where new value will be a rounding error, make a new one
+            accum.push_back( {0u, static_cast<value_type>(0) } );
+
+        accum.top().first++;
+        accum.top().second += x;
+    }
+
+    while( accum.size() > 1 )
+    {
+        accum.front().first += accum.back().first;
+        accum.front().second += accum.back().second;
+
+        accum.pop_back();
+    }
+
+    return accum.front().first / accum.front().second;
+}
+template<typename... T>
+class sort_helper : public std::tuple<std::decay_t<T>* ...>
+{
+    using baseTuple = std::tuple<std::decay_t<T>*...>;
+    
+    template<typename U, std::size_t... I>
+    void swap_content(sort_helper&& ref, std::integer_sequence<U, I...>)
+    { (std::swap(*std::get<I>(*this), *std::get<I>(ref)),...); }
+public:
+    sort_helper() = default;
+    sort_helper(std::decay_t<T>*... args): baseTuple(args...) {}
+
+    sort_helper(const sort_helper&) = delete;
+    sort_helper& operator=(const sort_helper&) = delete;
+
+    //and move operators
+    sort_helper(sort_helper&& ref)
+    { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); }
+    sort_helper& operator=(sort_helper&& ref)
+    { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); return *this; }
+};
+
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 int main(int argc, char** argv)
@@ -300,7 +349,7 @@ int main(int argc, char** argv)
     auto t_before = std::chrono::steady_clock::now();
     auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
     auto t_after = std::chrono::steady_clock::now();
-    watch.join();
+    watch.join(); //TODO: check how it will fail if importedCount != fileList.size()
 
     std::vector<double> times{}; times.reserve( fileList.size() );
     std::cout << "Done pre-fetching .ovf metadata for " << fileList.size() << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
@@ -416,8 +465,30 @@ int main(int argc, char** argv)
         }
 
         const auto totSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt * file_handles.size();
-        std::cout << "Found " << totSize << " values to be handled (" << printMemSize( 4 * totSize) << " of data in single precision).\n"; 
+        std::cout << "Found " << totSize << " values to be handled (" << printMemSize( sizeof(float) * totSize ) << " of data in single precision).\n"; 
     }
+
+    //check if files are sorted by timestamp
+    if( !std::is_sorted(times.begin(), times.end()) )
+    {
+        std::cout << "File list received was not ordered by time, sorting it now!\n";
+        auto tItBegin = times.begin();
+        auto tItEnd   = times.begin();
+        auto fItBegin = file_handles.begin();      
+
+        std::vector<sort_helper<double, VField::VFieldFile>> helper; helper.reserve(times.size());
+        for(; tItBegin != tItEnd; ++tItBegin)
+            helper.emplace_back(&(*tItBegin), &(*fItBegin++));
+
+        //TODO: see if this hack works, and if it can be replaced completely
+        //CAUTION: I am surprised this even compiles :D
+        std::sort( helper.begin(), helper.end(), [&](const sort_helper<double, VField::VFieldFile>& el1,
+                                                     const sort_helper<double, VField::VFieldFile>& el2) { return *std::get<0>(el1) < *std::get<0>(el2); } );
+    }
+
+    //work on time array to set some more options
+    double trueStep{}; bool reinterp {false};
+    {}
 
     return 0;
 }
