@@ -1,5 +1,6 @@
 //file for implementing interfaces of 'OVFHeader.h'
 #include"OVFDictionary.h"
+#include"OVFVersion.h"
 #include<map>
 #include<algorithm>
 #include<vector>
@@ -75,6 +76,28 @@ namespace VField{
                         break;
                 }
         }
+
+    private:
+        //version container
+        std::optional<OVFVersion> version {std::nullopt};
+
+    public:
+        void resetVersion() noexcept
+        { version = std::nullopt; }
+        OVFVersion getVersion() noexcept
+        {
+            if(version.has_value())
+                return version.value();
+
+            if( !std::get<std::optional<associatedType_t<pType::String>>>
+                    (ParameterFields.at(OVFParameter::VersionString)).has_value() )
+                return OVFVersion::Unknown;
+
+            //else parse the version
+            version = matchVersionString( std::get<std::optional<associatedType_t<pType::String>>>
+                                            (ParameterFields.at(OVFParameter::VersionString)).value() );
+            return version.value();
+        }
     };
 
     //comparison implementation
@@ -137,6 +160,8 @@ namespace VField{
     //setters
     void OVFHeader::set(OVFParameter param, const associatedType_t<pType::String>& val)
     {
+        if(param == OVFParameter::VersionString)
+            data -> resetVersion();
         std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[param]) = val;
         data->isChecked = false;
     }
@@ -249,12 +274,48 @@ namespace VField{
     }
     template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (OVFParameter p) &
     {
+        if(p == OVFParameter::VersionString)
+            data -> resetVersion();
         if(!isSet(p))
         {
             associatedType_t<pType::String> defValue{};
             set(p, defValue);
         }
         return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[p]).value();
+    }
+
+    //calculate expected counts using internal structure knowledge, letting compiler optimize hell out of it
+    std::size_t OVFHeader::expectedDimension() const noexcept
+    {
+        const auto version = data->getVersion();
+        if( version == OVFVersion::Unknown || !data->meshType.has_value() )
+            return 0;
+
+        if( version != OVFVersion::OVF2 )
+            return (data -> meshType == MeshType::rectangular)? 3 : 6;
+
+        auto vdim = std::get<std::optional<associatedType_t<pType::Uint>>>
+                        (data -> ParameterFields.at(OVFParameter::Vdim)).value_or(0);
+        if( vdim == 0 )
+            return 0;
+
+        return (data -> meshType == MeshType::rectangular)? vdim : vdim + 3;
+    }
+    std::size_t OVFHeader::expectedPoints() const noexcept
+    {
+        const auto version = data->getVersion();
+        if( version == OVFVersion::Unknown || !data->meshType.has_value() )
+            return 0;
+
+        return (data -> meshType == MeshType::rectangular) ?
+        (std::get<std::optional<associatedType_t<pType::Uint>>>
+                        (data -> ParameterFields.at(OVFParameter::Xnodes)).value_or(0) *
+         std::get<std::optional<associatedType_t<pType::Uint>>>
+                        (data -> ParameterFields.at(OVFParameter::Ynodes)).value_or(0) *
+         std::get<std::optional<associatedType_t<pType::Uint>>>
+                        (data -> ParameterFields.at(OVFParameter::Znodes)).value_or(0) ) :
+        (std::get<std::optional<associatedType_t<pType::Uint>>>
+                        (data -> ParameterFields.at(OVFParameter::Pcount)).value_or(0) );
     }
 }
 

@@ -120,7 +120,7 @@ namespace VField{
         
         //reset function
         void reset();
-        //validation function
+        //validation function, TODO: move into VField
         bool validate();                                          //validate contents
         const associatedType_t<pType::String> ValidationReport(); //report checks done, run validation if needed
         //template for getting access to data by reference, throws when wrong data type is requested for a given parameter
@@ -133,6 +133,10 @@ namespace VField{
             //hacky way to do that, but casting this to non-const to use normal at operator
             return const_cast<OVFHeader*>(this)->at<pt>(p);
         }
+
+        //expected counts, return 0 if indeterminate
+        std::size_t expectedPoints() const noexcept;
+        std::size_t expectedDimension() const noexcept;
     };
     
     //allowed instantiations for at template

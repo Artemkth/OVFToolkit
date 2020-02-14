@@ -152,6 +152,32 @@ class CMDMonitor
         }
 };
 
+template<typename T>
+std::enable_if_t<std::is_floating_point_v<T>, std::string> roundFloat(T val, int decPlaces = 2)
+{
+    std::ostringstream strStream;
+    
+    strStream << std::fixed << std::setprecision(decPlaces);
+    strStream << val;
+
+    return strStream.str();
+}
+
+std::string printMemSize(std::size_t size)
+{
+    constexpr const char prefixes[] = {'\0', 'K', 'M', 'G', 'T', 'E'};
+    double dSize = size;
+
+    for(const auto& x: prefixes)
+    {
+        if(dSize < 1024)
+            return roundFloat(dSize) + x + 'B';
+        dSize /= 1024;
+    }
+
+    return roundFloat( (double)size / 1152921504606846976 ) + "EB";
+}
+
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 int main(int argc, char** argv)
@@ -355,7 +381,44 @@ int main(int argc, char** argv)
             std::cout << "Aborting!\n";
     }
 
-    //list of prefetched data
+    {
+        //check if internal dimensions are compatible
+        const auto expDim = file_handles.front().getSegmentHeader(0).expectedDimension();
+        const auto expCnt = file_handles.front().getSegmentHeader(0).expectedPoints();
+
+        if( expDim == 0 || expCnt == 0)
+        {
+            std::cerr << "First file has ill-formatted data: " << expCnt << " points with of " << expDim << " dimensions!\n";
+            return 1;
+        }
+        //guaranteed to be set by this point
+        const auto mType = file_handles.front().getSegmentHeader(0).getMeshType();
+
+        auto begin = ++file_handles.cbegin();
+        auto end = file_handles.cend();
+        std::string badFiles {};
+        for(; begin != end; ++begin)
+        {
+            const auto& head = begin -> getSegmentHeader(0);
+            if ( head.expectedDimension() != expDim ||
+                 head.expectedPoints()    != expCnt ||
+                 head.getMeshType()       != mType    )
+            {
+                if(!badFiles.empty()) badFiles += ", ";
+                badFiles += (std::string)"\"" + begin -> getCurrentPath() + "\"";
+            }
+        }
+
+        if( !badFiles.empty() )
+        {
+            std::cout << "Following files have incompatible grids: " << badFiles << "\n";
+            return 1;
+        }
+
+        const auto totSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt * file_handles.size();
+        std::cout << "Found " << totSize << " values to be handled (" << printMemSize( 4 * totSize) << " of data in single precision).\n"; 
+    }
+
     return 0;
 }
 
