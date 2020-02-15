@@ -162,33 +162,6 @@ namespace VField{
         { return const_cast<VFieldFile*>(this) -> end(); }
         ConstFieldIterator cend() const
         { return this -> end(); }
-        
-        //some methods for populating the VFieldFile
-        std::size_t insert(FieldIterator, VField&&);
-        std::size_t insert(FieldIterator it, const VField& ref)
-        {return insert(it, VField(ref));}
-        template<typename T>
-        std::size_t insert(FieldIterator it, T begin, T end)
-        {
-            if(begin == end)
-                return 0;
-            std::size_t size {0};
-            do{
-                size += insert(it++, *begin);
-            }while( ++begin != end );
-            return size;
-        }
-        std::size_t remove(FieldIterator, FieldIterator);
-        std::size_t push_back(VField&& ref)
-        {
-            if(cntSegments() == 0)
-                return insert(begin(), ref);
-            auto last = end();
-            last.pos -= 1;
-            return insert(last, ref); 
-        }
-        inline std::size_t push_back(const VField& ref)
-        { return push_back(VField(ref)); }
     };
 }
 

@@ -84,27 +84,6 @@ namespace VField{
         }
         return std::get<0>(data->segments[index]).isDataPresent();
     }
-    //iterator helpers 
-    std::size_t VFieldFile::insert(VFieldFile::FieldIterator it, VField&& ref)
-    {
-        try{
-            //checking for exception since VField can be pretty large
-            data->segments.insert(data->segments.begin() + it.pos,
-                    {ref, std::nullopt, ref.pntCount()});
-        }catch (const std::exception& e) {
-            logMessage("VFieldFile::insert: trouble inserting at position: "+ std::to_string(it.pos)+
-                    ", exception was: " + e.what());
-            return 0;
-        }
-        return 1;
-    }
-    std::size_t VFieldFile::remove(VFieldFile::FieldIterator it1, VFieldFile::FieldIterator it2)
-    {
-        data->segments.erase(
-                data->segments.begin() + it1.pos,
-                data->segments.end() + it2.pos);
-        return 1;
-    }
 
     //translate slice into range specifier
     inline std::array<std::size_t, 3> translateSlice(const VFieldFile::slice_type& Slice, std::size_t pCount)

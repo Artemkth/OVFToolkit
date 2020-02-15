@@ -25,6 +25,7 @@
 #include"OVFToolkitConfig.h"
 
 using fname_type = std::string;
+using namespace std::string_literals;
 
 //prefetch metadata, form it into arrays of times and metadata
 auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& regex_str, std::atomic<std::size_t>& progCnt, std::atomic<const fname_type::value_type*>& curStr)
@@ -121,6 +122,7 @@ class CMDMonitor
     private:
         std::ostream& out;
         std::size_t cCount {};//count of max possible characters in current line
+        std::string lineData {};
         bool ready {false};
 
         //static magic
@@ -145,8 +147,23 @@ class CMDMonitor
 
             if( str.length() > cCount )
                 pad_n( str.length() - cCount );
-            cCount = str.length();
             out << '\r' << std::flush;
+
+            cCount = str.length();
+            lineData = str;//store a copy just in case
+        }
+
+        void prependLine(const std::string& str)
+        {
+            if(!ready)
+                throw std::logic_error("Tried updating without initializing!");
+            out << str;
+
+            if( str.length() > cCount )
+                pad_n( str.length() - cCount );
+            out << '\n';
+
+            out << lineData << '\r' << std::flush;
         }
 };
 
@@ -179,6 +196,7 @@ std::string printMemSize(std::size_t size)
 template<typename T>
 auto Average(const T& array)
 {
+    //TODO: handle overflow/underflows
     using value_type = typename T::value_type;
     static_assert(std::is_arithmetic_v<value_type>, "Cannot calculate average of non-arithmetic type!");
     constexpr value_type epsilon = std::numeric_limits<value_type>::epsilon();
@@ -221,7 +239,7 @@ public:
     sort_helper& operator=(const sort_helper&) = delete;
 
     //and move operators
-    sort_helper(sort_helper&& ref)
+    sort_helper(sort_helper&& ref) //TODO: investigate why std::forward doesn't work here, wtf!
     { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); }
     sort_helper& operator=(sort_helper&& ref)
     { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); return *this; }
@@ -369,7 +387,7 @@ int main(int argc, char** argv)
         for(; dOptIt != dOptEnd; ++dOptIt)
         {
             if( !dOptIt -> has_value() )
-                noTSFiles += (std::string)( noTSFiles.empty() ? "" :", ") + fileIt -> getCurrentPath();
+                noTSFiles += ( noTSFiles.empty() ? ""s :", "s) + fileIt -> getCurrentPath();
             else
             {
                 if(times.empty())
@@ -379,12 +397,12 @@ int main(int argc, char** argv)
                     if(!encounteredDup)
                     {
                         if(!dupTSFiles.empty()) dupTSFiles += '\n';
-                        dupTSFiles += (std::string)"t=" + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
+                        dupTSFiles += "t="s + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
                     }
                     else
-                        dupTSFiles += (std::string)", ";
+                        dupTSFiles += ", "s;
 
-                    dupTSFiles += (std::string)"\"" + fileIt -> getCurrentPath() + '\"';
+                    dupTSFiles += "\""s + fileIt -> getCurrentPath() + '\"';
                 }
                 times.push_back( dOptIt -> value() );
             }
@@ -411,12 +429,12 @@ int main(int argc, char** argv)
                         if(!encounteredDup)
                         {
                             if(!dupTSFiles.empty()) dupTSFiles += '\n';
-                            dupTSFiles += (std::string)"t=" + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
+                            dupTSFiles += "t="s + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
                         }
                         else
-                            dupTSFiles += (std::string)", ";
+                            dupTSFiles += ", "s;
 
-                        dupTSFiles += (std::string)"\"" + fileIt -> getCurrentPath() + '\"';
+                        dupTSFiles += "\""s + fileIt -> getCurrentPath() + '\"';
                     }
             }
         }
@@ -454,7 +472,7 @@ int main(int argc, char** argv)
                  head.getMeshType()       != mType    )
             {
                 if(!badFiles.empty()) badFiles += ", ";
-                badFiles += (std::string)"\"" + begin -> getCurrentPath() + "\"";
+                badFiles += "\""s + begin -> getCurrentPath() + "\"";
             }
         }
 
@@ -507,7 +525,27 @@ int main(int argc, char** argv)
         //output info about time steps
         std::cout << "Input array has even time step of " << trueStep << " seconds. Average time step is " << avTstep << " seconds, and time step dispersion is "
                         << TstepDisp << " seconds. \n";
+
+        //find and report outliers ( >3 sigma )
+        std::string outliers {};
+        tIt = times.cbegin(); tEnd = times.cend();
+        auto fIt = file_handles.cbegin();
+        double expectedTime = *tIt;
+        for(; tIt != tEnd; ++tIt)
+        {
+            if( std::abs( *tIt - expectedTime ) > 3 * TstepDisp )
+            {
+                if( !outliers.empty() ) outliers += ", ";
+                outliers += "\""s + fIt -> getCurrentPath() + "\" (dt=" + std::to_string( *tIt - expectedTime ) + ")";
+            }
+
+            ++fIt; expectedTime += trueStep;
+        }
+        if(!outliers.empty())
+            std::cout << "Following files found to be far away from expected times: " << outliers << '\n';
     }
+
+    //and now the work can begin
 
     return 0;
 }
