@@ -451,6 +451,7 @@ int main(int argc, char** argv)
             std::cout << "Aborting!\n";
     }
 
+    std::size_t VFSize{};
     {
         //check if internal dimensions are compatible
         const auto expDim = file_handles.front().getSegmentHeader(0).expectedDimension();
@@ -485,7 +486,8 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        const auto totSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt * file_handles.size();
+        VFSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt;
+        const auto totSize =  VFSize * file_handles.size();
         std::cout << "Found " << totSize << " values to be handled (" << printMemSize( sizeof(float) * totSize ) << " of data in single precision).\n"; 
     }
 
@@ -550,7 +552,7 @@ int main(int argc, char** argv)
 
     //and now the work can begin
     cuFFTEngine engine; 
-    std::cout << engine.Init(0) << std::endl;
+    std::cout << engine.Init(fileList.size(), VFSize) << std::endl;
 
     return 0;
 }
