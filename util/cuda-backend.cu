@@ -202,6 +202,8 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         return result + "\nUnhandled error happending during batch size estimation!";
     }
 
+    //TODO: implement initialization of data structures 
+
     return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + printMemSize(batchSize * (fftLength + 2) * sizeof(float)) + " each).";
 }
 
