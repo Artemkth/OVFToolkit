@@ -183,12 +183,12 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         if(fftLength % 2 != 0)
         {
             result += "\nLimiting maximum batch size to 2G of data because of input array length being not even!";
-            maxBatch = 2 * 1024 * 1024 / (fftLength * sizeof(float));
+            maxBatch = std::min<std::size_t>(2l * 1024 * 1024 * 1024 / ( 2* (fftLength/2 + 1) * sizeof(float)), maxBatch);
         }
         else if(!is4GCompatible(fftLength))
         {
             result += "\nLimiting maximum batch size to 4G of data because times series length is divisible by primes larger than 127!";
-            maxBatch = 4 * 1024 * 1024 / (fftLength * sizeof(float));
+            maxBatch = std::max<std::size_t>(4l * 1024 * 1024 * 1024 / ( 2* (fftLength/2 + 1) * sizeof(float)), maxBatch);
         }
 
         batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
