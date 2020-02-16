@@ -122,6 +122,7 @@ extern std::string printMemSize(std::size_t);
 
 std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
 {
+    fftLength = t_len;
     fail = false; //reset just in case
 
     int devCount; cudaGetDeviceCount(&devCount);
@@ -165,7 +166,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     if(maxMem == 0) maxMem = 0.95 * props.totalGlobalMem; //defaulting to 95% of available VRAM
 
     //conversion to acceptable type for fft
-    if( t_len  > std::numeric_limits<long long int>::max() )
+    if( fftLength  > std::numeric_limits<long long int>::max() )
     {
         fail = true;
         return result + "\nTime series lenth or memory size values received overflow supported range!";
@@ -176,24 +177,24 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     //note: need at least 2x and at most 9x the data size for FFT transform(depending on length of the fft set)
     if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
     
-    if(t_len + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
-       std::min<std::size_t>( maxBatch * (t_len + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() ) //max memory usage is > 8GB
+    if(fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
+       std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() ) //max memory usage is > 8GB
     {
-        if(t_len % 2 != 0)
+        if(fftLength % 2 != 0)
         {
             result += "\nLimiting maximum batch size to 2G of data because of input array length being not even!";
-            maxBatch = 2 * 1024 * 1024 / (t_len * sizeof(float));
+            maxBatch = 2 * 1024 * 1024 / (fftLength * sizeof(float));
         }
-        else if(!is4GCompatible(t_len))
+        else if(!is4GCompatible(fftLength))
         {
             result += "\nLimiting maximum batch size to 4G of data because times series length is divisible by primes larger than 127!";
-            maxBatch = 4 * 1024 * 1024 / (t_len * sizeof(float));
+            maxBatch = 4 * 1024 * 1024 / (fftLength * sizeof(float));
         }
 
-        batchSize = EstimateBatch64(plan, t_len, maxMem, maxBatch);
+        batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
     }
     else
-        batchSize = EstimateBatch(plan, t_len, maxMem, maxBatch);
+        batchSize = EstimateBatch(plan, fftLength, maxMem, maxBatch);
 
     if(batchSize == 0)
     {
@@ -201,7 +202,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         return result + "\nUnhandled error happending during batch size estimation!";
     }
 
-    return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + printMemSize(batchSize * (t_len + 2) * sizeof(float)) + " each).";
+    return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + printMemSize(batchSize * (fftLength + 2) * sizeof(float)) + " each).";
 }
 
 bool cuFFTEngine::RunTransform( float* input, std::size_t padding)
