@@ -24,6 +24,9 @@
 //miscaleneous options from cmake
 #include"OVFToolkitConfig.h"
 
+//fft engines
+#include"cuda-backend.h"
+
 using fname_type = std::string;
 using namespace std::string_literals;
 
@@ -546,6 +549,8 @@ int main(int argc, char** argv)
     }
 
     //and now the work can begin
+    cuFFTEngine engine; 
+    std::cout << engine.Init(0) << std::endl;
 
     return 0;
 }

@@ -81,7 +81,8 @@ target_include_directories(ovfparser
 #build recepy for fft util
 IF(BUILD_FFUTIL)
     add_executable(ovf-batchfft
-        util/fft-util.cpp)
+        util/fft-util.cpp
+        util/cuda-backend.cu)
 
     IF(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
         target_link_libraries(ovf-batchfft PUBLIC ovfparser Threads::Threads FFTW::FloatThreads CUDA::cufft GSL::gsl Boost::program_options)
