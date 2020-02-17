@@ -312,14 +312,15 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
             int optDim = dim; int optRemainder = dim;
             while( (bCount + dim - 1 ) / dim < maxPerBDim && dim > 0 )
             {
-                int Remainder = dim - bCount % dim;
+                int Remainder = bCount % dim;
                 if( Remainder == 0 )
                 {
                     optDim = dim;
                     optRemainder = Remainder;
                     break;
                 }
-                else if( Remainder < optRemainder )
+                Remainder = dim - Remainder;
+                if( Remainder < optRemainder )
                 {
                     optDim = dim;
                     optRemainder = Remainder;
