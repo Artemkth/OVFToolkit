@@ -289,13 +289,14 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
         return false;
 
     std::size_t nBatchSize { batchSize - padding };
+    bool result {true};
 
     if( padding != 0 )
-        reallocate(nBatchSize);
+        result = reallocate(nBatchSize);
     //move data into array
-    cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice );
-    cufftExecR2C( plan, (cufftReal*)data, data );
-    if( norm != 1.0f )
+    result = result && (cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) == cudaSuccess);
+    result = result && (cufftExecR2C( plan, (cufftReal*)data, data ) == CUFFT_SUCCESS);
+    if( norm != 1.0f && result )
     {
         constexpr const std::size_t maxPerBDim { 65535 };
         dim3 threadPerBlock( 16, 16 );
@@ -331,11 +332,14 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
         }
         //TODO: think how to handle case if somehow there is more than 4TB of data
     }
-    cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost );
+    result = result && (cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) == cudaSuccess);
+    result = result && (cudaDeviceSynchronize() == cudaSuccess);
 
     if( padding != 0 )
-        reallocate(batchSize);
+        result = result && reallocate(batchSize) != 0;
 
-    return false;
+    if(!result)
+        fail = true;
+    return result;
 }
 
