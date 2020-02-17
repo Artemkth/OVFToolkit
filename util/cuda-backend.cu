@@ -32,7 +32,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
     std::size_t estimate{};
     auto estimationError = cufftGetSizeMany(
                 plan, 1, &len, 
-                &arrSize, 2 * cPoints - 2, 1,
+                &arrSize, batch_size, 1,
                 &outArrSize, 1, cPoints,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
@@ -50,7 +50,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
         outArrSize = batch_size * cPoints; //rounds down
         estimationError = cufftGetSizeMany(
                 plan, 1, &len, 
-                &arrSize, 2 * cPoints - 2, 1,
+                &arrSize, batch_size, 1,
                 &outArrSize, 1, cPoints,
                 CUFFT_R2C, batch_size, &estimate);
 
@@ -80,7 +80,7 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
     std::size_t estimate{};
     auto estimationError = cufftGetSizeMany64(
                 plan, 1, &len, 
-                &arrSize, 2 * cPoints - 2, 1,
+                &arrSize, batch_size, 1,
                 &outArrSize, 1, cPoints,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
@@ -98,7 +98,7 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
         outArrSize = batch_size * cPoints; //rounds down
         estimationError = cufftGetSizeMany64(
                 plan, 1, &len, 
-                &arrSize, 2 * cPoints - 2, 1,
+                &arrSize, batch_size, 1,
                 &outArrSize, 1, cPoints,
                 CUFFT_R2C, batch_size, &estimate);
 
@@ -175,26 +175,35 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     //estimate how much size bundle would take
     //first get initial approximation by taking guarantee from documentation that maximum workspace area is 8 times the data
     //note: need at least 2x and at most 9x the data size for FFT transform(depending on length of the fft set)
+    //greedy greedy host wants to have ALL the memory :D
     if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
     
-    if(fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
-       std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() ) //max memory usage is > 8GB
+     if( fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
+         (maxMem > 2l * std::numeric_limits<int>::max() * sizeof(float) && //only when available gpu space is higher than 16GB, otherwise there is not enough space to fit both data and fft workspace
+         std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() &&
+         fftLength % 2 != 0 && is4GCompatible(fftLength)) ) //max memory usage is > 8GB
     {
-        if(fftLength % 2 != 0)
+        useExtended = true;//to indicate if *64 methods are called later, in a case where GPU supports craploads of data
+        
+        if( fftLength %2 != 0 )
         {
-            result += "\nLimiting maximum batch size to 2G of data because of input array length being not even!";
-            maxBatch = std::min<std::size_t>(2l * 1024 * 1024 * 1024 / ( 2* (fftLength/2 + 1) * sizeof(float)), maxBatch);
+            result += "\nWarning: Limiting the batch size to 2G of data becuase number of time steps is odd!";
+            maxBatch = 2l * 1024 * 1024 * 1024 / sizeof(float);
         }
-        else if(!is4GCompatible(fftLength))
+        if( !is4GCompatible(fftLength) )
         {
-            result += "\nLimiting maximum batch size to 4G of data because times series length is divisible by primes larger than 127!";
-            maxBatch = std::max<std::size_t>(4l * 1024 * 1024 * 1024 / ( 2* (fftLength/2 + 1) * sizeof(float)), maxBatch);
+            result += "\nWarning: Limiting max batch size to 1G";
         }
 
         batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
     }
     else
-        batchSize = EstimateBatch(plan, fftLength, maxMem, maxBatch);
+    {
+        useExtended = false;
+        if( maxBatch > std::numeric_limits<int>::max() && maxMem > 2l * std::numeric_limits<int>::max() * sizeof(float) )
+            result += "\nWarning: Batch size is being limited by transform lenth being odd, or having prime factors higher than 127!";
+        batchSize = EstimateBatch(plan, fftLength, maxMem, std::min<std::size_t>(maxBatch, std::numeric_limits<int>::max()));
+    }
 
     if(batchSize == 0)
     {
@@ -202,13 +211,86 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         return result + "\nUnhandled error happending during batch size estimation!";
     }
 
-    //TODO: implement initialization of data structures 
+    auto workSize = reallocate(batchSize);
+    if( workSize == 0 )
+    {
+        fail = true;
+        return result + "\nFailed to allcate work assets in VRAM, tried to go with " + printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + "batches.";
+    }
 
-    return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + printMemSize(batchSize * (fftLength + 2) * sizeof(float)) + " each).";
+    return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + 
+            printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + " each, " + printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float) + workSize) +
+            " together with work area in the gpu).";
+}
+
+std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
+{
+    //do not bother with bad inputs
+    if(newBatch > batchSize || fftLength == 0 || fail)
+        return 0;
+
+    cudaFree( data ); data = nullptr;
+
+    std::size_t workSize {};
+    cufftResult allocationError{};
+    if(useExtended)
+    {
+        long long int len = fftLength;
+        long long int cPoints = fftLength/2 + 1;
+        long long int arrSize = newBatch * cPoints * 2;
+        long long int outArrSize = newBatch * cPoints ;
+
+        allocationError = cufftMakePlanMany64(
+                plan, 1, &len, 
+                &arrSize, newBatch, 1,
+                &outArrSize, 1, cPoints,
+                CUFFT_R2C, newBatch, &workSize);
+    }
+    else
+    {
+        int len = fftLength;
+        int cPoints = fftLength/2 + 1;
+        int arrSize = newBatch * cPoints * 2;
+        int outArrSize = newBatch * cPoints;
+
+        allocationError = cufftMakePlanMany(
+                plan, 1, &len, 
+                &arrSize, newBatch, 1,
+                &outArrSize, 1, cPoints,
+                CUFFT_R2C, newBatch, &workSize);
+    }
+    if(allocationError != CUFFT_SUCCESS)
+        return 0;
+
+    //and allocate work data area
+    if(cudaMalloc((void**)&data, sizeof(cufftComplex) * (fftLength/2 + 1) * batchSize) != cudaSuccess)
+    {
+        cufftDestroy(plan); cufftCreate(&plan);
+        return 0;
+    } 
+
+    return workSize;
 }
 
 bool cuFFTEngine::RunTransform( float* input, std::size_t padding)
 {
+    if( fail || input == nullptr || padding >= batchSize )
+        return false;
+
+    std::size_t nBatchSize { batchSize - padding };
+
+    if( padding != 0 )
+        reallocate(nBatchSize);
+    //move data into array
+    cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice );
+    cufftExecR2C( plan, (cufftReal*)data, data );
+    //TODO: normalize on GPU
+    cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost );
+
+
+    if( padding != 0 )
+        reallocate(batchSize);
+
     return false;
 }
 

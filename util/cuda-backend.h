@@ -10,6 +10,9 @@ class cuFFTEngine: public FFTEngine<float>
         cufftHandle plan{};          //handle for plan
         cufftComplex* data{nullptr}; //and pointer to data allocated on GPU
         int gpuID {0};
+        bool useExtended {false};
+
+        std::size_t reallocate(std::size_t);
 
     public:
         //create cuda engine bound to GPU #gpu
