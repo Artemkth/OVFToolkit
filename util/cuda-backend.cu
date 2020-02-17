@@ -178,10 +178,10 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     //greedy greedy host wants to have ALL the memory :D
     if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
     
-     if( fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
-         (maxMem > 2l * std::numeric_limits<int>::max() * sizeof(float) && //only when available gpu space is higher than 16GB, otherwise there is not enough space to fit both data and fft workspace
-         std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() &&
-         fftLength % 2 != 0 && is4GCompatible(fftLength)) ) //max memory usage is > 8GB
+    if( fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
+        (maxMem > 2l * std::numeric_limits<int>::max() * sizeof(float) && //only when available gpu space is higher than 16GB, otherwise there is not enough space to fit both data and fft workspace
+        std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() &&
+        fftLength % 2 != 0 && is4GCompatible(fftLength)) ) //max memory usage is > 8GB
     {
         useExtended = true;//to indicate if *64 methods are called later, in a case where GPU supports craploads of data
         
@@ -193,6 +193,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         if( !is4GCompatible(fftLength) )
         {
             result += "\nWarning: Limiting max batch size to 1G";
+            maxBatch = 1l * 1024 * 1024 * 1024 / sizeof(float);
         }
 
         batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
@@ -272,7 +273,17 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
     return workSize;
 }
 
-bool cuFFTEngine::RunTransform( float* input, std::size_t padding)
+__global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
+{
+    //CUDA kernel for normalizing data, should be zupa fast
+    std::size_t coord = (blockIdx.y * blockDim.x + blockIdx.x) * blockDim.x * blockDim.y + //size of a block in values 
+                        blockDim.x * threadIdx.y + threadIdx.x;                            //and position of thread within block
+
+    if( coord < nSize ) //if thread is within block, proceed normalizing the value
+        *(data + coord) *= norm;
+}
+
+bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 {
     if( fail || input == nullptr || padding >= batchSize )
         return false;
@@ -284,9 +295,43 @@ bool cuFFTEngine::RunTransform( float* input, std::size_t padding)
     //move data into array
     cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice );
     cufftExecR2C( plan, (cufftReal*)data, data );
-    //TODO: normalize on GPU
-    cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost );
+    if( norm != 1.0f )
+    {
+        constexpr const std::size_t maxPerBDim { 65535 };
+        dim3 threadPerBlock( 16, 16 );
+        const std::size_t bCount { (nBatchSize + 255) / 256 };//block count is rounded up
+        if( bCount <= maxPerBDim ) // max ~64MB
+        {
+            int bLineSize = bCount;
+            normalize<<<bLineSize, threadPerBlock>>>((cufftReal*)data, nBatchSize, norm);
+        }
+        else if( bCount <= maxPerBDim * maxPerBDim ) // max ~4TB
+        {
+            int dim = std::ceil( std::sqrt (static_cast<double>(maxPerBDim)) );
+            int optDim = dim; int optRemainder = dim;
+            while( (bCount + dim - 1 ) / dim < maxPerBDim && dim > 0 )
+            {
+                int Remainder = dim - bCount % dim;
+                if( Remainder == 0 )
+                {
+                    optDim = dim;
+                    optRemainder = Remainder;
+                    break;
+                }
+                else if( Remainder < optRemainder )
+                {
+                    optDim = dim;
+                    optRemainder = Remainder;
+                }
 
+                dim--;
+            }
+            dim3 numBlocks( (bCount+optDim-1) / optDim, optDim );
+            normalize<<<numBlocks, threadPerBlock>>> ((cufftReal*)data, nBatchSize, norm);
+        }
+        //TODO: think how to handle case if somehow there is more than 4TB of data
+    }
+    cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost );
 
     if( padding != 0 )
         reallocate(batchSize);

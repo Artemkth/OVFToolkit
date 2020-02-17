@@ -25,7 +25,8 @@ class FFTEngine
 
         //function to run a transform with given data and padding for it,
         //will pad out the data in gpu memory with reinitializing for new array
-        //host array data is expected to have batchSize (fftLength + 2) * batchSize elements 
-        virtual bool RunTransform( T* data, std::size_t padding ) = 0;
+        //host array data is expected to have batchSize 2 * (fftLength/2 + 1) * ( batchSize - padding ) elements 
+        //norm is an fp number which all data will be divided by after transform
+        virtual bool RunTransform( T* data, T norm, std::size_t padding ) = 0;
 };
 
