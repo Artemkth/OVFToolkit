@@ -26,7 +26,7 @@ inline bool is4GCompatible( std::size_t size )
 int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
 {
     int cPoints = len/2 + 1;
-    int batch_size = std::min<int>( maxMem / (9 * sizeof(float) * 2 * cPoints), maxBatch );
+    int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) * cPoints), maxBatch );
     int arrSize { batch_size * cPoints * 2 };
     int outArrSize { batch_size * cPoints }; //rounds down
     std::size_t estimate{};
@@ -38,11 +38,11 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
     if( estimationError != CUFFT_SUCCESS )
         return 0;
 
-    if( batch_size == maxBatch && maxMem <= (estimate + sizeof(float) * batch_size * (len + 2)) )
+    if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
         return batch_size;
 
     //otherwise try to find the size just large enough starting from the linear extrapolation
-    batch_size = std::min<int>( maxMem / (estimate/batch_size + sizeof(float) * (len + 2)), maxBatch );
+    batch_size = std::min<int>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
     bool isFitting = true; std::size_t cnt {0};
     while(batch_size > 0 && batch_size <= maxBatch)
     {
@@ -58,7 +58,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
             return 0; //expect those two since might go over allowed GPU memory
 
         const auto wasFitting = isFitting;
-        isFitting = maxMem >= (estimate + sizeof(float) * batch_size * (len + 2));
+        isFitting = maxMem >= (estimate + sizeof(cufftComplex) * batch_size * cPoints);
         if(isFitting != wasFitting && cnt != 0)
             return isFitting? batch_size : batch_size - 1;
 
@@ -74,7 +74,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
 int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
 {
     long long int cPoints = len/2 + 1;
-    long long int batch_size = std::min<int>( maxMem / (9 * sizeof(float) * 2 * cPoints), maxBatch );
+    long long int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) *  cPoints), maxBatch );
     long long int arrSize { batch_size * cPoints * 2 };
     long long int outArrSize { batch_size * cPoints }; //rounds down
     std::size_t estimate{};
@@ -86,11 +86,11 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
     if( estimationError != CUFFT_SUCCESS )
         return 0;
 
-    if( batch_size == maxBatch && maxMem <= (estimate + sizeof(float) * batch_size * (len + 2)) )
+    if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
         return batch_size;
 
     //otherwise try to find the size just large enough starting from the linear extrapolation
-    batch_size = std::min<long long int>( maxMem / (estimate/batch_size + sizeof(float) * (len + 2)), maxBatch );
+    batch_size = std::min<long long int>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
     bool isFitting = true; std::size_t cnt {0};
     while(batch_size > 0 && batch_size <= maxBatch)
     {
@@ -106,7 +106,7 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
             return 0; //expect those two since might go over allowed GPU memory
 
         const auto wasFitting = isFitting;
-        isFitting = maxMem >= (estimate + sizeof(float) * batch_size * (len + 2));
+        isFitting = maxMem >= (estimate + sizeof(cufftComplex) * batch_size * cPoints);
         if(isFitting != wasFitting && cnt!=0)
             return isFitting? batch_size : batch_size - 1;
 
@@ -273,6 +273,7 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
     return workSize;
 }
 
+//actually excited to do some computation on videocard on my own :D
 __global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
 {
     //CUDA kernel for normalizing data, should be zupa fast
@@ -319,6 +320,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
                     optRemainder = Remainder;
                     break;
                 }
+
                 Remainder = dim - Remainder;
                 if( Remainder < optRemainder )
                 {
@@ -339,7 +341,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     if( padding != 0 )
         result = result && reallocate(batchSize) != 0;
 
-    if(!result)
+    if( !result )
         fail = true;
     return result;
 }

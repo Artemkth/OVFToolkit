@@ -8,11 +8,14 @@
 #include<optional>
 #include<cmath>
 #include<type_traits>
+#include<memory>
+#include<chrono>
 
 //headers for parallelization, hurray for atomic future :D
 #include<atomic>
 #include<future>
 #include<thread>
+#include<mutex>
 
 //parsing program options
 #include<boost/program_options.hpp>
@@ -170,6 +173,23 @@ class CMDMonitor
         }
 };
 
+//getting *fancy* with ASCII :D
+class Spiner 
+{
+    static constexpr const std::array<char, 4> charCycle {'-', '\\', '|', '/'};
+    std::array<char, 4>::const_iterator currentState = charCycle.begin();
+
+public:
+    Spiner& operator++()
+    { ++currentState; if(currentState == charCycle.end()) currentState = charCycle.begin(); return *this; }
+
+    friend std::ostream& operator << (std::ostream& out, const Spiner& spin)
+    { out << *spin.currentState; return out; }
+
+    char CurState() const 
+    { return *currentState; };
+};
+
 template<typename T>
 std::enable_if_t<std::is_floating_point_v<T>, std::string> roundFloat(T val, int decPlaces = 2)
 {
@@ -247,6 +267,29 @@ public:
     sort_helper& operator=(sort_helper&& ref)
     { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); return *this; }
 };
+
+//processing data
+enum class BufferState { WAIT, IMPORT, POST, PROCESS, EXPORT, STOP, FAIL };
+struct GPUBuffer {
+    std::unique_ptr<float[]> data{};
+    std::size_t nSize{0};
+
+    BufferState state{ BufferState::WAIT };
+};
+
+template<typename Rep, typename Period>
+inline std::string printTimeStamp(std::chrono::duration<Rep, Period> dur)
+{
+   auto minCnt = std::chrono::floor<std::chrono::minutes>(dur).count();
+   auto secCnt = std::chrono::floor<std::chrono::seconds>(dur).count() % 60;
+   std::string ret{};
+   ret += std::to_string(minCnt) + "m";
+   if ( secCnt < 10 ) ret += "0";
+   ret += std::to_string(secCnt) + "s";
+
+   return ret;
+}
+
 
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
@@ -326,6 +369,8 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+    cuFFTEngine gpuFFT; 
+    std::future<std::string> gpuInit{};
 
     //evaluation monitors
     std::atomic<std::size_t> importedCount {};
@@ -452,6 +497,7 @@ int main(int argc, char** argv)
     }
 
     std::size_t VFSize{};
+    std::unique_ptr<struct GPUBuffer> buffers[2]; //tripple buffering, yay
     {
         //check if internal dimensions are compatible
         const auto expDim = file_handles.front().getSegmentHeader(0).expectedDimension();
@@ -464,6 +510,23 @@ int main(int argc, char** argv)
         }
         //guaranteed to be set by this point
         const auto mType = file_handles.front().getSegmentHeader(0).getMeshType();
+        VFSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt;
+        //begin initialization of engines outside main thread once dimensions are known
+        auto GPUBuffersInit = [&] ()
+        {
+            auto res = gpuFFT.Init( fileList.size(), VFSize, 0 );
+            auto cPoints = gpuFFT.expectedBatch() * (gpuFFT.expectedLength()/2 + 1);
+            if( gpuFFT.isReady() )
+                for( auto& x: buffers )
+                {
+                    x = std::make_unique<GPUBuffer> ();
+                    x -> nSize = 2 * cPoints;
+                    x -> data = std::make_unique<float[]>( x->nSize );
+                }
+
+            return res;
+        };
+        gpuInit = std::async( std::launch::async, GPUBuffersInit );
 
         auto begin = ++file_handles.cbegin();
         auto end = file_handles.cend();
@@ -486,7 +549,6 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        VFSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt;
         const auto totSize =  VFSize * file_handles.size();
         std::cout << "Found " << totSize << " values to be handled (" << printMemSize( sizeof(float) * totSize ) << " of data in single precision).\n"; 
     }
@@ -550,9 +612,117 @@ int main(int argc, char** argv)
             std::cout << "Following files found to be far away from expected times: " << outliers << '\n';
     }
 
-    //and now the work can begin
-    cuFFTEngine engine; 
-    std::cout << engine.Init(fileList.size(), VFSize) << std::endl;
+    //wait here for GPU to finish initializing, and buffers being created
+    std::cout << gpuInit.get() << "\n";
+
+    //stuff for streaming buffers to gpu
+    std::mutex rotLock; //mutex to acomplish buffer rotation
+    std::condition_variable gpuRotate;
+    float norm = 1./ (std::sqrt(gpuFFT.expectedLength()) * (times.back() - times.front()) );
+    std::thread gpuStreamThread( [&] ()
+    {
+        while(true)
+        {
+            //aquire mutex first with condvar and unique lock
+            std::unique_lock<std::mutex> lock(rotLock);
+            gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::PROCESS || buffers[0] -> state == BufferState::STOP;});
+
+            if(buffers[0] -> state == BufferState::STOP && buffers[1] -> state == BufferState::STOP)
+                break;
+
+            //do the data transform
+            auto curBuffer = buffers[0].get();
+
+            if( !gpuFFT.isReady() || curBuffer -> nSize < gpuFFT.expectedLength() || curBuffer -> nSize > 2 * gpuFFT.expectedLength() * gpuFFT.expectedBatch() || 
+                !gpuFFT.RunTransform(curBuffer -> data.get(), norm, gpuFFT.expectedBatch() - curBuffer -> nSize / (2 * gpuFFT.expectedLength()))                   )
+            {
+                curBuffer -> state = BufferState::FAIL;
+                return; //stop if failure was encountered
+            }
+
+            curBuffer -> state = BufferState::EXPORT;
+        }
+    });
+
+    std::atomic<std::size_t> progVar{};
+    std::atomic<std::size_t> expectProg{};
+    auto printState = [&] (BufferState state) -> std::string
+    {
+        switch(state)
+        {
+            case BufferState::FAIL:
+                return "FAILURE";
+            case BufferState::WAIT:
+                return "WAITING";
+            case BufferState::STOP:
+                return "STOPPED";
+            case BufferState::IMPORT:
+                return "Read: "s + printMemSize(progVar) + "/" + printMemSize(expectProg);
+            case BufferState::POST:
+                return "Post: "s + roundFloat( (double)progVar/expectProg ) + "%";
+            case BufferState::PROCESS:
+                return "PROCESSING";
+            case BufferState::EXPORT:
+                return "WRITING";
+        }
+        return "";
+    };
+    //and a monitor function
+    std::atomic<bool> monitorOn {true};
+    std::thread MonitorThread( [&] ()
+    {
+        using namespace std::chrono_literals;
+
+        //static copy of buffer pointers, doesn't rotate
+        GPUBuffer* buff[2];
+        for(int i = 0; i < 2; i++)
+            buff[i] = buffers[i].get();
+
+        auto beginTime = std::chrono::steady_clock::now();
+
+        const int tStampPadding { 10 };
+        const int bufferPadding { 25 };
+
+        Spiner spin;
+        CMDMonitor monitor(std::cout);
+
+        while(monitorOn)
+        {
+            //output through that handy dandy function
+            std::string res {printTimeStamp( std::chrono::steady_clock::now() - beginTime )};
+            if( res.length() < tStampPadding ) res += std::string( tStampPadding - res.length(), ' ');
+
+            //output buffer states
+            for(int i = 0; i < 2; i++)
+            {
+                auto state = buff[i]->state;
+                auto prState = printState(state);
+                if(state == BufferState::PROCESS || state == BufferState::EXPORT)
+                    prState += spin.CurState();
+
+                res += "Buffer[" + std::to_string(i) + "]: " + prState;
+                if(prState.length() < bufferPadding) res += std::string( bufferPadding - prState.length(), ' ' );
+            }
+
+            monitor.update(res);
+            std::this_thread::sleep_for(150ms);
+        }
+    });
+
+    //after this main thread works with I/O
+    const auto BatchSize = gpuFFT.expectedBatch();
+    std::size_t curPoint {};
+    
+    using namespace std::chrono_literals;
+    std::this_thread::sleep_for(10s);
+
+    //deinit for debug
+    for(auto& x: buffers)
+        x -> state = BufferState::STOP;
+    gpuRotate.notify_all();
+    gpuStreamThread.join();
+    monitorOn = false;
+    MonitorThread.join();
 
     return 0;
 }
