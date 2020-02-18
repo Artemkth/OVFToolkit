@@ -91,7 +91,7 @@ namespace VField{
         return
         {
             !Slice.begin.isSpecial()? Slice.begin.getPos() : (Slice.begin == slice_pnt::begin ? 0 : pCount),
-                !Slice.end.isSpecial()? Slice.end.getPos() : (Slice.end == slice_pnt::begin ? 0 : pCount),
+                !Slice.end.isSpecial()? Slice.end.getPos() : (Slice.end == slice_pnt::begin ? 0 : pCount + 1),
                 Slice.stride
         };
     }
@@ -808,7 +808,7 @@ namespace VField{
                 }
 
                 std::string line{""};
-                const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
+                const std::size_t importDepth {importWhole? cnt : ((end - begin) * advertisedDim)};
                 auto buffer = new double[importDepth];
                 //main loop implementation here
                 std::size_t line_cnt{0};
@@ -1045,11 +1045,6 @@ namespace VField{
         {
             logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
             return std::move(field);
-        }
-        if(!field.isWeaklyAddressable())
-        {
-            logMessage("VFieldFile:readSlice: VField is not weakly addressable, abborting!");
-            return {};
         }
         //if field is not here it is time to import it
         if(!field.isDataPresent())

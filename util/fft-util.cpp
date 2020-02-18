@@ -273,6 +273,7 @@ enum class BufferState { WAIT, IMPORT, POST, PROCESS, EXPORT, STOP, FAIL };
 struct GPUBuffer {
     std::unique_ptr<float[]> data{};
     std::size_t nSize{0};
+    std::size_t realPoints{0};
 
     BufferState state{ BufferState::WAIT };
 };
@@ -290,6 +291,83 @@ inline std::string printTimeStamp(std::chrono::duration<Rep, Period> dur)
    return ret;
 }
 
+//template to copy data into array
+template<typename T>
+inline void loadData( const VField::VField& field, float *arr, std::size_t offset, std::size_t cnt, std::size_t skip )
+{
+    if(skip == 0)
+        std::copy_n( field.getData<T>() + offset, cnt, arr );
+    else
+    {
+        auto begin = field.cbegin<T>();
+        auto end = field.cend<T>();
+        const auto dim = field.Header.expectedDimension();
+
+        std::copy_n(*begin + skip + offset, dim - skip - offset, arr);
+        begin++;
+
+        for(; begin != end; ++begin)
+        {
+            std::copy_n(*begin + skip, cnt > (dim - skip)? dim - skip : cnt % (dim - skip), arr);
+            arr += dim - skip; cnt -= dim - skip;
+        }
+    }
+}
+
+//group import data
+void readData( const std::vector<VField::VFieldFile>& handles, float* data,
+               std::size_t offset,
+               std::atomic<std::size_t>& progMax,
+               std::atomic<std::size_t>& progress,
+               std::size_t& impLen) 
+{
+    progress = 0;
+    
+    const auto& head = handles.front().getSegmentHeader(0);
+    const auto mType = head.getMeshType();
+    const auto dim   = head.expectedDimension();
+    const auto pts   = head.expectedPoints();
+    const auto len   = handles.size();
+    const auto vdim  = dim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3);
+    impLen= std::min( impLen, vdim * pts - offset );
+    progMax = impLen * len;
+
+    const auto concHint = std::thread::hardware_concurrency();
+    const std::size_t tCount {std::min<std::size_t>(concHint == 0 ? 1 : std::min<std::size_t>(concHint, 4), len)};
+
+    //for irregular meshes offset skips over coordinate tripplets
+    const auto adjBegin  = (mType == VField::OVFHeader::MeshType::rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
+    const auto adjEnd    = (mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim )/dim + 1;
+
+    auto importer = [&] (std::size_t off)
+    {
+        auto begin = handles.cbegin();
+        auto end   = handles.end();
+        auto* dest = data + impLen * off;
+
+        std::advance(begin, off);
+        while( begin < end )
+        {
+            auto slice = begin -> readSlice(0, {adjBegin, adjEnd, 1});
+
+            if( slice.curDataInternalSize() == 4 )
+                loadData<float>( slice, dest, offset%vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular? 0 : 3 );
+            else
+                loadData<double>( slice, dest, offset%vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular? 0 : 3 );
+
+            std::advance(begin, tCount);
+            dest += impLen * tCount;
+            progress += impLen;
+        }
+    };
+
+    std::vector<std::thread> workers; workers.reserve(tCount - 1);
+    for(std::size_t i = 0; i < tCount - 1; i++)
+        workers.emplace_back(importer, i);
+    importer(tCount - 1);
+    for(auto& x: workers)
+        x.join();
+}
 
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
@@ -344,7 +422,8 @@ int main(int argc, char** argv)
     }
 
     //try to validate file list beforehand
-    if( fileList.size() < 2 )
+    std::size_t tSeriesLength = fileList.size();
+    if( tSeriesLength < 2 )
     {
         std::cerr << "At least 2 files were expected to be provided to form a time series, a single file is already its own transform, aborting!\n";
         return 1;
@@ -379,7 +458,7 @@ int main(int argc, char** argv)
     auto importMonitor = [&] () -> void 
     {
         CMDMonitor monitor(std::cout);
-        const auto expSize = fileList.size();
+        const auto expSize = tSeriesLength;
         const auto expSizeStr = std::to_string(expSize);
 
         std::string message {};
@@ -415,10 +494,10 @@ int main(int argc, char** argv)
     auto t_before = std::chrono::steady_clock::now();
     auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
     auto t_after = std::chrono::steady_clock::now();
-    watch.join(); //TODO: check how it will fail if importedCount != fileList.size()
+    watch.join(); //TODO: check how it will fail if importedCount != tSeriesLength
 
-    std::vector<double> times{}; times.reserve( fileList.size() );
-    std::cout << "Done pre-fetching .ovf metadata for " << fileList.size() << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
+    std::vector<double> times{}; times.reserve( tSeriesLength );
+    std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
     {
         //check the times
         auto dOptIt = timeOpt.cbegin();
@@ -459,7 +538,7 @@ int main(int argc, char** argv)
         }
 
         //duplicate check loop, starts from second value
-        if(times.size() == fileList.size())   //equivalent to noTSFiles.empty()
+        if(times.size() == tSeriesLength)   //equivalent to noTSFiles.empty()
         {
             auto cValIt = ++times.cbegin();
             auto endIt = times.cend();
@@ -514,13 +593,14 @@ int main(int argc, char** argv)
         //begin initialization of engines outside main thread once dimensions are known
         auto GPUBuffersInit = [&] ()
         {
-            auto res = gpuFFT.Init( fileList.size(), VFSize, 0 );
+            auto res = gpuFFT.Init( tSeriesLength, VFSize, 0 );
             auto cPoints = gpuFFT.expectedBatch() * (gpuFFT.expectedLength()/2 + 1);
             if( gpuFFT.isReady() )
                 for( auto& x: buffers )
                 {
                     x = std::make_unique<GPUBuffer> ();
                     x -> nSize = 2 * cPoints;
+                    x -> realPoints = gpuFFT.expectedBatch();
                     x -> data = std::make_unique<float[]>( x->nSize );
                 }
 
@@ -549,7 +629,7 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        const auto totSize =  VFSize * file_handles.size();
+        const auto totSize =  VFSize * tSeriesLength;
         std::cout << "Found " << totSize << " values to be handled (" << printMemSize( sizeof(float) * totSize ) << " of data in single precision).\n"; 
     }
 
@@ -561,7 +641,7 @@ int main(int argc, char** argv)
         auto tItEnd   = times.begin();
         auto fItBegin = file_handles.begin();      
 
-        std::vector<sort_helper<double, VField::VFieldFile>> helper; helper.reserve(times.size());
+        std::vector<sort_helper<double, VField::VFieldFile>> helper; helper.reserve(tSeriesLength);
         for(; tItBegin != tItEnd; ++tItBegin)
             helper.emplace_back(&(*tItBegin), &(*fItBegin++));
 
@@ -572,7 +652,7 @@ int main(int argc, char** argv)
     }
 
     //work on time array to set some more options
-    double trueStep{ (times.back() - times.front())/(times.size() - 1) }; bool reinterp {false};
+    double trueStep{ (times.back() - times.front())/(tSeriesLength - 1) }; bool reinterp {false};
     {
         std::vector<double> distances(++times.begin(), times.end());
         auto dIt = distances.begin();
@@ -634,7 +714,7 @@ int main(int argc, char** argv)
             auto curBuffer = buffers[0].get();
 
             if( !gpuFFT.isReady() || curBuffer -> nSize < gpuFFT.expectedLength() || curBuffer -> nSize > 2 * gpuFFT.expectedLength() * gpuFFT.expectedBatch() || 
-                !gpuFFT.RunTransform(curBuffer -> data.get(), norm, gpuFFT.expectedBatch() - curBuffer -> nSize / (2 * gpuFFT.expectedLength()))                   )
+                !gpuFFT.RunTransform(curBuffer -> data.get(), norm, gpuFFT.expectedBatch() - curBuffer -> realPoints ))
             {
                 curBuffer -> state = BufferState::FAIL;
                 return; //stop if failure was encountered
@@ -657,7 +737,7 @@ int main(int argc, char** argv)
             case BufferState::STOP:
                 return "STOPPED";
             case BufferState::IMPORT:
-                return "Read: "s + printMemSize(progVar) + "/" + printMemSize(expectProg);
+                return "Read: "s + printMemSize(progVar * sizeof(float)) + "/" + printMemSize(expectProg * sizeof(float));
             case BufferState::POST:
                 return "Post: "s + roundFloat( (double)progVar/expectProg ) + "%";
             case BufferState::PROCESS:
@@ -698,7 +778,7 @@ int main(int argc, char** argv)
                 auto state = buff[i]->state;
                 auto prState = printState(state);
                 if(state == BufferState::PROCESS || state == BufferState::EXPORT)
-                    prState += spin.CurState();
+                {prState += spin.CurState(); ++spin; }
 
                 res += "Buffer[" + std::to_string(i) + "]: " + prState;
                 if(prState.length() < bufferPadding) res += std::string( bufferPadding - prState.length(), ' ' );
@@ -712,6 +792,18 @@ int main(int argc, char** argv)
     //after this main thread works with I/O
     const auto BatchSize = gpuFFT.expectedBatch();
     std::size_t curPoint {};
+
+    GPUBuffer* curBuffer = buffers[1].get();
+    curBuffer -> state = BufferState::IMPORT;
+    readData( file_handles, curBuffer -> data.get(), 0, 
+              expectProg, progVar, curBuffer -> realPoints);
+    //TODO: add postprocessing here
+    curBuffer -> state = BufferState::PROCESS;
+    rotLock.lock();
+    std::swap(buffers[0], buffers[1]);
+    rotLock.unlock();
+    gpuRotate.notify_all();
+
     
     using namespace std::chrono_literals;
     std::this_thread::sleep_for(10s);
