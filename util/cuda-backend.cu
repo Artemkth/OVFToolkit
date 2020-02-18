@@ -277,7 +277,7 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
 __global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
 {
     //CUDA kernel for normalizing data, should be zupa fast
-    std::size_t coord = (blockIdx.y * blockDim.x + blockIdx.x) * blockDim.x * blockDim.y + //size of a block in values 
+    std::size_t coord = (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x * blockDim.y + //size of a block in values 
                         blockDim.x * threadIdx.y + threadIdx.x;                            //and position of thread within block
 
     if( coord < nSize ) //if thread is within block, proceed normalizing the value

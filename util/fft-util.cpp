@@ -373,6 +373,7 @@ void readData( const std::vector<VField::VFieldFile>& handles, float* data,
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 int main(int argc, char** argv)
 {
+    cuFFTEngine gpuFFT; 
     std::vector<fname_type> fileList{};
     std::string TimeRegExStr {};
     //first parse command-line options
@@ -448,7 +449,6 @@ int main(int argc, char** argv)
             return 1;
         }
     }
-    cuFFTEngine gpuFFT; 
     std::future<std::string> gpuInit{};
 
     //evaluation monitors
@@ -763,7 +763,7 @@ int main(int argc, char** argv)
         const int tStampPadding { 10 };
         const int bufferPadding { 25 };
 
-        Spiner spin;
+        Spiner spin[2];
         CMDMonitor monitor(std::cout);
 
         while(monitorOn)
@@ -778,7 +778,7 @@ int main(int argc, char** argv)
                 auto state = buff[i]->state;
                 auto prState = printState(state);
                 if(state == BufferState::PROCESS || state == BufferState::EXPORT)
-                {prState += spin.CurState(); ++spin; }
+                {prState += spin[i].CurState(); ++spin[i]; }
 
                 res += "Buffer[" + std::to_string(i) + "]: " + prState;
                 if(prState.length() < bufferPadding) res += std::string( bufferPadding - prState.length(), ' ' );
@@ -791,22 +791,32 @@ int main(int argc, char** argv)
 
     //after this main thread works with I/O
     const auto BatchSize = gpuFFT.expectedBatch();
-    std::size_t curPoint {};
+    std::vector<std::array<std::size_t, 2>> segmentDescriptor;
+    //open a temporary file for outputting results of fft
+    std::filesystem::path tmpPath(".batchfft-temp");
+    std::ofstream tmpFile (tmpPath, std::ios_base::out |
+                                    std::ios_base::binary |
+                                    std::ios_base::trunc );
 
-    GPUBuffer* curBuffer = buffers[1].get();
-    curBuffer -> state = BufferState::IMPORT;
-    readData( file_handles, curBuffer -> data.get(), 0, 
-              expectProg, progVar, curBuffer -> realPoints);
-    //TODO: add postprocessing here
-    curBuffer -> state = BufferState::PROCESS;
-    rotLock.lock();
-    std::swap(buffers[0], buffers[1]);
-    rotLock.unlock();
-    gpuRotate.notify_all();
+    while(segmentDescriptor.empty() || segmentDescriptor.back()[1] < VFSize)
+    {
+        GPUBuffer* curBuffer = buffers[1].get();
 
-    
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(10s);
+        curBuffer -> state = BufferState::IMPORT;
+        const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
+        readData( file_handles, curBuffer -> data.get(), begin, 
+                expectProg, progVar, curBuffer -> realPoints );
+        segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
+        //TODO: add postprocessing here
+        curBuffer -> state = BufferState::PROCESS;
+
+        rotLock.lock();
+        std::swap(buffers[0], buffers[1]);
+        rotLock.unlock();
+        gpuRotate.notify_all();
+    }
+ 
+    tmpFile.close();
 
     //deinit for debug
     for(auto& x: buffers)
@@ -815,6 +825,9 @@ int main(int argc, char** argv)
     gpuStreamThread.join();
     monitorOn = false;
     MonitorThread.join();
+
+    //clean up temp files
+    std::filesystem::remove( tmpPath );
 
     return 0;
 }
