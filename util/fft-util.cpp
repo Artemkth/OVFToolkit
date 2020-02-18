@@ -698,7 +698,7 @@ int main(int argc, char** argv)
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    float norm = 1./ (std::sqrt(gpuFFT.expectedLength()) * (times.back() - times.front()) );
+    float norm = std::sqrt(times.front() - times.back()) / (std::sqrt(gpuFFT.expectedLength()) );
     std::thread gpuStreamThread( [&] ()
     {
         while(true)
@@ -768,6 +768,7 @@ int main(int argc, char** argv)
 
         while(monitorOn)
         {
+            std::this_thread::sleep_for(150ms);
             //output through that handy dandy function
             std::string res {printTimeStamp( std::chrono::steady_clock::now() - beginTime )};
             if( res.length() < tStampPadding ) res += std::string( tStampPadding - res.length(), ' ');
@@ -781,11 +782,10 @@ int main(int argc, char** argv)
                 {prState += spin[i].CurState(); ++spin[i]; }
 
                 res += "Buffer[" + std::to_string(i) + "]: " + prState;
-                if(prState.length() < bufferPadding) res += std::string( bufferPadding - prState.length(), ' ' );
+                if(prState.length() < bufferPadding ) res += std::string( bufferPadding - prState.length(), ' ' );
             }
 
             monitor.update(res);
-            std::this_thread::sleep_for(150ms);
         }
     });
 
@@ -797,17 +797,30 @@ int main(int argc, char** argv)
     std::ofstream tmpFile (tmpPath, std::ios_base::out |
                                     std::ios_base::binary |
                                     std::ios_base::trunc );
+ 
+    auto exportData = [&] (GPUBuffer* buff)
+    {
+        tmpFile.write( (char*) buff -> data.get(), (tSeriesLength / 2 + 1) * buff -> realPoints * 2 * sizeof(float) / sizeof(std::ofstream::char_type) );
 
+        buff -> state = BufferState::WAIT;
+    };
+
+    //TODO: handle errors !
     while(segmentDescriptor.empty() || segmentDescriptor.back()[1] < VFSize)
     {
+        //gpu thread only lets swap happen after finishing working on data
+        //only when it has failed, or when it is the first run that the following isn't true
         GPUBuffer* curBuffer = buffers[1].get();
+        std::thread exporter;
+        if( curBuffer -> state == BufferState::EXPORT )
+            exportData( curBuffer );
+
 
         curBuffer -> state = BufferState::IMPORT;
         const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
         readData( file_handles, curBuffer -> data.get(), begin, 
                 expectProg, progVar, curBuffer -> realPoints );
         segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
-        //TODO: add postprocessing here
         curBuffer -> state = BufferState::PROCESS;
 
         rotLock.lock();
@@ -815,16 +828,25 @@ int main(int argc, char** argv)
         rotLock.unlock();
         gpuRotate.notify_all();
     }
- 
-    tmpFile.close();
+    //guaranteed to be filled after last rotation
+    exportData(buffers[1].get());
+    buffers[1] -> state = BufferState::STOP;
 
-    //deinit for debug
-    for(auto& x: buffers)
-        x -> state = BufferState::STOP;
+    //and wait for the last one to finish processing
+    rotLock.lock();
+    exportData(buffers[0].get());
+    buffers[0] -> state = BufferState::STOP;
+    rotLock.unlock();
+
     gpuRotate.notify_all();
     gpuStreamThread.join();
+
+    //deinit the monitor 
     monitorOn = false;
     MonitorThread.join();
+
+    //and close tmp file
+    tmpFile.close();
 
     //clean up temp files
     std::filesystem::remove( tmpPath );
