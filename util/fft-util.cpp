@@ -30,6 +30,9 @@
 //fft engines
 #include"cuda-backend.h"
 
+//assert macro
+#include<cassert>
+
 using fname_type = std::string;
 using namespace std::string_literals;
 
@@ -147,8 +150,7 @@ class CMDMonitor
         //update
         void update(const std::string& str)
         { 
-            if(!ready)
-                throw std::logic_error("Tried updating without initializing!");
+            assert(("Tried updating without initializing!", ready));
             out << str;
 
             if( str.length() > cCount )
@@ -161,8 +163,7 @@ class CMDMonitor
 
         void prependLine(const std::string& str)
         {
-            if(!ready)
-                throw std::logic_error("Tried updating without initializing!");
+            assert(("Tried updating without initializing!", ready));
             out << str;
 
             if( str.length() > cCount )
@@ -369,13 +370,121 @@ void readData( const std::vector<VField::VFieldFile>& handles, float* data,
         x.join();
 }
 
+//export into one yuge ovf with multiple segments, defaults to OVF version 2 trying to convert the headers
+//descriptor has list of ranges of points produced during fft transform, hostBuffer has first bufferCnt ranges in it,
+//the rest were written into file 'fileBuffer', freqInc gives the increment for frequencies in list of length cnt
+bool exportSpectrum( const std::filesystem::path& outputFile,
+                     const std::vector<std::array<std::size_t, 2>>& descriptor,
+                     const std::filesystem::path& fileBuffer,
+                     const VField::OVFHeader& commonHeader,
+                     std::size_t cnt,
+                     float freqInc,
+                     float const* hostBuffer = nullptr,
+                     std::size_t  ramBufferCnt  = 0,
+                     float const* irregCoords= nullptr
+        )
+{
+    std::ifstream fsBuffer(fileBuffer, std::ios_base::in | std::ios_base::binary);
+    if(!fsBuffer.good())
+    {
+        std::cerr << "Unable to open the buffer file: \"" << fileBuffer.c_str() << "\"!\n";
+        return false;
+    }
+    const auto mType = commonHeader.getMeshType(); 
+    const std::size_t vdim    = commonHeader.getUint( VField::OVFParameter::Vdim );
+    const std::size_t pntCnt  = commonHeader.expectedPoints() * vdim; //guaranteed to be set because constructed earlier
+    const std::size_t bufTotal= descriptor.size();
+    assert(("Incompatible array dimensions!\n", vdim % 2 == 0 && pntCnt == descriptor.back()[1] * 2));
+
+    //open output file
+    std::ofstream output(outputFile, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+    if(!output.good())
+    {
+        std::cerr << "Unable to open the output file: \"" << outputFile.c_str() << "\"!\n";
+        return false;
+    }
+
+    //data, later to be put into VField container, disposed by VField's destructor
+    float* data = new float[ commonHeader.expectedPoints() * commonHeader.expectedDimension() ];
+    //copy the coordinates if buffer is irregular
+    if(mType == VField::OVFHeader::MeshType::irregular)
+    {
+        assert(("Expected a coordinate field for transform", irregCoords != nullptr)); 
+        for(std::size_t i = 0; i < pntCnt; i++)
+            std::copy_n(irregCoords + i * 3, 3, data + i * (vdim + 3));
+    }
+
+    VField::VField field ( commonHeader );
+    field.insertData( data, commonHeader.expectedPoints() * commonHeader.expectedDimension() );
+    output << commonHeader.getString( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
+
+    for(std::size_t i = 0; i < cnt; i++)
+    {
+        //add frequency stamp to the file
+        std::string& desc { field.Header.at<VField::pType::String>( VField::OVFParameter::Desc ) };
+        if (!desc.empty()) desc += '\n';
+        desc += "f = " + std::to_string(freqInc * i) + " Hz";
+
+
+        //start copying data from mixed sources into vfield
+        for( std::size_t j = 0; j <  bufTotal; j++ )
+        {
+            //for a case when reading from file buffer
+            std::unique_ptr<float[]> importData;
+
+            std::size_t offset = 2 * descriptor[j][0];
+            std::size_t dist = 2 * ( descriptor[j][1] - descriptor[j][0] );
+            float* dest = (mType == VField::OVFHeader::MeshType::rectangular ? data + offset : data + (3 + vdim) * offset/vdim + 3 + offset % vdim);
+            const float* curSection { nullptr };
+            if( j < ramBufferCnt )
+                curSection = hostBuffer + ( offset * cnt + i * dist ) * vdim  + offset ; 
+            else
+            {
+                fsBuffer.ignore( i * sizeof(float)/sizeof(std::ofstream::char_type) * dist * vdim );
+
+                //reserve space for data
+                importData = std::make_unique<float[]>( dist );
+                fsBuffer.read( (std::ofstream::char_type*)importData.get(), sizeof(float)/sizeof(std::ofstream::char_type) * dist * vdim );
+                fsBuffer.ignore( (cnt - i - 1) * sizeof(float)/sizeof(std::ofstream::char_type) * dist * vdim );
+                curSection = importData.get();
+            }
+
+            //and copy data into destination buffer
+            if(mType == VField::OVFHeader::MeshType::rectangular)
+                std::copy_n(curSection, dist, dest);
+            else
+            {
+                std::size_t initRemainder {vdim - offset % vdim};
+                std::copy_n(curSection, initRemainder, dest);
+                dest += initRemainder;
+
+                std::size_t wholePts { (dist - initRemainder) / vdim };
+                for(std::size_t k = 0; k < wholePts; k++)
+                    std::copy_n(curSection + k * vdim + initRemainder, vdim, dest + (3 + vdim) * k);
+
+                //and copy the last part
+                std::copy_n(curSection + wholePts * vdim + initRemainder, (dist - initRemainder) % vdim, dest + (3 + vdim) * wholePts);
+            }
+        }
+
+        //seek to the beginning
+        fsBuffer.seekg(0, std::ios_base::beg);
+
+        //output the VField
+        output << '\n';
+        WriteSegment(output, field);
+    }
+
+    return true;
+}
+
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 int main(int argc, char** argv)
 {
-    cuFFTEngine gpuFFT; 
     std::vector<fname_type> fileList{};
     std::string TimeRegExStr {};
+    std::string oFileName {};
     //first parse command-line options
     try
     {
@@ -385,9 +494,10 @@ int main(int argc, char** argv)
         boost::program_options::options_description desc("Usage: ovf-batch [options] files...\nOptions");
         //populate options list
         desc.add_options()
-            ("help,h", "Produce this help message.")
-            ("version,v", "Get this software's version information.")
+            ("help,h", boost::program_options::bool_switch(), "Produce this help message.")
+            ("version,v", boost::program_options::bool_switch(), "Get this software's version information.")
             ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required(), "Time sequence of vector fields in .ovf files." )
+            ("output,o", boost::program_options::value<std::string>(&oFileName)->default_value("spectrum.ovf"), "Spectrum output file name.")
             ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.");
 
         //set position of input-files to automatically them without a switch
@@ -401,12 +511,12 @@ int main(int argc, char** argv)
         parser.positional(pos_desc);
         boost::program_options::store( parser.run(), vmap );
 
-        if(vmap.count("help")) 
+        if(vmap["help"].as<bool>())
         {
             std::cout << desc ;
             return 0;
         }
-        if(vmap.count("version"))
+        if(vmap["version"].as<bool>())
         {
             std::cout << "OVFToolkit time domain FFT batch processing utility ver. " << OVFTOOLKIT_VERSION_STRING << "\n";
             std::cout << "Copyright (C) 2020 Artem Bondarenko\n" ;
@@ -421,6 +531,7 @@ int main(int argc, char** argv)
         std::cerr << "Error while parsing command line: " << e.what() << "\n";
         return -1;
     }
+    cuFFTEngine gpuFFT;
 
     //try to validate file list beforehand
     std::size_t tSeriesLength = fileList.size();
@@ -698,7 +809,7 @@ int main(int argc, char** argv)
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    float norm = std::sqrt(times.front() - times.back()) / (std::sqrt(gpuFFT.expectedLength()) );
+    float norm = std::sqrt(times.back() - times.front()) / (std::sqrt(gpuFFT.expectedLength()) );
     std::thread gpuStreamThread( [&] ()
     {
         while(true)
@@ -847,6 +958,14 @@ int main(int argc, char** argv)
 
     //and close tmp file
     tmpFile.close();
+    auto head = file_handles.front().getSegmentHeader(0);
+    head.at<VField::pType::String>(VField::OVFParameter::VersionString) = "# OOMMF OVF 2.0";
+    if( head.isSet(VField::OVFParameter::Vdim) )
+        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) *= 2;
+    else
+        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = 6;
+
+    exportSpectrum( oFileName, segmentDescriptor, tmpPath, head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())), nullptr, 0, nullptr );
 
     //clean up temp files
     std::filesystem::remove( tmpPath );

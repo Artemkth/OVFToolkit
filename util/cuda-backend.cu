@@ -33,7 +33,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
     auto estimationError = cufftGetSizeMany(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, 1, cPoints,
+                &outArrSize, cPoints, 1,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
         return 0;
@@ -51,7 +51,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
         estimationError = cufftGetSizeMany(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, 1, cPoints,
+                &outArrSize, cPoints, 1,
                 CUFFT_R2C, batch_size, &estimate);
 
         if( estimationError != CUFFT_SUCCESS && estimationError != CUFFT_ALLOC_FAILED )
@@ -81,7 +81,7 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
     auto estimationError = cufftGetSizeMany64(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, 1, cPoints,
+                &outArrSize, cPoints, 1,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
         return 0;
@@ -99,7 +99,7 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
         estimationError = cufftGetSizeMany64(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, 1, cPoints,
+                &outArrSize, cPoints, 1,
                 CUFFT_R2C, batch_size, &estimate);
 
         if( estimationError != CUFFT_SUCCESS || estimationError != CUFFT_ALLOC_FAILED )
@@ -244,7 +244,7 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
         allocationError = cufftMakePlanMany64(
                 plan, 1, &len, 
                 &arrSize, newBatch, 1,
-                &outArrSize, 1, cPoints,
+                &outArrSize, cPoints, 1,
                 CUFFT_R2C, newBatch, &workSize);
     }
     else
@@ -257,7 +257,7 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
         allocationError = cufftMakePlanMany(
                 plan, 1, &len, 
                 &arrSize, newBatch, 1,
-                &outArrSize, 1, cPoints,
+                &outArrSize, cPoints, 1,
                 CUFFT_R2C, newBatch, &workSize);
     }
     if(allocationError != CUFFT_SUCCESS)

@@ -62,9 +62,11 @@ namespace VField{
             VField();
             explicit VField(const associatedType_t<pType::String>& version): VField()
             { Header.set(OVFParameter::VersionString, version); }
+            explicit VField(const OVFHeader& head) : VField()
+            { Header = head; }
             //constructors for fully populating the internals
             template<typename T>
-            explicit VField(const OVFHeader& head, std::size_t size = 0, const T* ref = nullptr) : VField()
+            explicit VField(const OVFHeader& head, std::size_t size, const T* ref) : VField()
             { Header = head; if(ref!=nullptr) setData(ref, size); }
             ~VField();
             //copy and move c-tors
