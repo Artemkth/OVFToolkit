@@ -79,7 +79,8 @@ namespace VField{
         VField operator[] (std::size_t ) const & noexcept;
         const OVFHeader& getSegmentHeader(std::size_t ) const &;
         //you can free internal storage by yourself if needed to, since you have the explicit access
-        bool isFetched(const std::size_t& ) const noexcept;
+        bool isFetched(std::size_t ) const noexcept;
+        bool hasData(std::size_t ) const noexcept;
         
         //slice read operations
         //first slice along the internal point count, array returned is only weakly addressable

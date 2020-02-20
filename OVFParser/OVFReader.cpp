@@ -74,15 +74,21 @@ namespace VField{
     std::size_t VFieldFile::cntSegments() const noexcept
     { return data->segments.size();}
     //check if some data exists
-    bool VFieldFile::isFetched(const std::size_t& index) const noexcept
+    bool VFieldFile::isFetched(std::size_t index) const noexcept
     {
         if(index >= data->segments.size())
-        {
-            logMessage((std::string)"VFieldFile::isFetched: Index '" + std::to_string(index) +
-                    "' is out of range [0, " + std::to_string(data->segments.size()) + ')');
             return false;
-        }
         return std::get<0>(data->segments[index]).isDataPresent();
+    }
+    bool VFieldFile::hasData(std::size_t index) const noexcept
+    {
+        if(index >= data->segments.size())
+            return false;
+        if( std::get<0>(data->segments[index]).isDataPresent() )
+            return true;
+        //otherwise return if the data was found during prefetch
+        return std::get<1>(data->segments[index]).has_value() &&
+               std::get<2>(data->segments[index]) != 0;
     }
 
     //translate slice into range specifier

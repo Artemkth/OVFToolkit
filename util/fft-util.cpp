@@ -64,7 +64,7 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
         {
             handle.read( *begin, true ); //only fetch the header, TODO: check if I want to output some file errors in here
             //if file is not single segment, give up LULW
-            if( handle.cntSegments()!=1 )
+            if( handle.cntSegments() != 1 )
             {
                 std::cerr << "Encountered bad segment count in file: \"" << *begin << "\": " << handle.cntSegments() << "\n";
                 results.push_back({std::nullopt, {}});
@@ -103,15 +103,16 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
     progCnt = 0;
     std::vector<std::future<
         std::vector< std::pair<std::optional<double>, VField::VFieldFile> >
-        >> resultFuture{}; resultFuture.reserve(tCount);
+        >> resultFuture{}; resultFuture.reserve(tCount - 1);
     //initialize with async, last future is set to deferred to not waste a good thread LULW
     for(std::size_t i = 0; i < tCount - 1; i++)
         resultFuture.push_back(std::async( std::launch::async, worker, i));
     //alternative is creating promise and then forwarding result through it
-    resultFuture.push_back( std::async( std::launch::deferred, worker, tCount - 1) );
+    auto mainThreadRes = worker( tCount - 1);
     std::vector< std::vector<std::pair<std::optional<double>, VField::VFieldFile>> > results{}; results.reserve(tCount);
     for(auto& x: resultFuture)
         results.push_back( x.get() );
+    results.push_back(std::move(mainThreadRes));
 
     //and reshape data to fill in the return structure
     std::vector<std::optional<double>> times{};   times.reserve(fCount);
@@ -140,6 +141,8 @@ class CMDMonitor
 
         void pad_n(std::size_t n)
         {out << std::string(n, ' ');}
+        void erase_n(std::size_t n)
+        {out << std::string(n, '\b');}
 
     public:
         CMDMonitor(std::ostream& out_): out(out_), ready(true), cCount(0) { out << cOff;}
@@ -175,16 +178,16 @@ class CMDMonitor
 };
 
 //getting *fancy* with ASCII :D
-class Spiner 
+class Spinner 
 {
     static constexpr const std::array<char, 4> charCycle {'-', '\\', '|', '/'};
     std::array<char, 4>::const_iterator currentState = charCycle.begin();
 
 public:
-    Spiner& operator++()
+    Spinner& operator++()
     { ++currentState; if(currentState == charCycle.end()) currentState = charCycle.begin(); return *this; }
 
-    friend std::ostream& operator << (std::ostream& out, const Spiner& spin)
+    friend std::ostream& operator << (std::ostream& out, const Spinner& spin)
     { out << *spin.currentState; return out; }
 
     char CurState() const 
@@ -530,7 +533,8 @@ int main(int argc, char** argv)
         std::cerr << "Error while parsing command line: " << e.what() << "\n";
         return -1;
     }
-    cuFFTEngine gpuFFT;
+    //virtual class so I can use fftw instead if I want to
+    std::unique_ptr<FFTEngine<float>> fft_engine(new cuFFTEngine());
 
     //try to validate file list beforehand
     std::size_t tSeriesLength = fileList.size();
@@ -703,14 +707,14 @@ int main(int argc, char** argv)
         //begin initialization of engines outside main thread once dimensions are known
         auto GPUBuffersInit = [&] ()
         {
-            auto res = gpuFFT.Init( tSeriesLength, VFSize, 0 );
-            auto cPoints = gpuFFT.expectedBatch() * (gpuFFT.expectedLength()/2 + 1);
-            if( gpuFFT.isReady() )
+            auto res = fft_engine -> Init( tSeriesLength, VFSize, 0 );
+            auto cPoints = fft_engine -> expectedBatch() * (fft_engine -> expectedLength()/2 + 1);
+            if( fft_engine -> isReady() )
                 for( auto& x: buffers )
                 {
                     x = std::make_unique<GPUBuffer> ();
                     x -> nSize = 2 * cPoints;
-                    x -> realPoints = gpuFFT.expectedBatch();
+                    x -> realPoints = fft_engine -> expectedBatch();
                     x -> data = std::make_unique<float[]>( x->nSize );
                 }
 
@@ -808,7 +812,7 @@ int main(int argc, char** argv)
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    //float norm = std::sqrt(times.back() - times.front()) / (std::sqrt(gpuFFT.expectedLength()) );
+    //float norm = std::sqrt(times.back() - times.front()) / (std::sqrt(fft_engine -> expectedLength()) );
     float norm = 1.0f;
     std::thread gpuStreamThread( [&] ()
     {
@@ -824,8 +828,8 @@ int main(int argc, char** argv)
             //do the data transform
             auto curBuffer = buffers[0].get();
 
-            if( !gpuFFT.isReady() || curBuffer -> nSize < gpuFFT.expectedLength() || curBuffer -> nSize > 2 * gpuFFT.expectedLength() * gpuFFT.expectedBatch() || 
-                !gpuFFT.RunTransform(curBuffer -> data.get(), norm, gpuFFT.expectedBatch() - curBuffer -> realPoints ))
+            if( !fft_engine -> isReady() || curBuffer -> nSize < fft_engine -> expectedLength() || curBuffer -> nSize > 2 * fft_engine -> expectedLength() * fft_engine -> expectedBatch() || 
+                !fft_engine -> RunTransform(curBuffer -> data.get(), norm, fft_engine -> expectedBatch() - curBuffer -> realPoints ))
             {
                 curBuffer -> state = BufferState::FAIL;
                 return; //stop if failure was encountered
@@ -874,7 +878,7 @@ int main(int argc, char** argv)
         const int tStampPadding { 10 };
         const int bufferPadding { 25 };
 
-        Spiner spin[2];
+        Spinner spin[2];
         CMDMonitor monitor(std::cout);
 
         while(monitorOn)
@@ -901,7 +905,7 @@ int main(int argc, char** argv)
     });
 
     //after this main thread works with I/O
-    const auto BatchSize = gpuFFT.expectedBatch();
+    const auto BatchSize = fft_engine -> expectedBatch();
     std::vector<std::array<std::size_t, 2>> segmentDescriptor;
     //open a temporary file for outputting results of fft
     std::filesystem::path tmpPath(".batchfft-temp");
