@@ -330,7 +330,7 @@ void readData( const std::vector<VField::VFieldFile>& handles, float* data,
     const auto pts   = head.expectedPoints();
     const auto len   = handles.size();
     const auto vdim  = dim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3);
-    impLen= std::min( impLen, vdim * pts - offset );
+    impLen = std::min( impLen, vdim * pts - offset );
     progMax = impLen * len;
 
     const auto concHint = std::thread::hardware_concurrency();
@@ -338,7 +338,7 @@ void readData( const std::vector<VField::VFieldFile>& handles, float* data,
 
     //for irregular meshes offset skips over coordinate tripplets
     const auto adjBegin  = (mType == VField::OVFHeader::MeshType::rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
-    const auto adjEnd    = (mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim )/dim + 1;
+    const auto adjEnd    = ((mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim + 1;
 
     auto importer = [&] (std::size_t off)
     {
