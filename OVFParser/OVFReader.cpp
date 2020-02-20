@@ -724,7 +724,7 @@ namespace VField{
                     }
                     //then seek the first value
                     file.ignore(begin * advertisedDim * sizeof(float) / sizeof(std::istream::char_type));
-                    const std::size_t importDepth {importWhole? cnt : ((end - begin) * advertisedDim)};
+                    const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
                     auto buffer = new float[importDepth];
                     file.read(reinterpret_cast<std::istream::char_type*>(buffer), 
                               importDepth * sizeof(float)/sizeof(std::istream::char_type));

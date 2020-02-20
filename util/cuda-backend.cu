@@ -231,6 +231,7 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
         return 0;
 
     cudaFree( data ); data = nullptr;
+    cufftDestroy(plan); cufftCreate(&plan);
 
     std::size_t workSize {};
     cufftResult allocationError{};
