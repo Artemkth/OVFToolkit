@@ -382,7 +382,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                      float const* hostBuffer = nullptr,
                      std::size_t  ramBufferCnt  = 0,
                      float const* irregCoords= nullptr
-        )
+                   )
 {
     std::ifstream fsBuffer(fileBuffer, std::ios_base::in | std::ios_base::binary);
     if(!fsBuffer.good())
@@ -421,10 +421,8 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     for(std::size_t i = 0; i < cnt; i++)
     {
         //add frequency stamp to the file
-        std::string& desc { field.Header.at<VField::pType::String>( VField::OVFParameter::Desc ) };
-        if (!desc.empty()) desc += '\n';
-        desc += "f = " + std::to_string(freqInc * i) + " Hz";
-
+        const std::string& desc { commonHeader.getString( VField::OVFParameter::Desc) };
+        field.Header.set( VField::OVFParameter::Desc, desc + (!desc.empty()? '\n' : '\0')+ "f = " + std::to_string(freqInc * i) + " Hz");
 
         //start copying data from mixed sources into vfield
         for( std::size_t j = 0; j <  bufTotal; j++ )
@@ -440,12 +438,12 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                 curSection = hostBuffer + ( offset * cnt + i * dist ) * vdim  + offset ; 
             else
             {
-                fsBuffer.ignore( i * sizeof(float)/sizeof(std::ofstream::char_type) * dist * vdim );
+                fsBuffer.ignore( i * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
 
                 //reserve space for data
                 importData = std::make_unique<float[]>( dist );
-                fsBuffer.read( (std::ofstream::char_type*)importData.get(), sizeof(float)/sizeof(std::ofstream::char_type) * dist * vdim );
-                fsBuffer.ignore( (cnt - i - 1) * sizeof(float)/sizeof(std::ofstream::char_type) * dist * vdim );
+                fsBuffer.read( (std::ofstream::char_type*)importData.get(), sizeof(float)/sizeof(std::ofstream::char_type) * dist );
+                fsBuffer.ignore( (cnt - i - 1) * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
                 curSection = importData.get();
             }
 
@@ -498,6 +496,7 @@ int main(int argc, char** argv)
             ("version,v", boost::program_options::bool_switch(), "Get this software's version information.")
             ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required(), "Time sequence of vector fields in .ovf files." )
             ("output,o", boost::program_options::value<std::string>(&oFileName)->default_value("spectrum.ovf"), "Spectrum output file name.")
+            ("max-ram", boost::program_options::value<std::string>(), "Maximum ammount of RAM allocated on host machine for buffers.")
             ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.");
 
         //set position of input-files to automatically them without a switch
@@ -809,7 +808,8 @@ int main(int argc, char** argv)
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    float norm = std::sqrt(times.back() - times.front()) / (std::sqrt(gpuFFT.expectedLength()) );
+    //float norm = std::sqrt(times.back() - times.front()) / (std::sqrt(gpuFFT.expectedLength()) );
+    float norm = 1.0f;
     std::thread gpuStreamThread( [&] ()
     {
         while(true)
@@ -922,9 +922,14 @@ int main(int argc, char** argv)
         //gpu thread only lets swap happen after finishing working on data
         //only when it has failed, or when it is the first run that the following isn't true
         GPUBuffer* curBuffer = buffers[1].get();
-        std::thread exporter;
         if( curBuffer -> state == BufferState::EXPORT )
             exportData( curBuffer );
+        if( buffers[0] -> state == BufferState::FAIL ||
+            buffers[1] -> state == BufferState::FAIL )
+        {
+            std::cerr << "GPU thread failed!\n";
+            return -1;
+        }
 
 
         curBuffer -> state = BufferState::IMPORT;
@@ -951,6 +956,8 @@ int main(int argc, char** argv)
 
     gpuRotate.notify_all();
     gpuStreamThread.join();
+    for(auto& x : buffers)
+        x.reset();
 
     //deinit the monitor 
     monitorOn = false;

@@ -27,13 +27,13 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
 {
     int cPoints = len/2 + 1;
     int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) * cPoints), maxBatch );
-    int arrSize { batch_size * cPoints * 2 };
+    int arrSize { batch_size * len };
     int outArrSize { batch_size * cPoints }; //rounds down
     std::size_t estimate{};
     auto estimationError = cufftGetSizeMany(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, cPoints, 1,
+                &outArrSize, batch_size, 1,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
         return 0;
@@ -46,12 +46,12 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
     bool isFitting = true; std::size_t cnt {0};
     while(batch_size > 0 && batch_size <= maxBatch)
     {
-        arrSize = batch_size * cPoints * 2;
+        arrSize = batch_size * len;
         outArrSize = batch_size * cPoints; //rounds down
         estimationError = cufftGetSizeMany(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, cPoints, 1,
+                &outArrSize, batch_size, 1,
                 CUFFT_R2C, batch_size, &estimate);
 
         if( estimationError != CUFFT_SUCCESS && estimationError != CUFFT_ALLOC_FAILED )
@@ -75,13 +75,13 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
 {
     long long int cPoints = len/2 + 1;
     long long int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) *  cPoints), maxBatch );
-    long long int arrSize { batch_size * cPoints * 2 };
+    long long int arrSize { batch_size * len };
     long long int outArrSize { batch_size * cPoints }; //rounds down
     std::size_t estimate{};
     auto estimationError = cufftGetSizeMany64(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, cPoints, 1,
+                &outArrSize, batch_size, 1,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
         return 0;
@@ -94,12 +94,12 @@ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, st
     bool isFitting = true; std::size_t cnt {0};
     while(batch_size > 0 && batch_size <= maxBatch)
     {
-        arrSize = batch_size * cPoints * 2;
+        arrSize = batch_size * len;
         outArrSize = batch_size * cPoints; //rounds down
         estimationError = cufftGetSizeMany64(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
-                &outArrSize, cPoints, 1,
+                &outArrSize, batch_size, 1,
                 CUFFT_R2C, batch_size, &estimate);
 
         if( estimationError != CUFFT_SUCCESS || estimationError != CUFFT_ALLOC_FAILED )
@@ -238,26 +238,26 @@ std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
     {
         long long int len = fftLength;
         long long int cPoints = fftLength/2 + 1;
-        long long int arrSize = newBatch * cPoints * 2;
+        long long int arrSize = newBatch * fftLength;
         long long int outArrSize = newBatch * cPoints ;
 
         allocationError = cufftMakePlanMany64(
                 plan, 1, &len, 
                 &arrSize, newBatch, 1,
-                &outArrSize, cPoints, 1,
+                &outArrSize, newBatch, 1,
                 CUFFT_R2C, newBatch, &workSize);
     }
     else
     {
         int len = fftLength;
         int cPoints = fftLength/2 + 1;
-        int arrSize = newBatch * cPoints * 2;
-        int outArrSize = newBatch * cPoints;
+        int arrSize =  newBatch * fftLength;
+        int outArrSize =  newBatch * cPoints;
 
         allocationError = cufftMakePlanMany(
                 plan, 1, &len, 
                 &arrSize, newBatch, 1,
-                &outArrSize, cPoints, 1,
+                &outArrSize, newBatch, 1,
                 CUFFT_R2C, newBatch, &workSize);
     }
     if(allocationError != CUFFT_SUCCESS)
@@ -301,7 +301,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     {
         constexpr const std::size_t maxPerBDim { 65535 };
         dim3 threadPerBlock( 16, 16 );
-        const std::size_t bCount { (nBatchSize + 255) / 256 };//block count is rounded up
+        const std::size_t bCount { ( nBatchSize * 2 * (fftLength/2 + 1) + 255 ) / 256 };//block count is rounded up
         if( bCount <= maxPerBDim ) // max ~64MB
         {
             int bLineSize = bCount;
