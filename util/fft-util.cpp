@@ -143,6 +143,9 @@ class CMDMonitor
         {out << std::string(n, ' ');}
         void erase_n(std::size_t n)
         {out << std::string(n, '\b');}
+        //TODO: screw emoji
+        std::size_t cntUnicodePts(const std::string& ref)
+        { return std::count_if( ref.begin(), ref.end(), [](char c){ return 0xC0&c != 0x80; }); };
 
     public:
         CMDMonitor(std::ostream& out_): out(out_), ready(true), cCount(0) { out << cOff;}
@@ -152,28 +155,33 @@ class CMDMonitor
 
         //update
         void update(const std::string& str)
-        { 
+        {
             assert(("Tried updating without initializing!", ready));
-            out << str;
+            out << '\r' << str;
+            auto nCount = cntUnicodePts(str);
 
-            if( str.length() > cCount )
+            if( nCount > cCount )
+            {
                 pad_n( str.length() - cCount );
-            out << '\r' << std::flush;
+                erase_n( str.length() - cCount );
+            }
+            out << std::flush;
 
-            cCount = str.length();
+            cCount = nCount;
             lineData = str;//store a copy just in case
         }
 
         void prependLine(const std::string& str)
         {
             assert(("Tried updating without initializing!", ready));
-            out << str;
+            out << '\r' << str;
+            auto nCount = cntUnicodePts(str);
 
-            if( str.length() > cCount )
+            if( nCount > cCount )
                 pad_n( str.length() - cCount );
             out << '\n';
 
-            out << lineData << '\r' << std::flush;
+            out << lineData << std::flush;
         }
 };
 
@@ -479,6 +487,30 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     return true;
 }
 
+std::size_t parseMemSize(const std::string& sizeSpec)
+{
+    char *after{nullptr};
+    auto size = strtod(sizeSpec.c_str(), &after);
+    //if no conversion was done it throw an exception
+    if( sizeSpec.c_str() == after )
+        throw std::invalid_argument( "Memory specification \"" + sizeSpec + "\" is non-numeric!" );
+
+    if( *after == '\0' || *(after+1) != '\0' )
+        throw std::invalid_argument( "Unknown memory size suffix \""s + after + "\", expected K, M or G." );
+
+    switch(*after)
+    {
+        case 'K':
+            return std::round(size * 1024);
+        case 'M':
+            return std::round(size * 1024 * 1024);
+        case 'G':
+            return std::round(size * 1042 * 1024 * 1024);
+        default:
+            throw std::invalid_argument( "Unknown memory size suffix \""s + after + "\", expected K, M or G." );
+    }
+}
+
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 int main(int argc, char** argv)
@@ -486,6 +518,11 @@ int main(int argc, char** argv)
     std::vector<fname_type> fileList{};
     std::string TimeRegExStr {};
     std::string oFileName {};
+
+    //system configuration
+    int gpu { -1 };
+    std::optional<std::size_t> maxRam{};
+    std::optional<std::size_t> maxVRam{};
     //first parse command-line options
     try
     {
@@ -497,9 +534,11 @@ int main(int argc, char** argv)
         desc.add_options()
             ("help,h", boost::program_options::bool_switch(), "Produce this help message.")
             ("version,v", boost::program_options::bool_switch(), "Get this software's version information.")
-            ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required(), "Time sequence of vector fields in .ovf files." )
+            ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required( ), "Time sequence of vector fields in .ovf files." )
             ("output,o", boost::program_options::value<std::string>(&oFileName)->default_value("spectrum.ovf"), "Spectrum output file name.")
-            ("max-ram", boost::program_options::value<std::string>(), "Maximum ammount of RAM allocated on host machine for buffers.")
+            ("gpu", boost::program_options::value<int>(&gpu)->default_value(-1), "GPU id for CUDA fft.")
+            ("max-ram", boost::program_options::value<std::string>()->notifier([&maxRam](const std::string& sizeSpec){ maxRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on host machine for buffers.")
+            ("max-vram", boost::program_options::value<std::string>()->notifier([&maxVRam](const std::string& sizeSpec){ maxVRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on GPU for transform.")
             ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.");
 
         //set position of input-files to automatically them without a switch
@@ -960,6 +999,7 @@ int main(int argc, char** argv)
 
     gpuRotate.notify_all();
     gpuStreamThread.join();
+    fft_engine.reset();
     for(auto& x : buffers)
         x.reset();
 

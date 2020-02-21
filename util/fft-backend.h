@@ -10,6 +10,9 @@ class FFTEngine
         bool fail {false};
 
     public:
+        //should always have a destructor to free the resources
+        virtual ~FFTEngine() = default;
+
         //return expected batch sizes after initialization was done
         std::size_t expectedBatch() const noexcept
         { return batchSize; }
