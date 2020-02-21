@@ -431,11 +431,12 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     field.insertData( data, commonHeader.expectedPoints() * commonHeader.expectedDimension() );
     output << commonHeader.getString( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
 
+    auto& desc = field.Header.at<VField::pType::String>( VField::OVFParameter::Desc );
+
     for(std::size_t i = 0; i < cnt; i++)
     {
         //add frequency stamp to the file
-        const std::string& desc { commonHeader.getString( VField::OVFParameter::Desc) };
-        field.Header.set( VField::OVFParameter::Desc, desc + (!desc.empty()? '\n' : '\0')+ "f = " + std::to_string(freqInc * i) + " Hz");
+        field.Header.set( VField::OVFParameter::Desc, desc + (!desc.empty()? "\n" : "")+ "f = " + std::to_string(freqInc * i) + " Hz");
 
         //start copying data from mixed sources into vfield
         for( std::size_t j = 0; j <  bufTotal; j++ )
@@ -514,6 +515,93 @@ std::size_t parseMemSize(const std::string& sizeSpec)
             return std::lround(size * 1024 * 1024 * 1024);
         default:
             throw std::invalid_argument( "Unknown memory size suffix \""s + after + "\", expected K, M or G." );
+    }
+}
+
+//transform a header into one suitable for data transformed into frequency domain 
+void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
+{
+    //mandatory to set version to OVF 2.0, because others don't support vdim != 3
+    head.at<VField::pType::String>(VField::OVFParameter::VersionString) = "# OOMMF OVF 2.0";
+
+    //change value dimension accordingly
+    if( head.isSet(VField::OVFParameter::Vdim) )
+        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) *= 2;
+    else
+        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = 6;
+
+    //delete the whole line with timestamp from description
+    if( head.isSet(VField::OVFParameter::Desc) )
+    {
+        std::regex tStampLineNLine("\\n.*"s + tStampPattern + ".*\\n", //matches internal lines
+             std::regex_constants::ECMAScript | std::regex_constants::nosubs);
+        std::regex tStampLineDel("(^|\\n).*"s + tStampPattern + ".*($|\\n)", //matches all lines
+             std::regex_constants::ECMAScript | std::regex_constants::nosubs);
+
+        auto& desc = head.at<VField::pType::String>(VField::OVFParameter::Desc);
+        desc = std::regex_replace( desc, tStampLineNLine, "\n" ); //replace internal lines by newline symbol
+        desc = std::regex_replace( desc, tStampLineDel, "" );     //and delete the rest of the line types
+
+        if( desc.empty() )
+            head.reset(VField::OVFParameter::Desc);
+    }
+
+    //generate new value labels and units if old ones were present and compliant with standard
+    if( head.isSet(VField::OVFParameter::Vlabels) || head.isSet(VField::OVFParameter::Vunit) )
+    {
+        std::regex tokenPattern("^\\s*(\".*?\"|[^\\s]+)(?:\\s+|$)");
+        auto Tokenize = [&head, &tokenPattern](VField::OVFParameter p)
+        {
+            std::vector<std::string> tokens{};
+            auto str = head.getString(p);
+
+            std::smatch matchRes;
+            while(std::regex_search(str, matchRes, tokenPattern))
+            {
+                tokens.push_back(matchRes[1]);
+                str = matchRes.suffix();
+            }
+
+            return tokens;
+        };
+
+        if( head.isSet(VField::OVFParameter::Vlabels) )
+        {
+            auto ValueLabels = Tokenize(VField::OVFParameter::Vlabels);
+            auto& labelString = head.at<VField::pType::String>(VField::OVFParameter::Vlabels);
+            labelString = "";
+
+            for(const auto& x: ValueLabels)
+            {
+                bool isQuoted = x.front() == '\"';
+
+                if( !labelString.empty() ) labelString += " ";
+                labelString += (isQuoted? "\""s : ""s) + "Re{" + (isQuoted? x.substr(2, x.length() - 1) : x) + "}" + (isQuoted? "\" " : " ");
+                labelString += (isQuoted? "\""s : ""s) + "Im{" + (isQuoted? x.substr(2, x.length() - 1) : x) + "}" + (isQuoted? "\"" : "");
+            }
+        }
+        if( head.isSet(VField::OVFParameter::Vunit) )
+        {
+            auto ValueUnits = Tokenize(VField::OVFParameter::Vunit);
+            if( ValueUnits.size() != 1 )
+            {
+                auto& unitString = head.at<VField::pType::String>(VField::OVFParameter::Vunit);
+                unitString = "";
+
+                for(const auto& x: ValueUnits) //double all units
+                {
+                    if( !unitString.empty() ) unitString += " ";
+                    unitString += x + " " + x;
+                }
+            }
+        }
+    }
+
+    //add message about transform into title
+    if( head.isSet(VField::OVFParameter::Title) )
+    {
+        auto& title = head.at<VField::pType::String> (VField::OVFParameter::Title);
+        title = "Temporal Fourier transform of \""s + title + "\"";
     }
 }
 
@@ -1039,12 +1127,17 @@ int main(int argc, char** argv)
         lock.unlock();
         gpuRotate.notify_all();
     }
+    if(buffers[1] -> state == BufferState::FAIL)
+    {
+        std::cerr << "GPU thread failed!\n";
+        return -1;
+    }
+    buffers[1] -> state = BufferState::STOP;
 
     //and wait for the last one to finish processing
     std::unique_lock<std::mutex> lock(rotLock);
     gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL;});
-    for(auto& x: buffers)
-        x -> state = BufferState::STOP;
+    buffers[0] -> state = BufferState::STOP;
     lock.unlock();
 
     gpuRotate.notify_all();
@@ -1058,11 +1151,7 @@ int main(int argc, char** argv)
     //and close tmp file
     tmpFile.close();
     auto head = file_handles.front().getSegmentHeader(0);
-    head.at<VField::pType::String>(VField::OVFParameter::VersionString) = "# OOMMF OVF 2.0";
-    if( head.isSet(VField::OVFParameter::Vdim) )
-        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) *= 2;
-    else
-        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = 6;
+    transformHeader( head, TimeRegExStr ); 
 
     exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
                     head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())),

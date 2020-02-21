@@ -798,7 +798,7 @@ namespace VField{
                     auto sub = rule(*this);
                     if(sub.first)
                     {
-                        Header.unset(p);
+                        Header.reset(p);
                         Header.set(p, sub.second);
                         return true;
                     }
@@ -812,7 +812,7 @@ namespace VField{
                         auto sub = rule(*this);
                         if(sub.first)
                         {
-                            Header.unset(p);
+                            Header.reset(p);
                             Header.set(p, sub.second);
                             return true;
                         }
@@ -829,7 +829,7 @@ namespace VField{
                     auto sub = rule(*this);
                     if(sub.first)
                     {
-                        Header.unset(p);
+                        Header.reset(p);
                         Header.set(p, sub.second);
                         return true;
                     }
@@ -843,7 +843,7 @@ namespace VField{
                         auto sub = rule(*this);
                         if(sub.first)
                         {
-                            Header.unset(p);
+                            Header.reset(p);
                             Header.set(p, sub.second);
                             return true;
                         }
@@ -860,7 +860,7 @@ namespace VField{
                     auto sub = rule(*this);
                     if(sub.first)
                     {
-                        Header.unset(p);
+                        Header.reset(p);
                         if(sub.second != "")
                             Header.set(p, sub.second);
                         return true;
@@ -875,7 +875,7 @@ namespace VField{
                         auto sub = rule(*this);
                         if(sub.first)
                         {
-                            Header.unset(p);
+                            Header.reset(p);
                             if(sub.second != "")
                                 Header.set(p, sub.second);
                             return true;
@@ -954,7 +954,7 @@ namespace VField{
         auto version = matchVersionString(Header.getString(OVFParameter::VersionString));
         if(version == OVFVersion::OVF1 || version == OVFVersion::OVF2)
             for(const auto& par: OVFOptional)
-                Header.unset(par);
+                Header.reset(par);
         return;
     }
 }

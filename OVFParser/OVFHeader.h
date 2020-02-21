@@ -112,7 +112,7 @@ namespace VField{
         void set(OVFParameter, const associatedType_t<pType::Float>& );
         
         //unset a value
-        void unset(OVFParameter) noexcept;
+        void reset(OVFParameter) noexcept;
         
         //mesh type
         MeshType getMeshType() const noexcept;

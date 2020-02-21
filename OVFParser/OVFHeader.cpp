@@ -228,7 +228,7 @@ namespace VField{
     {data->reset();data->isChecked = false;};
 
     //unset a parameter
-    void OVFHeader::unset(OVFParameter p) noexcept
+    void OVFHeader::reset(OVFParameter p) noexcept
     {
         switch(paramIndex(p))
         {
