@@ -160,8 +160,8 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
            +  printMemSize( props.totalGlobalMem ) + "s of global memory on device." ;
     if(maxMem > props.totalGlobalMem)
     {
-        result += "\nWarning: Device doesn't have memory requested: " + printMemSize( maxMem ) + ", defaulting to total GPU memory.";
-        maxMem = props.totalGlobalMem;
+        result += "\nWarning: Device doesn't have memory requested: " + printMemSize( maxMem ) + ", defaulting to 95% of total GPU memory.";
+        maxMem = 0.95 * props.totalGlobalMem;
     }
     if(maxMem == 0) maxMem = 0.95 * props.totalGlobalMem; //defaulting to 95% of available VRAM
 
@@ -216,7 +216,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     if( workSize == 0 )
     {
         fail = true;
-        return result + "\nFailed to allcate work assets in VRAM, tried to go with " + printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + "batches.";
+        return result + "\nFailed to allcate work assets in VRAM, tried to go with " + printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + " batches.";
     }
 
     return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + 

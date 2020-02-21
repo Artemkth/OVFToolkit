@@ -163,6 +163,7 @@ class CMDMonitor
             if( nCount > cCount )
             {
                 pad_n( str.length() - cCount );
+                out << std::flush;
                 erase_n( str.length() - cCount );
             }
             out << std::flush;
@@ -387,6 +388,7 @@ void readData( const std::vector<VField::VFieldFile>& handles, float* data,
 bool exportSpectrum( const std::filesystem::path& outputFile,
                      const std::vector<std::array<std::size_t, 2>>& descriptor,
                      const std::filesystem::path& fileBuffer,
+                     float const* n2last_buffer, float const* last_buffer,
                      const VField::OVFHeader& commonHeader,
                      std::size_t cnt,
                      float freqInc,
@@ -446,15 +448,19 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
             float* dest = (mType == VField::OVFHeader::MeshType::rectangular ? data + offset : data + (3 + vdim) * offset/vdim + 3 + offset % vdim);
             const float* curSection { nullptr };
             if( j < ramBufferCnt )
-                curSection = hostBuffer + ( offset * cnt + i * dist ) * vdim  + offset ; 
+                curSection = hostBuffer + cnt * offset + i * dist; 
+            else if( j == bufTotal - 2 || bufTotal == 1 )//TODO: check behaviour with only single buffer of work
+                curSection = n2last_buffer + i * dist;
+            else if( j == bufTotal - 1 )
+                curSection = last_buffer + i * dist;
             else
             {
-                fsBuffer.ignore( i * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
+                fsBuffer.ignore( (i - ramBufferCnt) * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
 
                 //reserve space for data
                 importData = std::make_unique<float[]>( dist );
                 fsBuffer.read( (std::ofstream::char_type*)importData.get(), sizeof(float)/sizeof(std::ofstream::char_type) * dist );
-                fsBuffer.ignore( (cnt - i - 1) * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
+                fsBuffer.ignore( (cnt - i - 1 - ramBufferCnt) * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
                 curSection = importData.get();
             }
 
@@ -501,11 +507,11 @@ std::size_t parseMemSize(const std::string& sizeSpec)
     switch(*after)
     {
         case 'K':
-            return std::round(size * 1024);
+            return std::lround(size * 1024);
         case 'M':
-            return std::round(size * 1024 * 1024);
+            return std::lround(size * 1024 * 1024);
         case 'G':
-            return std::round(size * 1042 * 1024 * 1024);
+            return std::lround(size * 1024 * 1024 * 1024);
         default:
             throw std::invalid_argument( "Unknown memory size suffix \""s + after + "\", expected K, M or G." );
     }
@@ -573,7 +579,8 @@ int main(int argc, char** argv)
         return -1;
     }
     //virtual class so I can use fftw instead if I want to
-    std::unique_ptr<FFTEngine<float>> fft_engine(new cuFFTEngine());
+    std::unique_ptr<FFTEngine<float>> fft_engine(new cuFFTEngine(gpu));
+    std::future<std::string> engineInit{};
 
     //try to validate file list beforehand
     std::size_t tSeriesLength = fileList.size();
@@ -602,7 +609,6 @@ int main(int argc, char** argv)
             return 1;
         }
     }
-    std::future<std::string> gpuInit{};
 
     //evaluation monitors
     std::atomic<std::size_t> importedCount {};
@@ -647,7 +653,13 @@ int main(int argc, char** argv)
     auto t_before = std::chrono::steady_clock::now();
     auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
     auto t_after = std::chrono::steady_clock::now();
-    watch.join(); //TODO: check how it will fail if importedCount != tSeriesLength
+    if( importedCount != tSeriesLength )
+    {
+        std::cerr << "Failed to import one or more files, aborting!\n";
+        importedCount = tSeriesLength; watch.join();
+        return -1;
+    }
+    watch.join();
 
     std::vector<double> times{}; times.reserve( tSeriesLength );
     std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
@@ -730,6 +742,14 @@ int main(int argc, char** argv)
 
     std::size_t VFSize{};
     std::unique_ptr<struct GPUBuffer> buffers[2]; //tripple buffering, yay
+    struct {
+        std::unique_ptr<float[]> data{};
+        std::size_t cnt{};
+
+        //occupied buffer count
+        std::size_t occup{};
+    } CollectorBuffer; //anonymous struct with data for buffer
+
     {
         //check if internal dimensions are compatible
         const auto expDim = file_handles.front().getSegmentHeader(0).expectedDimension();
@@ -746,20 +766,35 @@ int main(int argc, char** argv)
         //begin initialization of engines outside main thread once dimensions are known
         auto GPUBuffersInit = [&] ()
         {
-            auto res = fft_engine -> Init( tSeriesLength, VFSize, 0 );
-            auto cPoints = fft_engine -> expectedBatch() * (fft_engine -> expectedLength()/2 + 1);
+            //TODO add code for fallback to cpu engine(fftw) later
+            auto res = fft_engine -> Init( tSeriesLength, VFSize, maxVRam.value_or(0) );
+
+            auto batch = fft_engine -> expectedBatch();
+            auto cPoints = batch * (tSeriesLength/2 + 1);
             if( fft_engine -> isReady() )
+            {
                 for( auto& x: buffers )
                 {
                     x = std::make_unique<GPUBuffer> ();
                     x -> nSize = 2 * cPoints;
-                    x -> realPoints = fft_engine -> expectedBatch();
+                    x -> realPoints = batch;
                     x -> data = std::make_unique<float[]>( x->nSize );
                 }
 
+                //and allocate space for ram buffer
+                auto maxRamBuffers = maxRam.value_or(0) / (sizeof(float) * 2 * cPoints);
+                auto neededBuffers = (VFSize + batch - 1)/batch;//all the full buffers and one partially filled
+                if( neededBuffers > 2 && maxRamBuffers > 2 )
+                {
+                    CollectorBuffer.cnt = std::min(neededBuffers - 2, maxRamBuffers - 2);
+                    CollectorBuffer.data = std::make_unique<float[]>( 2 * cPoints * CollectorBuffer.cnt );
+                    CollectorBuffer.occup = 0;
+                }
+            }
+
             return res;
         };
-        gpuInit = std::async( std::launch::async, GPUBuffersInit );
+        engineInit = std::async( std::launch::async, GPUBuffersInit );
 
         auto begin = ++file_handles.cbegin();
         auto end = file_handles.cend();
@@ -846,7 +881,13 @@ int main(int argc, char** argv)
     }
 
     //wait here for GPU to finish initializing, and buffers being created
-    std::cout << gpuInit.get() << "\n";
+    std::cout << engineInit.get() << "\n";
+    if( !fft_engine -> isReady() )
+    {
+        //TODO: add logic for initialize on cpu instead once that is finished
+        std::cerr << "Failed to initialize a FFT engine, quiting!\n";
+        return -1;
+    }
 
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
@@ -875,6 +916,9 @@ int main(int argc, char** argv)
             }
 
             curBuffer -> state = BufferState::EXPORT;
+
+            lock.unlock();
+            gpuRotate.notify_all();
         }
     });
 
@@ -954,7 +998,14 @@ int main(int argc, char** argv)
  
     auto exportData = [&] (GPUBuffer* buff)
     {
-        tmpFile.write( (char*) buff -> data.get(), (tSeriesLength / 2 + 1) * buff -> realPoints * 2 * sizeof(float) / sizeof(std::ofstream::char_type) );
+        if(CollectorBuffer.occup < CollectorBuffer.cnt)
+        {
+            std::copy_n( buff -> data.get(), (tSeriesLength / 2 + 1) * buff ->realPoints * 2, 
+                    CollectorBuffer.data.get() + CollectorBuffer.occup * buff -> nSize );
+            CollectorBuffer.occup++;
+        }
+        else
+            tmpFile.write( (char*) buff -> data.get(), (tSeriesLength / 2 + 1) * buff -> realPoints * 2 * sizeof(float) / sizeof(std::ofstream::char_type) );
 
         buff -> state = BufferState::WAIT;
     };
@@ -982,26 +1033,23 @@ int main(int argc, char** argv)
         segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
         curBuffer -> state = BufferState::PROCESS;
 
-        rotLock.lock();
+        std::unique_lock<std::mutex> lock(rotLock);
+        gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL || buffers[0] -> state == BufferState::WAIT;});
         std::swap(buffers[0], buffers[1]);
-        rotLock.unlock();
+        lock.unlock();
         gpuRotate.notify_all();
     }
-    //guaranteed to be filled after last rotation
-    exportData(buffers[1].get());
-    buffers[1] -> state = BufferState::STOP;
 
     //and wait for the last one to finish processing
-    rotLock.lock();
-    exportData(buffers[0].get());
-    buffers[0] -> state = BufferState::STOP;
-    rotLock.unlock();
+    std::unique_lock<std::mutex> lock(rotLock);
+    gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL;});
+    for(auto& x: buffers)
+        x -> state = BufferState::STOP;
+    lock.unlock();
 
     gpuRotate.notify_all();
     gpuStreamThread.join();
     fft_engine.reset();
-    for(auto& x : buffers)
-        x.reset();
 
     //deinit the monitor 
     monitorOn = false;
@@ -1016,7 +1064,9 @@ int main(int argc, char** argv)
     else
         head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = 6;
 
-    exportSpectrum( oFileName, segmentDescriptor, tmpPath, head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())), nullptr, 0, nullptr );
+    exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
+                    head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())),
+                    CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
     std::filesystem::remove( tmpPath );
