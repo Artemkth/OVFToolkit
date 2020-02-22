@@ -392,11 +392,14 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                      const VField::OVFHeader& commonHeader,
                      std::size_t cnt,
                      float freqInc,
+                     std::atomic<std::size_t>& progVar,
                      float const* hostBuffer = nullptr,
                      std::size_t  ramBufferCnt  = 0,
                      float const* irregCoords= nullptr
                    )
 {
+    progVar = 0;
+
     std::ifstream fsBuffer(fileBuffer, std::ios_base::in | std::ios_base::binary);
     if(!fsBuffer.good())
     {
@@ -481,6 +484,8 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                 //and copy the last part
                 std::copy_n(curSection + wholePts * vdim + initRemainder, (dist - initRemainder) % vdim, dest + (3 + vdim) * wholePts);
             }
+
+            progVar += dist;
         }
 
         //seek to the beginning
@@ -699,25 +704,25 @@ int main(int argc, char** argv)
     }
 
     //evaluation monitors
-    std::atomic<std::size_t> importedCount {};
+    std::atomic<std::size_t> progVar{};
+    std::atomic<std::size_t> expectProg{fileList.size()};
     std::atomic<const fname_type::value_type*> lastFile { "No file imported yet." };
 
-    auto importMonitor = [&] () -> void 
+    //time prefetch phase for profiling
+    std::thread MonitorThread([&] () -> void 
     {
         CMDMonitor monitor(std::cout);
-        const auto expSize = tSeriesLength;
-        const auto expSizeStr = std::to_string(expSize);
+        const auto expSizeStr = std::to_string(expectProg);
 
         std::string message {};
-        const auto cnt = std::to_string(expSize);
 
         bool lastRun = true;
         while(true)
         {
             std::string message { "File " };
-            const std::size_t cCount = importedCount;
+            const std::size_t cCount = progVar;
             const auto name = std::string { lastFile };
-            const auto cCountStr = std::to_string(importedCount);
+            const auto cCountStr = std::to_string(cCount);
 
             message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
             message += cCountStr;
@@ -728,26 +733,24 @@ int main(int argc, char** argv)
             message += '\"';
 
             monitor.update(message);
-            if( cCount >= expSize )
+            if( cCount >= expectProg )
                 break;
 
             using namespace std::chrono_literals;
             std::this_thread::sleep_for(100ms);
-        } 
-    };
+        }
+    });
 
-    //time prefetch phase for profiling
-    std::thread watch(importMonitor);
     auto t_before = std::chrono::steady_clock::now();
-    auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, importedCount, lastFile);
+    auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, progVar, lastFile);
     auto t_after = std::chrono::steady_clock::now();
-    if( importedCount != tSeriesLength )
+    if( progVar != tSeriesLength )
     {
         std::cerr << "Failed to import one or more files, aborting!\n";
-        importedCount = tSeriesLength; watch.join();
+        progVar = tSeriesLength; MonitorThread.join();
         return -1;
     }
-    watch.join();
+    MonitorThread.join();
 
     std::vector<double> times{}; times.reserve( tSeriesLength );
     std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
@@ -852,7 +855,7 @@ int main(int argc, char** argv)
         const auto mType = file_handles.front().getSegmentHeader(0).getMeshType();
         VFSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt;
         //begin initialization of engines outside main thread once dimensions are known
-        auto GPUBuffersInit = [&] ()
+        engineInit = std::async( std::launch::async, [&] ()
         {
             //TODO add code for fallback to cpu engine(fftw) later
             auto res = fft_engine -> Init( tSeriesLength, VFSize, maxVRam.value_or(0) );
@@ -881,8 +884,7 @@ int main(int argc, char** argv)
             }
 
             return res;
-        };
-        engineInit = std::async( std::launch::async, GPUBuffersInit );
+        });
 
         auto begin = ++file_handles.cbegin();
         auto end = file_handles.cend();
@@ -1010,8 +1012,6 @@ int main(int argc, char** argv)
         }
     });
 
-    std::atomic<std::size_t> progVar{};
-    std::atomic<std::size_t> expectProg{};
     auto printState = [&] (BufferState state) -> std::string
     {
         switch(state)
@@ -1035,7 +1035,7 @@ int main(int argc, char** argv)
     };
     //and a monitor function
     std::atomic<bool> monitorOn {true};
-    std::thread MonitorThread( [&] ()
+    MonitorThread = std::thread( [&] ()
     {
         using namespace std::chrono_literals;
 
@@ -1113,7 +1113,6 @@ int main(int argc, char** argv)
             return -1;
         }
 
-
         curBuffer -> state = BufferState::IMPORT;
         const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
         readData( file_handles, curBuffer -> data.get(), begin, 
@@ -1151,13 +1150,37 @@ int main(int argc, char** argv)
     //and close tmp file
     tmpFile.close();
     auto head = file_handles.front().getSegmentHeader(0);
-    transformHeader( head, TimeRegExStr ); 
+    transformHeader( head, TimeRegExStr );
+
+    expectProg = (tSeriesLength/2 + 1) * VFSize * 2;
+    progVar = 0;
+    MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
+    {
+        CMDMonitor monitor(std::cout);
+        while(true)
+        {
+            using namespace std::chrono_literals;
+            std::this_thread::sleep_for(150ms);
+
+            auto curVal = progVar.load();
+            monitor.update("Exporting spectrum into \""s + oFileName + "\": " + printMemSize( sizeof(float) * curVal ) + 
+                                                                          '/' + printMemSize( sizeof(float) * expectProg ) );
+            if(curVal >= expectProg)
+                return;
+        }
+    });
 
     exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
-                    head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())),
+                    head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())), progVar,
                     CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
+    if( progVar != expectProg )
+    {
+        std::cerr << "Unexpected error occured while exporting the spectrum!\n";
+        return -1;
+    }
+    MonitorThread.join();
     std::filesystem::remove( tmpPath );
 
     return 0;
