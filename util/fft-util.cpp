@@ -145,7 +145,7 @@ class CMDMonitor
         {out << std::string(n, '\b');}
         //TODO: screw emoji
         std::size_t cntUnicodePts(const std::string& ref)
-        { return std::count_if( ref.begin(), ref.end(), [](char c){ return 0xC0&c != 0x80; }); };
+        { return std::count_if( ref.begin(), ref.end(), [](char c){ return (0xC0&c) != 0x80; }); };
 
     public:
         CMDMonitor(std::ostream& out_): out(out_), ready(true), cCount(0) { out << cOff;}
@@ -160,11 +160,11 @@ class CMDMonitor
             out << '\r' << str;
             auto nCount = cntUnicodePts(str);
 
-            if( nCount > cCount )
+            if( cCount > nCount )
             {
-                pad_n( str.length() - cCount );
+                pad_n( cCount - nCount );
                 out << std::flush;
-                erase_n( str.length() - cCount );
+                erase_n( cCount - nCount );
             }
             out << std::flush;
 
@@ -178,8 +178,8 @@ class CMDMonitor
             out << '\r' << str;
             auto nCount = cntUnicodePts(str);
 
-            if( nCount > cCount )
-                pad_n( str.length() - cCount );
+            if( nCount < cCount )
+                pad_n( cCount - nCount );
             out << '\n';
 
             out << lineData << std::flush;
