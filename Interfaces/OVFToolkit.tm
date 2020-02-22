@@ -2,12 +2,14 @@
 
 ::First miscellaneous error defines
 :Evaluate:      OVFToolkit::fsub      = "Could not find the original file name: \"`1`\". Using expansion: \"`2`\" instead!"
-:Evaluate:      OVFToolkit::chtype    = "First argument \"`1`\" is not a valid file specification" 
-:Evaluate:      OVFToolkit::notperm   = "Was not permitted to `1` \"`2`\""
-:Evaluate:      OVFToolkit::prserr    = "Could not parse additional arguments"
-:Evaluate:      ImportOVF::argx       = "ImportOVF called with 0 parameters, at least one was expected"
-:Evaluate:      ImportOVF::prserr     = "Received following errors while parsing a file:\n `1`"
+:Evaluate:      OVFToolkit::chtype    = "First argument \"`1`\" is not a valid file specification." 
+:Evaluate:      OVFToolkit::notperm   = "Was not permitted to `1` \"`2`\"."
+:Evaluate:      OVFToolkit::prserr    = "Could not parse additional arguments!"
+:Evaluate:      ImportOVF::argx       = "ImportOVF called with 0 parameters, at least one was expected!"
+:Evaluate:      ImportOVF::prserr     = "Received following errors while parsing a file:\n `1`."
 :Evaluate:      ImportOVF::naddr      = "Data in segment `1` of the file \"`2`\" is not addressible!!"
+:Evaluate:      ImportOVF::oob        = "Index `1` in the range specification is out of bounds!"
+:Evaluate:      ImportOVF::bspan      = "Received a bad span specification."
 :Evaluate:      ImportOVF[]           := Message[ImportOVF::argx];
 :Evaluate:      ImportOVF[x_,___]     := Message[OVFToolkit::chtype, x];           
 
@@ -16,9 +18,9 @@
 ::void import(const char*, int)
 :Begin:
 :Function:      import
-:Pattern:       ImportOVF[fileName_String, options:Rule[_String,_]...]
-:Arguments:     {fileName, Length@List@options, options}
-:ArgumentTypes: {String, Integer32, Manual}
+:Pattern:       ImportOVF[fileName_String, spans:(_Integer | List[___Integer] | All | Span[(_Integer | All)..])..., options:Rule[_String,_]...]
+:Arguments:     {fileName, Length@List@options, Length@List@spans, spans, options}
+:ArgumentTypes: {String, Integer32, Integer32, Manual}
 :ReturnType:    Manual
 :End:
 

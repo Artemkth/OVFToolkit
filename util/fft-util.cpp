@@ -434,7 +434,9 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     field.insertData( data, commonHeader.expectedPoints() * commonHeader.expectedDimension() );
     output << commonHeader.getString( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
 
-    auto& desc = field.Header.at<VField::pType::String>( VField::OVFParameter::Desc );
+    std::string desc{};
+    if( commonHeader.isSet( VField::OVFParameter::Desc) )
+        desc = commonHeader.getString( VField::OVFParameter::Desc );
 
     for(std::size_t i = 0; i < cnt; i++)
     {

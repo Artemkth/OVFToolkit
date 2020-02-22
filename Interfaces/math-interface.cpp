@@ -2,6 +2,7 @@
 #include<stdexcept>
 #include<filesystem> //using for checking file stuff
 #include<algorithm>
+#include<numeric>
 #include<string>
 #include<type_traits>
 #include<vector>
@@ -661,20 +662,116 @@ void deinit()
         throw std::runtime_error("Didn't find all of the return packets!");
 }
 
-extern "C" void import(const char* fileName, int optc)
+std::optional<std::vector<std::size_t>> parseSpan(const std::variant<math_atom, std::unique_ptr<Expression>>& span, const std::size_t size)
+{
+    if( span.index() == 0 )
+    {
+        auto val = std::get<long>(std::get<0>(span));
+        if( std::abs(val) > size || val == 0 )
+        {
+            PostErrorMessage("ImportOVF", "oob", val);
+            return std::nullopt;
+        }
+
+        if( val > 0 )
+            return {{static_cast<std::size_t>(val - 1)}};
+        else
+            return {{static_cast<std::size_t>(size + val)}};
+    }
+    else
+    {
+        const auto& expr = std::get<1>(span);
+        if( expr -> testHeader("All") )
+        {
+            std::vector<std::size_t> res(size);
+            std::iota(res.begin(), res.end(), 0);
+            return std::move(res);
+        }
+        if( expr -> testHeader("List") )
+        {
+            std::vector<std::size_t> res;
+            auto begin = ++expr -> begin();
+            auto end   = expr -> end();
+            for(; begin!=end; ++begin)
+            {
+                auto val = std::get<long>(std::get<0>(*begin));
+                if( std::abs(val) > size || val == 0 )
+                {
+                    PostErrorMessage("ImportOVF", "oob", val);
+                    return std::nullopt;
+                }
+
+                if( val > 0 )
+                    res.push_back(val - 1);
+                else
+                    res.push_back(size + val);
+            }
+            return std::move(res);
+        }
+        if( expr -> testHeader("Span") )
+        {
+            const std::size_t spanDepth = expr -> size() - 1;
+            if( spanDepth < 2 && spanDepth > 3)
+                return std::nullopt;
+            std::array<std::size_t, 3> spanSpec = {0, size-1, 1};
+            for( int i = 0; i < spanDepth; i++) 
+            {
+                if( expr -> at(i+1).index() != 0 )
+                {
+                    if(std::get<1>(expr -> at(i+1)) -> testHeader("All"))
+                        continue;
+                    else
+                    {
+                        PostErrorMessage("ImportOVF", "bspan");
+                        return std::nullopt;
+                    }
+                }
+
+                auto val = std::get<long>(std::get<0>( expr -> at(i+1) ));
+                if( std::abs(val) > size || val == 0 )
+                {
+                    PostErrorMessage("ImportOVF", "oob", val);
+                    return std::nullopt;
+                }
+
+                if( i == 2 && val < 0 ) //negative stride is disallowed
+                {
+                    PostErrorMessage("ImportOVF", "bspan");
+                    return std::nullopt;
+                }
+
+                if( val > 0 )
+                    spanSpec[i] = val - 1;
+                else
+                    spanSpec[i] = size + val;
+            }
+            if( spanSpec[0] > spanSpec[1] )
+                return {};
+
+            std::vector<std::size_t> res{};
+            for( std::size_t i = spanSpec[0]; i <= spanSpec[1]; i += spanSpec[2] )
+                res.push_back(i);
+
+            return std::move(res);
+        }
+    }
+    return std::nullopt;
+}
+
+//file caching
+std::vector<VField::VFieldFile> ovfImportCache{};
+
+extern "C" void import(const char* fileName, int optc, int spanc)
 {
     const auto fPath { checkFileName(fileName) };
-    if(!fPath.has_value()) 
+    if(!fPath.has_value())
     {
         deinit();
         return; //all output is done by checkFileName when it cannot recover
     }
-    //next open the file finally
-    const VField::VFieldFile fileHandle(fPath.value().c_str());
-    if(!fileHandle.WorkLog().empty())
-        PostErrorMessage("ImportOVF", "prserr", fileHandle.WorkLog());
     
     //parse other parameters
+    auto Spans{ParseWSTPExpression(spanc)};
     auto OtherParams{ParseWSTPExpression(optc)};
     if( WSReady(stdlink) )
     {/*TODO implement error throw */}
@@ -683,33 +780,94 @@ extern "C" void import(const char* fileName, int optc)
     const auto sendData { ParseFlag(OtherParams, "GetData") };
     const int segment_dim {  (sendHeader.value_or(true) ? 1 : 0) +
                              (sendData.value_or(true)   ? 1 : 0)   };
+    const auto IgnoreCache { ParseFlag(OtherParams, "IgnoreCache") };
+
+    //next open the file finally
+    auto cacheEntry = std::find_if( ovfImportCache.begin(), ovfImportCache.end(), 
+            [&fPath] (const VField::VFieldFile& handle) {return handle.getCurrentPath() == fPath.value().string();});
+    if( IgnoreCache.value_or(false) || cacheEntry == ovfImportCache.end() )
+    {
+        if(cacheEntry == ovfImportCache.end())
+        {
+            ovfImportCache.emplace_back(fPath.value().c_str());
+            if(!ovfImportCache.back().WorkLog().empty())
+                PostErrorMessage("ImportOVF", "prserr", ovfImportCache.back().WorkLog());
+
+            cacheEntry = --ovfImportCache.end();//last element
+        }
+        else
+        {
+            cacheEntry -> read(fPath.value().c_str());
+            if( ! cacheEntry -> WorkLog().empty() )
+                PostErrorMessage("ImportOVF", "prserr", cacheEntry -> WorkLog());
+        }
+    }
+
+    const auto& fileHandle = *cacheEntry;
 
     //and start outputting data
-    WSPutFunction(stdlink, "List", fileHandle.cntSegments() );
-    auto begin = fileHandle.begin();
-    auto end   = fileHandle.end();
-    std::size_t seg_cnt{0};
-    for(; begin != end; ++begin)
+    if(spanc == 0)
     {
-        if(segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
-        //Output Header
-        if (sendHeader.value_or(true)) OutputHeader(begin.getHeader());
-
-        //Output Data
-        if (sendData.value_or(true)) 
+        WSPutFunction(stdlink, "List", fileHandle.cntSegments());
+        auto begin = fileHandle.begin();
+        auto end   = fileHandle.end();
+        std::size_t seg_cnt{0};
+        for(; begin != end; ++begin)
         {
-            const auto field = *begin;
+            if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
+            //Output Header
+            if (sendHeader.value_or(true)) OutputHeader(begin.getHeader());
 
-            //Output data
-            if(!field.isAddressable())
+            //Output Data
+            if (sendData.value_or(true)) 
             {
-                PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
-                WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+                const auto field = *begin;
+
+                //Output data
+                if(!field.isAddressable())
+                {
+                    PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
+                    WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+                }
+                else
+                    OutputData(field);
             }
-            else
-                OutputData(field);
+            seg_cnt++;
         }
-        seg_cnt++;
+    }
+    else
+    {
+        const auto segments = parseSpan(Spans[1], fileHandle.cntSegments());
+        if (!segments.has_value())
+        {
+            WSPutSymbol(stdlink, "$Failed");
+            deinit();
+            return;
+        }
+
+
+        WSPutFunction(stdlink, "List", segments.value().size());
+        for(const auto& seg: segments.value())
+        {
+            if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
+            //Output Header
+            if (sendHeader.value_or(true)) OutputHeader(fileHandle.getSegmentHeader(seg));
+
+            //Output Data
+            if (sendData.value_or(true)) 
+            {
+                const auto field = fileHandle[seg];
+
+                //Output data
+                if(!field.isAddressable())
+                {
+                    PostErrorMessage("ImportOVF", "naddr", seg, fileHandle.getCurrentPath());
+                    WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+                }
+                else
+                    OutputData(field);
+            }
+        }
     }
 
     //clean up after ourselfs
