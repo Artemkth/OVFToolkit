@@ -808,7 +808,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
     //and start outputting data
     if(spanc == 0)
     {
-        WSPutFunction(stdlink, "List", fileHandle.cntSegments());
+        if (fileHandle.cntSegments() != 1) WSPutFunction(stdlink, "List", fileHandle.cntSegments());
         auto begin = fileHandle.begin();
         auto end   = fileHandle.end();
         std::size_t seg_cnt{0};
@@ -846,7 +846,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
         }
 
 
-        WSPutFunction(stdlink, "List", segments.value().size());
+        if(segments.value().size() != 1) WSPutFunction(stdlink, "List", segments.value().size());
         for(const auto& seg: segments.value())
         {
             if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
