@@ -830,7 +830,10 @@ int main(int argc, char** argv)
         if( !dupTSFiles.empty() )
             std::cout << "Following timestamps were duplicated:\n" << dupTSFiles << "\n";
         if( !noTSFiles.empty() || !dupTSFiles.empty() )
+        {
             std::cout << "Aborting!\n";
+            return -1;
+        }
     }
 
     std::size_t VFSize{};
@@ -1173,7 +1176,7 @@ int main(int argc, char** argv)
     });
 
     exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
-                    head, tSeriesLength/2 + 1, 1/(2. * (times.back() - times.front())), progVar,
+                    head, tSeriesLength/2 + 1, 1 / (times.back() - times.front()), progVar,
                     CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
