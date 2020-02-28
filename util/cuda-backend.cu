@@ -318,7 +318,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     {
         std::size_t j{1};
         for(; j < sCnt; j++)
-            if( ts[0] +  i * step < ts[j] )
+            if( ts[0] + i * step < ts[j] )
                 break;
         j -= 1;
         ind[i - 1] = j;
