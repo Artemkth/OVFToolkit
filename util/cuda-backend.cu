@@ -285,6 +285,12 @@ __global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
         *(data + coord) *= norm;
 }
 
+//run interpolation over data to remove jitter
+__global__ void interp()
+{
+    //TODO: implement
+}
+
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 {
     if( fail || input == nullptr || padding >= batchSize )
