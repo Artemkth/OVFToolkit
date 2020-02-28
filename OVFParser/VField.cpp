@@ -48,7 +48,7 @@ namespace VField{
         //and compare giving allowance for maximum of epsilon discrepancy
         //TODO: check later if you need to cast both v1 and v2 to precision_type
         return std::equal( arr1, arr1 + size, arr2,
-                [] (const T& v1, const U& v2) { return v1 != 0.0? std::abs(v1 - v2)/std::abs(v1) <= epsilon : std::abs(v2) <= min_val; } );
+                [&] (const T& v1, const U& v2) { return v1 != 0.0? std::abs(v1 - v2)/std::abs(v1) <= epsilon : std::abs(v2) <= min_val; } );
     }
         
     struct VField::StorageArray

@@ -1,6 +1,7 @@
 #pragma once
 //define versions of OVF files
 #include<regex>
+#include<map>
 
 namespace VField{
     //definitions of OVF version regexes
