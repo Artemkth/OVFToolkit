@@ -316,13 +316,13 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     //calculate access indices and time shifts
     for( std::size_t i = 1; i < fftLength - 1; i++ )
     {
-        std::size_t j{0};
+        std::size_t j{1};
         for(; j < sCnt; j++)
-            if( i * step < ts[j] )
+            if( ts[0] +  i * step < ts[j] )
                 break;
         j -= 1;
         ind[i - 1] = j;
-        dts[i - 1] = i * step - ts[j];
+        dts[i - 1] = ts[0] + i * step - ts[j];
     }
 
     //upload results to gpu memory
