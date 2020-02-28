@@ -346,9 +346,40 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
 }
 
 //run interpolation over data to remove jitter
-__global__ void interp()
+__global__ void interp(
+        double * const __restrict__ data,
+        std::size_t batchSize,
+        std::size_t splLen,
+        std::size_t outLen,
+        const double* __restrict__ h,
+        const double* __restrict__ mu,
+        const double* __restrict__ l,
+        const std::size_t* __restrict__ ind,
+        const double* __restrict__ dt )
 {
-    //TODO: implement
+    const std::size_t index { (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x * blockDim.y + 
+                              threadIdx.y * blockDim.x + threadIdx.x };
+
+    if( index > batchSize )
+        return; //return if thread lands outside of the batch
+
+    //else reserve memory and get the job done
+    double* z, *b, *c, *d;
+    b = (double*)malloc(sizeof(double) * splLen);
+    c = (double*)malloc(sizeof(double) * splLen);
+    d = (double*)malloc(sizeof(double) * splLen);
+    z = (double*)malloc(sizeof(double) * outLen);
+    //abort if ran out of memory
+    //TODO: add external indication of failure due to running out of memory
+    if(b == nullptr || c == nullptr || d == nullptr || z == nullptr)
+    {
+        free(z); free(d); free(c); free(b);
+        return;
+    }
+
+    
+
+    free(z); free(d); free(c); free(b);
 }
 
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
