@@ -13,6 +13,7 @@
 //for mapping types
 #include<memory>
 #include<stdexcept>
+#include<cstdint>
 //small convinience on *nix systems
 //TODO: replace with cmake detection later, CheckIncludeFile
 #if defined(__unix__) || defined(__LINUX__) || defined(__APPLE__)
@@ -112,7 +113,7 @@ inline std::enable_if_t<std::is_integral_v<typename T::value_type> || std::is_fl
 {
     //TODO: futureproof by spliting the load by INT_MAX
     //(hack with putting Sequence functions with INT_MAX size)
-    int size { val.size() }; //has to be int for the array input function
+    int size { static_cast<int>(val.size()) }; //has to be int for the array input function
     auto ptr { val.data() };
     if constexpr(std::is_integral_v<typename T::value_type>)
     {
@@ -345,7 +346,7 @@ struct Wrapper{
     };
 };
 
-#define OUTPUT_HEADER(head, args...) decltype(Wrapper{args})::Wrapping<args>::OutputAll(head)
+#define OUTPUT_HEADER(head, ...) decltype(Wrapper{__VA_ARGS__})::Wrapping<__VA_ARGS__>::OutputAll(head)
 
 inline bool OutputMeshType(const VField::OVFHeader& head, bool write = false)
 {
@@ -471,7 +472,7 @@ bool OutputHeader(const VField::OVFHeader& head)
 
 //wrappers to interfaces for importing data from mathematica
 //                                               string for symbol types
-using math_atom = std::variant<long, double, std::string>;
+using math_atom = std::variant<std::int64_t, double, std::string>;
 //ohboi
 class Expression;
 class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Expression>>> {
@@ -501,11 +502,12 @@ class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Ex
         //find iterator to a first 'Rule' expression in the current expression with a specified pattern
         auto getRule(const std::string& rule) const
         {
+            if (size() <= 1)
+                return cend();
+
             const std::string ruleHead {"Rule"}; 
             //target expression root to match
-            auto begin = ++cbegin(); //skip the header of root expression
-            auto end = cend();
-            auto srch_res = std::find_if(begin, end, 
+            auto srch_res = std::find_if(++cbegin(), cend(), 
                     [&](const std::variant<math_atom, std::unique_ptr<Expression>>& var)
                     {
                         if(var.index() != 1 || std::get<std::unique_ptr<Expression>>(var)->size() != 3) return false;
@@ -572,8 +574,8 @@ Expression ParseWSTPExpression(int optc = 0)
                 break;
 
             case WSTKINT:
-                workStack.top().first -> emplace_back(long{});
-                WSGetInteger64(stdlink, &std::get<long>(std::get<math_atom>(workStack.top().first -> back())));
+                workStack.top().first -> emplace_back(std::int64_t{});
+                WSGetInteger64(stdlink, &std::get<std::int64_t>(std::get<math_atom>(workStack.top().first -> back())));
                 break;
 
             case WSTKREAL:
@@ -666,7 +668,7 @@ std::optional<std::vector<std::size_t>> parseSpan(const std::variant<math_atom, 
 {
     if( span.index() == 0 )
     {
-        auto val = std::get<long>(std::get<0>(span));
+        auto val = std::get<std::int64_t>(std::get<0>(span));
         if( std::abs(val) > size || val == 0 )
         {
             PostErrorMessage("ImportOVF", "oob", val);
@@ -694,7 +696,7 @@ std::optional<std::vector<std::size_t>> parseSpan(const std::variant<math_atom, 
             auto end   = expr -> end();
             for(; begin!=end; ++begin)
             {
-                auto val = std::get<long>(std::get<0>(*begin));
+                auto val = std::get<std::int64_t>(std::get<0>(*begin));
                 if( std::abs(val) > size || val == 0 )
                 {
                     PostErrorMessage("ImportOVF", "oob", val);
@@ -727,7 +729,7 @@ std::optional<std::vector<std::size_t>> parseSpan(const std::variant<math_atom, 
                     }
                 }
 
-                auto val = std::get<long>(std::get<0>( expr -> at(i+1) ));
+                auto val = std::get<std::int64_t>(std::get<0>( expr -> at(i+1) ));
                 if( std::abs(val) > size || val == 0 )
                 {
                     PostErrorMessage("ImportOVF", "oob", val);
@@ -789,7 +791,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
     {
         if(cacheEntry == ovfImportCache.end())
         {
-            ovfImportCache.emplace_back(fPath.value().c_str());
+            ovfImportCache.emplace_back(fPath.value().string());
             if(!ovfImportCache.back().WorkLog().empty())
                 PostErrorMessage("ImportOVF", "prserr", ovfImportCache.back().WorkLog());
 
@@ -797,7 +799,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
         }
         else
         {
-            cacheEntry -> read(fPath.value().c_str());
+            cacheEntry -> read(fPath.value().string());
             if( ! cacheEntry -> WorkLog().empty() )
                 PostErrorMessage("ImportOVF", "prserr", cacheEntry -> WorkLog());
         }
@@ -894,7 +896,7 @@ std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
 
     //get some constants for later in compiletime
     constexpr auto T_index { isVariantMember<T, math_atom>::index };
-    constexpr auto Int_index { isVariantMember<long, math_atom>::index };
+    constexpr auto Int_index { isVariantMember<std::int64_t, math_atom>::index };
 
     //if no value was found throw empty value instead
     if(srch_res == expr.end())
@@ -908,7 +910,7 @@ std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
         return std::get<T>(val);
     //else only in one case can we succeed
     if constexpr (std::is_floating_point_v<T>)
-        if(val.index() == math_atom{long{}}.index() )
+        if(val.index() == math_atom{std::int64_t{}}.index() )
             return std::get< Int_index > (val);
 
     //else return nothing
@@ -1329,7 +1331,7 @@ extern "C" void exportOVF(const char* fName, int optc)
     //first get the options
     const auto Options { ParseWSTPExpression(optc) };
     //4 byte floats by default, but allow for double precision fields too 
-    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
+    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<std::int64_t>(Options, "BinarySize").value_or(4)) };
     if(ByteSize != 4 && ByteSize != 8)
         PostErrorMessage("ExportOVF", "badsize", ByteSize);
     const bool Validate { ParseFlag(Options, "Validate").value_or(false) };
@@ -1351,7 +1353,7 @@ extern "C" void exportOVF(const char* fName, int optc)
     }
     else
     {
-        auto log { WriteOVF( output.c_str(), field ) };
+        auto log { WriteOVF( output.string(), field ) };
 
         if(!log.empty())
             PostErrorMessage("ExportOVF", "expfail", log);

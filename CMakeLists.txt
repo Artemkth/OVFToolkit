@@ -54,6 +54,9 @@ IF(BUILD_FFUTIL)
     MESSAGE(STATUS ${FFMESSAGE})
 ENDIF()
 
+IF(MSVC)
+	add_definitions(-DNOMINMAX)
+ENDIF()
 #ovfparser library
 add_library(ovfparser
     OVFParser/OVFHeader.cpp
