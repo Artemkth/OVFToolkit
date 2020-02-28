@@ -124,6 +124,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
 {
     fftLength = t_len;
     fail = false; //reset just in case
+    InterpAccel.Ready = false;
 
     int devCount; cudaGetDeviceCount(&devCount);
     if( devCount == 0 )
@@ -283,6 +284,65 @@ __global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
 
     if( coord < nSize ) //if thread is within block, proceed normalizing the value
         *(data + coord) *= norm;
+}
+
+//init interpolation
+bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
+{
+    if( fail || cnt > fftLength || cnt < 2 )
+        return false;
+    InterpAccel.Ready = false;
+
+    InterpAccel.sCnt = cnt - 1;//nunmber of intervals between cnt points
+    InterpAccel.trueStep = (*(ts + cnt - 1) - *ts) / (fftLength - 1);
+    const auto& sCnt = InterpAccel.sCnt;
+    const auto& step = InterpAccel.trueStep;
+
+    //do some host calculations and upload arithmetic accelerators onto the gpu
+    auto* h  = new double[sCnt];
+    auto* mu = new double[sCnt];
+    auto* l  = new double[sCnt];
+    auto* ind= new std::size_t[fftLength - 2];
+    auto* dts= new double[fftLength - 2];
+
+    //fill in const data
+    mu[0] = 0.; l[0] = 1.; h[0] = ts[1] - ts[0];
+    for( std::size_t i = 1; i < sCnt; i++ )
+    {
+        h[i] = ts[i+1] - ts[i];
+        l[i] = 2 * (ts[i+1] - ts[i-1]) - h[i - 1] * mu[i - 1];
+        mu[i] = h[i] * l[i];
+    }
+    //calculate access indices and time shifts
+    for( std::size_t i = 1; i < fftLength - 1; i++ )
+    {
+        std::size_t j{0};
+        for(; j < sCnt; j++)
+            if( i * step < ts[j] )
+                break;
+        j -= 1;
+        ind[i - 1] = j;
+        dts[i - 1] = i * step - ts[j];
+    }
+
+    //upload results to gpu memory
+    bool failed =  
+        cudaMalloc( &InterpAccel.h, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.h, (const void*)h, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
+        cudaMalloc( &InterpAccel.mu, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.mu, (const void*)mu, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
+        cudaMalloc( &InterpAccel.l, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.l, (const void*)l, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
+        cudaMalloc( &InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2) ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.Indices, (const void*)ind, fftLength - 2, cudaMemcpyHostToDevice ) != cudaSuccess ||
+        cudaMalloc( &InterpAccel.dt, sizeof(double) * (fftLength - 2) ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.dt, (const void*)dts, fftLength - 2, cudaMemcpyHostToDevice ) != cudaSuccess ||
+        cudaDeviceSynchronize() != cudaSuccess;
+    if(failed)
+    {
+        InterpAccel.free();
+        cudaDeviceSynchronize();
+    }
+    InterpAccel.Ready = !failed;
+
+    //clear host memory
+    delete[] h; delete[] mu; delete[] l; delete[] ind; delete[] dts;
+    return InterpAccel.Ready;
 }
 
 //run interpolation over data to remove jitter

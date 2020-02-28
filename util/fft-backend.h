@@ -31,5 +31,11 @@ class FFTEngine
         //host array data is expected to have batchSize 2 * (fftLength/2 + 1) * ( batchSize - padding ) elements 
         //norm is an fp number which all data will be divided by after transform
         virtual bool RunTransform( T* data, T norm, std::size_t padding ) = 0;
+
+        //initialize interpolation engine to remove jitter from timed data
+        //cnt time points is received through times array,
+        //which is later interpolated into fftLength of interpolated values on target device
+        //cnt is expected to be smaller or same as fftLength for data alignment
+        virtual bool InitInterp( const double* times, std::size_t cnt ) = 0;
 };
 

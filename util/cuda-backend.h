@@ -14,12 +14,43 @@ class cuFFTEngine: public FFTEngine<float>
 
         std::size_t reallocate(std::size_t);
 
+        //hold interpolation's global constants
+        struct {
+            bool Ready {false};
+            double trueStep;
+            std::size_t sCnt; //spline count
+
+            //GPU buffers with interpolation accelerators
+            double* h {nullptr};
+            double* mu{nullptr};
+            double* l {nullptr};
+
+            //point locators
+            std::size_t* Indices{nullptr};
+            double* dt{nullptr};
+
+            //free the data
+            void free()
+            {
+                cudaFree(h);
+                cudaFree(mu);
+                cudaFree(l);
+                cudaFree(Indices);
+                cudaFree(dt);
+
+                Ready = false;
+            }
+        } InterpAccel;
+
     public:
         //create cuda engine bound to GPU #gpu
         cuFFTEngine(int gpu = -1) noexcept : gpuID(gpu)
         { if(cufftCreate(&plan) != CUFFT_SUCCESS) fail = true; }
         ~cuFFTEngine() noexcept
-        { cufftDestroy(plan); cudaFree(data); }
+        {
+            cufftDestroy(plan); cudaFree(data);
+            InterpAccel.free();
+        }
 
         cuFFTEngine(const cuFFTEngine&) = delete;
         cuFFTEngine& operator=(const cuFFTEngine&) = delete;
@@ -32,5 +63,6 @@ class cuFFTEngine: public FFTEngine<float>
 
         std::string Init( std::size_t, std::size_t maxBatch = 0, std::size_t maxMem = 0 );
         bool RunTransform( float*, float norm = 1.0f, std::size_t padding = 0 );
+        bool InitInterp( const double*, std::size_t );
 };
 
