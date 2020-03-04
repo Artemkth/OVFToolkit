@@ -311,7 +311,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     {
         h[i] = ts[i+1] - ts[i];
         l[i] = 2 * (ts[i+1] - ts[i-1]) - h[i - 1] * mu[i - 1];
-        mu[i] = h[i] * l[i];
+        mu[i] = h[i] / l[i];
     }
     //calculate access indices and time shifts
     for( std::size_t i = 1; i < fftLength - 1; i++ )
@@ -363,23 +363,57 @@ __global__ void interp(
     if( index > batchSize )
         return; //return if thread lands outside of the batch
 
-    //else reserve memory and get the job done
-    double* z, *b, *c, *d;
-    b = (double*)malloc(sizeof(double) * splLen);
-    c = (double*)malloc(sizeof(double) * splLen);
-    d = (double*)malloc(sizeof(double) * splLen);
-    z = (double*)malloc(sizeof(double) * outLen);
+    double* a = (double*)malloc(sizeof(double) * splLen);
+    double* z = (double*)malloc(sizeof(double) * splLen);
     //abort if ran out of memory
     //TODO: add external indication of failure due to running out of memory
-    if(b == nullptr || c == nullptr || d == nullptr || z == nullptr)
+    if(a == NULL || z == NULL)
     {
-        free(z); free(d); free(c); free(b);
+        free(a); free(z);
         return;
     }
+    //copy original values into the array 'a'
+    for(size_t i = 0; i < splLen; i++)
+        a[i] = *(data + i * batchSize + index);
 
+    //forward loop to calculate z_i
+    z[0] = 0.;
+    for(size_t i = 1; i < splLen; i++)
+    {
+        double alpha = 3./h[i] * (*(data + (i + 1) * batchSize + index) - *(data + i * batchSize + index) ) - 
+                       3./h[i - 1] * (*(data + i * batchSize + index) - *(data + (i-1) * batchSize + index) );
+        z[i] = (alpha - h[i - 1] * z[i - 1])/l[i];
+    }
+
+    //set value of the last point manually, in case splLen < outLen - 1
+    *(data + (outLen - 1) * batchSize + index) = *(data + splLen * batchSize + index);
+    double cnext = 0.;
+    size_t spl_i = 0;//number of spline from the end
+    for(size_t i = 0; i < splLen; i++)
+    {
+        const size_t j = splLen - i - 1;
+        double c = z[j] - mu[j] * cnext;
+
+        while( ind[outLen - 3 - spl_i] == j && spl_i < outLen - 2 )
+        {
+            const double dtVal = dt[outLen - 3 - spl_i];
+
+            //and assign the interpolated value
+            *(data + (outLen - 2 - spl_i)*batchSize + index) = a[j] +
+                ((*(data + (j + 1) * batchSize + index) - *(data + j * batchSize + index))/h[j] -h[j] * (cnext + 2 * c) / 3.) * dtVal +
+                c * dtVal * dtVal +
+                (cnext - c)/(3. * h[j]) * dtVal * dtVal * dtVal;
+
+            spl_i++;
+        }
+        if( spl_i == outLen - 2 )
+            break;
+
+        //rotate in the end
+        cnext = c;
+    }
     
-
-    free(z); free(d); free(c); free(b);
+    free(a); free(z);
 }
 
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
