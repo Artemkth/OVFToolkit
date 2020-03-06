@@ -987,8 +987,8 @@ int main(int argc, char** argv)
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    //float norm = std::sqrt(times.back() - times.front()) / (std::sqrt(fft_engine -> expectedLength()) );
-    float norm = 1.0f;
+    float norm = std::sqrt( trueStep );//scaling to get value in amplitude/sqrt(Hz)
+    //float norm = 1.0f;
     std::thread gpuStreamThread( [&] ()
     {
         while(true)

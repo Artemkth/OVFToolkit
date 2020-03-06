@@ -50,19 +50,20 @@ __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
 
     dim3 optimalGrid{};
     if( bCount <= gridDimMax )
+        //maximal 64MiB of single values
         optimalGrid = dim3{ static_cast<unsigned int>(bCount) };
     else if( bCount <= gridDimMax * gridDimMax )
     {
         //TODO: implement lookup using primes table sometime
-        //with float values, and 3 values per array this will address 48GiB of values
+        //with float values, and 1 values per array this will address 4TiB of values
         //both guaranteed to not truncate over the branching condition above
-        const int min { static_cast<int>((bCount + gridDimMax - 1) / gridDimMax) };
-        const int max { static_cast<int>(std::ceil( std::sqrt(static_cast<double>( bCount )) )) };
-        int optDim = min; int optRemainder = max;
-        int dim = min;
+        const unsigned int min { static_cast<unsigned int>((bCount + gridDimMax - 1) / gridDimMax) };
+        const unsigned int max { static_cast<unsigned int>(std::ceil( std::sqrt(static_cast<double>( bCount )) )) };
+        unsigned int optDim = min; unsigned int optRemainder = max;
+        unsigned int dim = min;
         for(; dim <= max; dim++)
         {
-            int Remainder = bCount % dim;
+            unsigned int Remainder = bCount % dim;
             if( Remainder == 0 )
             {
                 optDim = dim;
@@ -78,10 +79,10 @@ __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
             }
         }
         dim = (bCount + optDim - 1) / optDim;
-        dim3 numBlocks(std::max(optDim, dim), std::min(optDim, dim));
+        optimalGrid = {std::max(optDim, dim), std::min(optDim, dim)};
     }
     else
-        //TODO: implement 3D block grid addressing, up to 3 PiB(with 3 points per interpolation)
+        //TODO: implement 3D block grid addressing, up to 0.3 EiB(with 1 points per interpolation)
         return {};
 
     knownGridDim.push_back( { size, bSize, optimalGrid } );
@@ -392,6 +393,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     }
 
     //upload results to gpu memory
+    //TODO: look into merging whole memory clown fiesta into single array allocated and freed once
     bool failed =  
         cudaMalloc( &InterpAccel.h, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.h, (const void*)h, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
         cudaMalloc( &InterpAccel.mu, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.mu, (const void*)mu, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
@@ -413,7 +415,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
 
 //run interpolation over data to remove jitter
 __global__ void interp(
-        double * const __restrict__ data,
+        float * const __restrict__ data,
         std::size_t batchSize,
         std::size_t splLen,
         std::size_t outLen,
@@ -496,10 +498,17 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
         result = reallocate(nBatchSize);
     //move data into array
     result = result && (cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) == cudaSuccess);
+    //reinterpolate data if interpolation is ready
+    if ( fftLength > 2 && InterpAccel.Ready )
+        interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>> (
+                (float*)data, nBatchSize, fftLength - 1, fftLength,
+                InterpAccel.h, InterpAccel.mu, InterpAccel.l,
+                InterpAccel.Indices, InterpAccel.dt);
+
     result = result && (cufftExecR2C( plan, (cufftReal*)data, data ) == CUFFT_SUCCESS);
     //if there is a norm to use, normalize the data
     if( norm != 1.0f && result )
-        normalize<<<to_grid(2 * nBatchSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>>((cufftReal*)data, 2 * nBatchSize * (fftLength/2 + 1), norm);
+        normalize<<<to_grid(2 * nBatchSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>> ( (cufftReal*)data, 2 * nBatchSize * (fftLength/2 + 1), norm );
 
     result = result && (cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) == cudaSuccess);
     result = result && (cudaDeviceSynchronize() == cudaSuccess);
