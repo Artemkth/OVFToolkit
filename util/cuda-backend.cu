@@ -1,11 +1,13 @@
 #include"cuda-backend.h"
 #include<limits>
 #include<array>
+#include<vector>
+#include<tuple>
 #include<algorithm>
 
 using namespace std::string_literals;
 constexpr std::array<std::size_t, 31> AllowedFactors { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
-inline bool is4GCompatible( std::size_t size )
+inline __host__ bool is4GCompatible( std::size_t size )
 {
     while(size != 1)
     {
@@ -23,7 +25,71 @@ inline bool is4GCompatible( std::size_t size )
     return true;
 }
 
-int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
+//default thread block, 256 threads on square
+constexpr dim3 DefaultBlockSize{16, 16};
+static_assert( DefaultBlockSize.x <= 1024 && DefaultBlockSize.y <= 1024 && DefaultBlockSize.z <= 64 &&
+               DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z <= 1024, "Default block size is given bad dimensions!" );
+
+std::vector<std::tuple<std::size_t, dim3, dim3>> knownGridDim {};
+
+inline bool operator==(const dim3& ref1, const dim3& ref2)
+{ return ref1.x == ref2.x && ref1.y == ref2.y && ref1.z == ref2.z; }
+
+//calculate a cuda reference compliant grid fitting 
+__host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
+{
+    //try to use acceleration
+    auto lookupResult = std::find_if( knownGridDim.begin(), knownGridDim.end(), [&size, &bSize] ( const std::tuple<std::size_t, dim3, dim3>& p ) { return std::get<0>(p) == size && std::get<1>(p) == bSize; } );
+    if( lookupResult != knownGridDim.end() )
+        return std::get<2>(*lookupResult);
+
+    constexpr std::size_t gridDimMax { 65535 };
+    const std::size_t tPerBlock { bSize.x * bSize.y * bSize.z };
+    //ceil( size/tPerBlock )
+    const std::size_t bCount { (size + tPerBlock - 1) / tPerBlock };
+
+    dim3 optimalGrid{};
+    if( bCount <= gridDimMax )
+        optimalGrid = dim3{ static_cast<unsigned int>(bCount) };
+    else if( bCount <= gridDimMax * gridDimMax )
+    {
+        //TODO: implement lookup using primes table sometime
+        //with float values, and 3 values per array this will address 48GiB of values
+        //both guaranteed to not truncate over the branching condition above
+        const int min { static_cast<int>((bCount + gridDimMax - 1) / gridDimMax) };
+        const int max { static_cast<int>(std::ceil( std::sqrt(static_cast<double>( bCount )) )) };
+        int optDim = min; int optRemainder = max;
+        int dim = min;
+        for(; dim <= max; dim++)
+        {
+            int Remainder = bCount % dim;
+            if( Remainder == 0 )
+            {
+                optDim = dim;
+                optRemainder = Remainder;
+                break;
+            }
+
+            Remainder = dim - Remainder;
+            if( Remainder < optRemainder )
+            {
+                optDim = dim;
+                optRemainder = Remainder;
+            }
+        }
+        dim = (bCount + optDim - 1) / optDim;
+        dim3 numBlocks(std::max(optDim, dim), std::min(optDim, dim));
+    }
+    else
+        //TODO: implement 3D block grid addressing, up to 3 PiB(with 3 points per interpolation)
+        return {};
+
+    knownGridDim.push_back( { size, bSize, optimalGrid } );
+
+    return optimalGrid;
+}
+
+__host__ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
 {
     int cPoints = len/2 + 1;
     int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) * cPoints), maxBatch );
@@ -71,7 +137,7 @@ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t ma
     return batch_size==0? batch_size : maxBatch;
 }
 
-int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
+__host__ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
 {
     long long int cPoints = len/2 + 1;
     long long int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) *  cPoints), maxBatch );
@@ -363,13 +429,15 @@ __global__ void interp(
     if( index > batchSize )
         return; //return if thread lands outside of the batch
 
-    double* a = (double*)malloc(sizeof(double) * splLen);
-    double* z = (double*)malloc(sizeof(double) * splLen);
+    double* a = (double*)malloc(sizeof(double)  * 2 * splLen);
+    double* z = a + splLen;
     //abort if ran out of memory
-    //TODO: add external indication of failure due to running out of memory
-    if(a == NULL || z == NULL)
+    //TODO: add external indication of failure due to running out of memory 
+    //TODO: can organize it so allocation is in loop and threads will fall out of warp execution until there is enough memory
+    //CAUTION: this will freeze gpu execution if there is no space for even a single thread
+    if(a == NULL)
     {
-        free(a); free(z);
+        free(a);
         return;
     }
     //copy original values into the array 'a'
@@ -412,8 +480,8 @@ __global__ void interp(
         //rotate in the end
         cnext = c;
     }
-    
-    free(a); free(z);
+ 
+    free(a);
 }
 
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
