@@ -497,44 +497,10 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     //move data into array
     result = result && (cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) == cudaSuccess);
     result = result && (cufftExecR2C( plan, (cufftReal*)data, data ) == CUFFT_SUCCESS);
+    //if there is a norm to use, normalize the data
     if( norm != 1.0f && result )
-    {
-        constexpr const std::size_t maxPerBDim { 65535 };
-        dim3 threadPerBlock( 16, 16 );
-        const std::size_t bCount { ( nBatchSize * 2 * (fftLength/2 + 1) + 255 ) / 256 };//block count is rounded up
-        if( bCount <= maxPerBDim ) // max ~64MB
-        {
-            int bLineSize = bCount;
-            normalize<<<bLineSize, threadPerBlock>>>((cufftReal*)data, nBatchSize, norm);
-        }
-        else if( bCount <= maxPerBDim * maxPerBDim ) // max ~4TB
-        {
-            int dim = std::ceil( std::sqrt (static_cast<double>(maxPerBDim)) );
-            int optDim = dim; int optRemainder = dim;
-            while( (bCount + dim - 1 ) / dim < maxPerBDim && dim > 0 )
-            {
-                int Remainder = bCount % dim;
-                if( Remainder == 0 )
-                {
-                    optDim = dim;
-                    optRemainder = Remainder;
-                    break;
-                }
+        normalize<<<to_grid(2 * nBatchSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>>((cufftReal*)data, 2 * nBatchSize * (fftLength/2 + 1), norm);
 
-                Remainder = dim - Remainder;
-                if( Remainder < optRemainder )
-                {
-                    optDim = dim;
-                    optRemainder = Remainder;
-                }
-
-                dim--;
-            }
-            dim3 numBlocks( (bCount+optDim-1) / optDim, optDim );
-            normalize<<<numBlocks, threadPerBlock>>> ((cufftReal*)data, nBatchSize, norm);
-        }
-        //TODO: think how to handle case if somehow there is more than 4TB of data
-    }
     result = result && (cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) == cudaSuccess);
     result = result && (cudaDeviceSynchronize() == cudaSuccess);
 
