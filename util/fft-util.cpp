@@ -624,6 +624,8 @@ int main(int argc, char** argv)
     int gpu { -1 };
     std::optional<std::size_t> maxRam{};
     std::optional<std::size_t> maxVRam{};
+    bool no_norm { false };
+    bool no_reinterp { false };
     //first parse command-line options
     try
     {
@@ -640,7 +642,9 @@ int main(int argc, char** argv)
             ("gpu", boost::program_options::value<int>(&gpu)->default_value(-1), "GPU id for CUDA fft.")
             ("max-ram", boost::program_options::value<std::string>()->notifier([&maxRam](const std::string& sizeSpec){ maxRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on host machine for buffers.")
             ("max-vram", boost::program_options::value<std::string>()->notifier([&maxVRam](const std::string& sizeSpec){ maxVRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on GPU for transform.")
-            ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.");
+            ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.")
+            ("no-norm", boost::program_options::bool_switch(&no_norm), "Don't normalize the fourier transform result.")
+            ("no-reinterp", boost::program_options::bool_switch(&no_reinterp), "Don't reinterpolate the data to remove jitter.");
 
         //set position of input-files to automatically them without a switch
         boost::program_options::positional_options_description pos_desc;
@@ -935,7 +939,7 @@ int main(int argc, char** argv)
     }
 
     //work on time array to set some more options
-    double trueStep{ (times.back() - times.front())/(tSeriesLength - 1) }; bool reinterp {false};
+    double trueStep{ (times.back() - times.front())/(tSeriesLength - 1) };
     {
         std::vector<double> distances(++times.begin(), times.end());
         auto dIt = distances.begin();
@@ -973,6 +977,11 @@ int main(int argc, char** argv)
         }
         if(!outliers.empty())
             std::cout << "Following files found to be far away from expected times: " << outliers << '\n';
+
+        //and then check if we still need to reinterpolate
+        //abort interpolation iff dispersion is less than 5 rounding errors of float and there are no outliers
+        if( !no_reinterp && ( outliers.empty() && TstepDisp <= 5 * std::numeric_limits<float>::epsilon() * trueStep ) )
+            no_reinterp = true;
     }
 
     //wait here for GPU to finish initializing, and buffers being created
@@ -983,11 +992,15 @@ int main(int argc, char** argv)
         std::cerr << "Failed to initialize a FFT engine, quiting!\n";
         return -1;
     }
+    //initialize interpolation
+    if( !no_reinterp )
+        if( !fft_engine -> InitInterp(times.data(), times.size()) )
+            std::cerr << "Failed to initialize an interpolation!\n";
 
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    float norm = std::sqrt( trueStep );//scaling to get value in amplitude/sqrt(Hz)
+    const float norm { no_norm? 1.0f : (float)std::sqrt( trueStep ) };//scaling to get value in amplitude/sqrt(Hz)
     //float norm = 1.0f;
     std::thread gpuStreamThread( [&] ()
     {
