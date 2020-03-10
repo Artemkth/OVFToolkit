@@ -1,5 +1,9 @@
 OPTION(NO_MATHEMATICA_INTERFACE "Skip building interface library for Wolram Mathematica to access OVFToolkit functionality" OFF)
 IF(Mathematica_WSTP_FOUND)
+    CHECK_INCLUDE_FILE("wordexp.h" WORDEXP_FOUND)
+    IF(WORDEXP_FOUND)
+        add_definitions(-DEXPANDPATH)
+    ENDIF()
     MESSAGE(STATUS "Building Wolfram Mathematica integration libraries.")
 
     #first add generator for glue code

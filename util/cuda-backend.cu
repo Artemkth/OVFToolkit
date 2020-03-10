@@ -5,6 +5,8 @@
 #include<tuple>
 #include<algorithm>
 
+static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
+
 using namespace std::string_literals;
 constexpr std::array<std::size_t, 31> AllowedFactors { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
 inline __host__ bool is4GCompatible( std::size_t size )
@@ -35,7 +37,7 @@ std::vector<std::tuple<std::size_t, dim3, dim3>> knownGridDim {};
 inline bool operator==(const dim3& ref1, const dim3& ref2)
 { return ref1.x == ref2.x && ref1.y == ref2.y && ref1.z == ref2.z; }
 
-//calculate a cuda reference compliant grid fitting 
+//calculate a cuda reference compliant grid fitting requested ammount of kernel launches
 __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
 {
     //try to use acceleration
@@ -500,7 +502,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     result = result && (cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) == cudaSuccess);
     //reinterpolate data if interpolation is ready
     if ( fftLength > 2 && InterpAccel.Ready )
-        interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>> (
+        interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
                 (float*)data, nBatchSize, fftLength - 1, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l,
                 InterpAccel.Indices, InterpAccel.dt);

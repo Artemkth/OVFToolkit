@@ -15,11 +15,6 @@
 #include<stdexcept>
 #include<cstdint>
 //small convinience on *nix systems
-//TODO: replace with cmake detection later, CheckIncludeFile
-#if defined(__unix__) || defined(__LINUX__) || defined(__APPLE__)
-#define EXPANDPATH
-#endif
-
 #ifdef EXPANDPATH
 #include<wordexp.h>
 #endif
@@ -32,8 +27,24 @@
 
 //glue code for mathematica's library
 //handles the connection to mathematica kernel
+#if WINDOWS_WSTP
+int __stdcall WinMain( HINSTANCE hinstCurrent, HINSTANCE hinstPrevious, LPSTR lpszCmdLine, int nCmdShow)
+{
+        char  buff[512];
+        char FAR * buff_start = buff;
+        char FAR * argv[32];
+        char FAR * FAR * argv_end = argv + 32;
+
+        hinstPrevious = hinstPrevious; /* suppress warning */
+
+        if( !WSInitializeIcon( hinstCurrent, nCmdShow)) return 1;
+        WSScanString( argv, &argv_end, &lpszCmdLine, &buff_start);
+        return WSMain( (int)(argv_end - argv), argv);
+}
+#else
 int main(int argc, char** argv)
 { return WSMain(argc, argv); }
+#endif
 
 //global counter for expected return packets
 std::size_t skip_cnt{0};
