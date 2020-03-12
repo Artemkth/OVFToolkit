@@ -29,14 +29,16 @@ class cuFFTEngine: public FFTEngine<float>
             std::size_t* Indices{nullptr};
             double* dt{nullptr};
 
+            //per-thread buffer heap
+            std::size_t blockBufferCnt {0};
+            double* BlockBuffer{nullptr};
+
             //free the data
             void free()
             {
                 cudaFree(h);
-                cudaFree(mu);
-                cudaFree(l);
                 cudaFree(Indices);
-                cudaFree(dt);
+                cudaFree(BlockBuffer);
 
                 Ready = false;
             }
@@ -46,6 +48,7 @@ class cuFFTEngine: public FFTEngine<float>
         //create cuda engine bound to GPU #gpu
         cuFFTEngine(int gpu = -1) noexcept : gpuID(gpu)
         { if(cufftCreate(&plan) != CUFFT_SUCCESS) fail = true; }
+        //TODO: move destructor into .cu
         ~cuFFTEngine() noexcept
         {
             cufftDestroy(plan); cudaFree(data);

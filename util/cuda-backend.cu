@@ -7,6 +7,30 @@
 
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
+//mutex for memory management, used on block level
+__device__ int allocBusy;
+//and allocation table
+__device__ std::size_t* allocTable;
+
+//allocate memory for a block, writes in the number of a free block
+__device__ void allocInterpBuffer( std::size_t& buf )
+{
+    //spinlock until allocation table has free memory and aquire the lock,
+    //freeing memory has pririty this way
+    //TODO: look if CUDA has spinlock notification like _mu_pause
+    while( allocTable[0] != 0 && atomicCAS(&allocBusy, 0, 1) );
+    buf = allocTable[ allocTable[0]-- ];
+    allocBusy = 0;
+}
+
+//make memory available for other blocks
+__device__ void freeInterpBuffer( std::size_t buf )
+{
+    while( atomicCAS(&allocBusy, 0, 1) );
+    allocTable[ ++allocTable[0] ] = buf;
+    allocBusy = 0;
+}
+
 using namespace std::string_literals;
 constexpr std::array<std::size_t, 31> AllowedFactors { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
 inline __host__ bool is4GCompatible( std::size_t size )
@@ -192,8 +216,14 @@ extern std::string printMemSize(std::size_t);
 std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
 {
     fftLength = t_len;
-    fail = false; //reset just in case
-    InterpAccel.Ready = false;
+    //reset internal data if reinitializing
+    if( Ready )
+    {
+        cufftDestroy(plan); cufftCreate(&plan);
+        cudaFree(data);
+        InterpAccel.free();
+        Ready = false;
+    }
 
     int devCount; cudaGetDeviceCount(&devCount);
     if( devCount == 0 )
@@ -223,17 +253,19 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
 
     //get device characteristics
     std::string result{};
+    std::size_t freeMem, totalMem;
     cudaDeviceProp props{};
     cudaGetDeviceProperties(&props, curGPU);
+    cudaMemGetInfo(&freeMem, &totalMem);
     result += "Using GPU #"s + std::to_string(curGPU) + " \"" + props.name + "\" "
            +  std::to_string( props.multiProcessorCount ) + "SM" + '@' + std::to_string( props.clockRate / 1000 ) + "MHz, "
-           +  printMemSize( props.totalGlobalMem ) + "s of global memory on device." ;
-    if(maxMem > props.totalGlobalMem)
+           +  printMemSize( totalMem ) + "s of global memory on device (" + printMemSize(freeMem) + " free)." ;
+    if(maxMem > freeMem)
     {
         result += "\nWarning: Device doesn't have memory requested: " + printMemSize( maxMem ) + ", defaulting to 95% of total GPU memory.";
-        maxMem = 0.95 * props.totalGlobalMem;
+        maxMem = 0.95 * freeMem;
     }
-    if(maxMem == 0) maxMem = 0.95 * props.totalGlobalMem; //defaulting to 95% of available VRAM
+    if(maxMem == 0) maxMem = 0.95 * freeMem; //defaulting to 95% of available VRAM
 
     //conversion to acceptable type for fft
     if( fftLength  > std::numeric_limits<long long int>::max() )
@@ -360,7 +392,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
 {
     if( fail || cnt > fftLength || cnt < 2 )
         return false;
-    InterpAccel.Ready = false;
+    InterpAccel.free();
 
     InterpAccel.sCnt = cnt - 1;//nunmber of intervals between cnt points
     InterpAccel.trueStep = (*(ts + cnt - 1) - *ts) / (fftLength - 1);
@@ -368,11 +400,25 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     const auto& step = InterpAccel.trueStep;
 
     //do some host calculations and upload arithmetic accelerators onto the gpu
-    auto* h  = new double[sCnt];
-    auto* mu = new double[sCnt];
-    auto* l  = new double[sCnt];
+    auto* h  = new double[3 * sCnt + fftLength - 2];
+    auto* mu = h + sCnt;
+    auto* l  = h + 2 * sCnt;
+    auto* dts= h + 3 * sCnt;
     auto* ind= new std::size_t[fftLength - 2];
-    auto* dts= new double[fftLength - 2];
+
+    constexpr std::size_t threadPerBlock {
+        DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z
+    };
+    const std::size_t staticOverhead {
+        //shared interp accelerators
+        (3 * sCnt + fftLength - 2) * sizeof(double) + 
+        (fftLength - 2) * sizeof(std::size_t) + 
+        //__shared__ memory segment number for each block
+        (batchSize + threadPerBlock - 1) / threadPerBlock * sizeof(std::size_t)
+    };
+    const std::size_t activeBlockOverhead {
+        2 * (fftLength - 2) * threadPerBlock * sizeof(double)
+    };
 
     //fill in const data
     mu[0] = 0.; l[0] = 1.; h[0] = ts[1] - ts[0];
@@ -385,25 +431,28 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     //calculate access indices and time shifts
     for( std::size_t i = 1; i < fftLength - 1; i++ )
     {
-        std::size_t j{1};
+        std::size_t j{0};
         for(; j < sCnt; j++)
-            if( ts[0] + i * step < ts[j] )
+            if( (ts[0] + i * step) < ts[j + 1] )
                 break;
-        j -= 1;
+
         ind[i - 1] = j;
         dts[i - 1] = ts[0] + i * step - ts[j];
     }
 
     //upload results to gpu memory
-    //TODO: look into merging whole memory clown fiesta into single array allocated and freed once
-    bool failed =  
-        cudaMalloc( &InterpAccel.h, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.h, (const void*)h, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
-        cudaMalloc( &InterpAccel.mu, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.mu, (const void*)mu, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
-        cudaMalloc( &InterpAccel.l, sizeof(double) * sCnt ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.l, (const void*)l, sCnt, cudaMemcpyHostToDevice ) != cudaSuccess ||
-        cudaMalloc( &InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2) ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.Indices, (const void*)ind, fftLength - 2, cudaMemcpyHostToDevice ) != cudaSuccess ||
-        cudaMalloc( &InterpAccel.dt, sizeof(double) * (fftLength - 2) ) != cudaSuccess || cudaMemcpy( (void*)InterpAccel.dt, (const void*)dts, fftLength - 2, cudaMemcpyHostToDevice ) != cudaSuccess ||
-        cudaDeviceSynchronize() != cudaSuccess;
-    if(failed)
+    bool failed = cudaMalloc(&InterpAccel.h, sizeof(double) * (3 * sCnt + fftLength - 2)) != cudaSuccess &&
+                  cudaMalloc(&InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2)) != cudaSuccess &&
+                  cudaMemcpy((void*)InterpAccel.h, (const void*)h, 
+                          3 * sCnt + fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess &&
+                  cudaMemcpy((void*)InterpAccel.Indices, (const void*)ind,
+                          fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess;
+    InterpAccel.mu = InterpAccel.h + sCnt;
+    InterpAccel.l  = InterpAccel.h + 2 * sCnt;
+    InterpAccel.dt = InterpAccel.h + 3 * sCnt;
+
+    //and now create a buffer for blocks
+    if(failed && cudaDeviceSynchronize() != cudaSuccess)
     {
         InterpAccel.free();
         cudaDeviceSynchronize();
@@ -411,7 +460,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     InterpAccel.Ready = !failed;
 
     //clear host memory
-    delete[] h; delete[] mu; delete[] l; delete[] ind; delete[] dts;
+    delete[] h; delete[] ind;
     return InterpAccel.Ready;
 }
 
@@ -440,10 +489,8 @@ __global__ void interp(
     //TODO: can organize it so allocation is in loop and threads will fall out of warp execution until there is enough memory
     //CAUTION: this will freeze gpu execution if there is no space for even a single thread
     if(a == NULL)
-    {
-        free(a);
         return;
-    }
+
     //copy original values into the array 'a'
     for(size_t i = 0; i < splLen; i++)
         a[i] = *(data + i * batchSize + index);
@@ -501,7 +548,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     //move data into array
     result = result && (cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) == cudaSuccess);
     //reinterpolate data if interpolation is ready
-    if ( fftLength > 2 && InterpAccel.Ready )
+    if (false && fftLength > 2 && InterpAccel.Ready )//TODO: uncomment when done implementing 
         interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
                 (float*)data, nBatchSize, fftLength - 1, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l,
