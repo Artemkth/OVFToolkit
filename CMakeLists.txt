@@ -27,7 +27,6 @@ find_package(Mathematica COMPONENTS WSTP)
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake/findFFTW" ${CMAKE_MODULE_PATH})
 #try to find FFTW(3.0), cuFFTW and GSL for fourier analysis
 find_package(FFTW COMPONENTS FLOAT_THREADS_LIB)
-find_package(GSL)
 include(CheckLanguage)
 CHECK_LANGUAGE(CUDA)
 IF(CMAKE_CUDA_COMPILER)

@@ -15,6 +15,7 @@ IF(Mathematica_WSTP_FOUND)
         OVFToolkit.tm.c
         math-interface.cpp
         )
+    set_target_properties( math-ovftoolkit PROPERTIES WIN32_EXECUTABLE ${WIN32})
     target_link_libraries( math-ovftoolkit "${Mathematica_WSTP_LIBRARIES}" ovfparser )
     target_include_directories( math-ovftoolkit PRIVATE "${Mathematica_WSTP_INCLUDE_DIR}" )
 ENDIF()
