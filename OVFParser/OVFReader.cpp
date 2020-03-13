@@ -560,6 +560,7 @@ namespace VField{
                 if(log != "") log += "\n";
                 log+= (std::string)"readHeader: found premature close of a section at line #" + std::to_string(line_cnt) +
                     ":\n" + buffer;
+                break;
             case(OVFParameter::Mtype):
                 if(head.isSet(OVFParameter::Mtype))
                 {

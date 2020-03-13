@@ -201,8 +201,8 @@ namespace VField
             case(1)://other rule
                 {
                     const auto& specifier = std::get<FieldSpecifier> (rule);
-                    const bool required { specifier.first.index() == 0 && std::get<bool>(specifier.first) ||
-                                          specifier.first.index() == 1 && std::get<1>(specifier.first)(header) };
+                    const bool required { (specifier.first.index() == 0 && std::get<bool>(specifier.first)) ||
+                                          (specifier.first.index() == 1 && std::get<1>(specifier.first)(header)) };
                     const bool optional { specifier.first.index() == 0 && !std::get<bool>(specifier.first) };
                     //only have anything to do if 'required || optional'
                     if(required || optional)

@@ -80,6 +80,9 @@ target_include_directories(ovfparser
                            #config header
                            "${PROJECT_BINARY_DIR}"
                           )
+target_compile_options(ovfparser PRIVATE
+    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>: -Werror -Wall -Wextra -pedantic-errors>
+    $<$<CXX_COMPILER_ID:MSVC>: /W4>)
 
 #build recepy for fft util
 IF(BUILD_FFUTIL)

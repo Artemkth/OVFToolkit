@@ -1020,6 +1020,8 @@ int main(int argc, char** argv)
                 !fft_engine -> RunTransform(curBuffer -> data.get(), norm, fft_engine -> expectedBatch() - curBuffer -> realPoints ))
             {
                 curBuffer -> state = BufferState::FAIL;
+                lock.unlock();
+                gpuRotate.notify_all();
                 return; //stop if failure was encountered
             }
 
@@ -1127,7 +1129,12 @@ int main(int argc, char** argv)
         if( buffers[0] -> state == BufferState::FAIL ||
             buffers[1] -> state == BufferState::FAIL )
         {
+            monitorOn = false;
+            gpuStreamThread.join();
+            MonitorThread.join();
             std::cerr << "GPU thread failed!\n";
+            tmpFile.close();
+            std::filesystem::remove( tmpPath );
             return -1;
         }
 
@@ -1147,6 +1154,11 @@ int main(int argc, char** argv)
     if(buffers[1] -> state == BufferState::FAIL)
     {
         std::cerr << "GPU thread failed!\n";
+        monitorOn = false;
+        gpuStreamThread.join();
+        MonitorThread.join();
+        tmpFile.close();
+        std::filesystem::remove( tmpPath );
         return -1;
     }
     buffers[1] -> state = BufferState::STOP;
@@ -1154,8 +1166,19 @@ int main(int argc, char** argv)
     //and wait for the last one to finish processing
     std::unique_lock<std::mutex> lock(rotLock);
     gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL;});
-    buffers[0] -> state = BufferState::STOP;
     lock.unlock();
+    if(buffers[0] -> state == BufferState::FAIL)
+    {
+        std::cerr << "GPU thread failed!\n";
+        monitorOn = false;
+        gpuStreamThread.join();
+        MonitorThread.join();
+        tmpFile.close();
+        std::filesystem::remove( tmpPath );
+        return -1;
+    }
+    else 
+        buffers[0] -> state = BufferState::STOP;
 
     gpuRotate.notify_all();
     gpuStreamThread.join();

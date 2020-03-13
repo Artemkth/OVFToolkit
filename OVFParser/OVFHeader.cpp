@@ -191,12 +191,10 @@ namespace VField{
             case(pType::Other):
                 if(refP == OVFParameter::Mtype)
                     return data->meshType != std::nullopt;
+                return false;
             default:
                 return false;
         }
-        //just to silence the compiler
-        //lambs are silent now
-        return false;
     }
     //getters
     const associatedType_t<pType::String>& OVFHeader::getString(OVFParameter param) const &
@@ -225,7 +223,7 @@ namespace VField{
     }
     //reset function
     void OVFHeader::reset()
-    {data->reset();data->isChecked = false;};
+    {data->reset();data->isChecked = false;}
 
     //unset a parameter
     void OVFHeader::reset(OVFParameter p) noexcept

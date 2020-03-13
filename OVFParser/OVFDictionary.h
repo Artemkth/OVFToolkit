@@ -385,5 +385,5 @@ namespace VField{
                 return x.second;
         return "Undefined token";
     }
-};
+}
 

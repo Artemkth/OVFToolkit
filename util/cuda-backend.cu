@@ -8,9 +8,10 @@
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
 //mutex for memory management, used on block level
-__device__ int allocBusy;
+__device__ int allocBusy = 0;
 //and allocation table
 __device__ std::size_t* allocTable;
+std::size_t* allocTableHandle{nullptr};
 
 //allocate memory for a block, writes in the number of a free block
 __device__ void allocInterpBuffer( std::size_t& buf )
@@ -18,17 +19,43 @@ __device__ void allocInterpBuffer( std::size_t& buf )
     //spinlock until allocation table has free memory and aquire the lock,
     //freeing memory has pririty this way
     //TODO: look if CUDA has spinlock notification like _mu_pause
-    while( allocTable[0] != 0 && atomicCAS(&allocBusy, 0, 1) );
-    buf = allocTable[ allocTable[0]-- ];
-    allocBusy = 0;
+    while(true)
+    {
+        while( allocTable[0] != 0 && atomicCAS(&allocBusy, 0, 1) != 0 );
+        if( allocTable[0] != 0)
+        {
+            buf = allocTable[ allocTable[0] -- ];
+            allocBusy = 0;
+            return;
+        }
+        allocBusy = 0;
+    }
 }
 
 //make memory available for other blocks
 __device__ void freeInterpBuffer( std::size_t buf )
 {
-    while( atomicCAS(&allocBusy, 0, 1) );
-    allocTable[ ++allocTable[0] ] = buf;
+    while( atomicCAS(&allocBusy, 0, 1) != 0 );
+    allocTable[ ++ allocTable[0] ] = buf;
     allocBusy = 0;
+}
+
+//I can't believe this is not already provided by api :'(
+__host__ __device__ inline bool operator==(const dim3& ref1, const dim3& ref2)
+{ return ref1.x == ref2.x && ref1.y == ref2.y && ref1.z == ref2.z; }
+
+__global__ void InitAllocTable( std::size_t size )
+{
+    //only one thread of a block matters
+    if( threadIdx == dim3(0, 0, 0) )
+    {
+        atomicCAS(&allocBusy, 0, 1);
+        allocTable[0] = size;
+        for(std::size_t i = 0; i < size; i++)
+            allocTable[i + 1] = i;
+
+        allocBusy = 0;
+    }
 }
 
 using namespace std::string_literals;
@@ -57,9 +84,6 @@ static_assert( DefaultBlockSize.x <= 1024 && DefaultBlockSize.y <= 1024 && Defau
                DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z <= 1024, "Default block size is given bad dimensions!" );
 
 std::vector<std::tuple<std::size_t, dim3, dim3>> knownGridDim {};
-
-inline bool operator==(const dim3& ref1, const dim3& ref2)
-{ return ref1.x == ref2.x && ref1.y == ref2.y && ref1.z == ref2.z; }
 
 //calculate a cuda reference compliant grid fitting requested ammount of kernel launches
 __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
@@ -217,12 +241,12 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
 {
     fftLength = t_len;
     //reset internal data if reinitializing
-    if( Ready )
+    if( data != nullptr )
     {
-        cufftDestroy(plan); cufftCreate(&plan);
+        cufftDestroy(plan);
         cudaFree(data);
         InterpAccel.free();
-        Ready = false;
+        fail = false;
     }
 
     int devCount; cudaGetDeviceCount(&devCount);
@@ -244,12 +268,13 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         {
             cudaDeviceReset(); data = nullptr;
             fail = cudaSetDevice(gpuID) != cudaSuccess;
-            fail = cufftCreate(&plan) != CUFFT_SUCCESS;
         }
 
         if(fail)
             return "Failed to get GPU id#"s + std::to_string(gpuID) + ".";
     }
+    fail = cufftCreate(&plan) != CUFFT_SUCCESS;
+    if(fail) return "Failed to create a plan on requested gpu!\n";
 
     //get device characteristics
     std::string result{};
@@ -393,18 +418,12 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     if( fail || cnt > fftLength || cnt < 2 )
         return false;
     InterpAccel.free();
+    cudaFree(allocTableHandle);
 
     InterpAccel.sCnt = cnt - 1;//nunmber of intervals between cnt points
     InterpAccel.trueStep = (*(ts + cnt - 1) - *ts) / (fftLength - 1);
     const auto& sCnt = InterpAccel.sCnt;
     const auto& step = InterpAccel.trueStep;
-
-    //do some host calculations and upload arithmetic accelerators onto the gpu
-    auto* h  = new double[3 * sCnt + fftLength - 2];
-    auto* mu = h + sCnt;
-    auto* l  = h + 2 * sCnt;
-    auto* dts= h + 3 * sCnt;
-    auto* ind= new std::size_t[fftLength - 2];
 
     constexpr std::size_t threadPerBlock {
         DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z
@@ -415,10 +434,28 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
         (fftLength - 2) * sizeof(std::size_t) + 
         //__shared__ memory segment number for each block
         (batchSize + threadPerBlock - 1) / threadPerBlock * sizeof(std::size_t)
+        // add calculation of worst case scenario allocation table here as well
     };
     const std::size_t activeBlockOverhead {
-        2 * (fftLength - 2) * threadPerBlock * sizeof(double)
+        2 * (fftLength - 1) * threadPerBlock * sizeof(double)
     };
+
+    //evaluate the memory constraints
+    std::size_t freeMem, totMem;
+    cudaMemGetInfo( &freeMem, &totMem );
+    if( freeMem < (staticOverhead + activeBlockOverhead) )
+        return false;
+    const std::size_t targetBCount {
+        //TODO: get max number of active warps/blocks from cuda API instead of 12 LULW
+        std::min( (freeMem - staticOverhead) / activeBlockOverhead, 12lu )
+    };
+
+    //do some host calculations and upload arithmetic accelerators onto the gpu
+    auto* h  = new double[3 * sCnt + fftLength - 2];
+    auto* mu = h + sCnt;
+    auto* l  = h + 2 * sCnt;
+    auto* dts= h + 3 * sCnt;
+    auto* ind= new std::size_t[fftLength - 2];
 
     //fill in const data
     mu[0] = 0.; l[0] = 1.; h[0] = ts[1] - ts[0];
@@ -441,20 +478,32 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     }
 
     //upload results to gpu memory
-    bool failed = cudaMalloc(&InterpAccel.h, sizeof(double) * (3 * sCnt + fftLength - 2)) != cudaSuccess &&
-                  cudaMalloc(&InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2)) != cudaSuccess &&
+    bool failed = cudaMalloc(&InterpAccel.h, sizeof(double) * (3 * sCnt + fftLength - 2)) != cudaSuccess ||
+                  cudaMalloc(&InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2)) != cudaSuccess ||
+                  cudaMalloc(&InterpAccel.BlockBuffer, activeBlockOverhead * targetBCount) != cudaSuccess ||
                   cudaMemcpy((void*)InterpAccel.h, (const void*)h, 
-                          3 * sCnt + fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess &&
+                          3 * sCnt + fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess ||
                   cudaMemcpy((void*)InterpAccel.Indices, (const void*)ind,
                           fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess;
-    InterpAccel.mu = InterpAccel.h + sCnt;
-    InterpAccel.l  = InterpAccel.h + 2 * sCnt;
-    InterpAccel.dt = InterpAccel.h + 3 * sCnt;
+    if(!failed)
+    {
+        InterpAccel.mu = InterpAccel.h + sCnt;
+        InterpAccel.l  = InterpAccel.h + 2 * sCnt;
+        InterpAccel.dt = InterpAccel.h + 3 * sCnt;
+        InterpAccel.blockBufferCnt = targetBCount;
+    }
+    //TODO: implement retrying BlockBuffer allocation
 
-    //and now create a buffer for blocks
-    if(failed && cudaDeviceSynchronize() != cudaSuccess)
+    //next initialize the allocation table
+    failed = failed || cudaMalloc(&allocTableHandle, sizeof(std::size_t) * (targetBCount + 1)) != cudaSuccess ||
+             cudaMemcpyToSymbol((const void*)&allocTable, (const void*)&allocTableHandle, sizeof(std::size_t*)) != cudaSuccess;
+    if(!failed) InitAllocTable<<<1,1>>>(InterpAccel.blockBufferCnt);
+
+    //and cleanup if failed along the way 
+    if(failed || cudaDeviceSynchronize() != cudaSuccess)
     {
         InterpAccel.free();
+        cudaFree(allocTableHandle);
         cudaDeviceSynchronize();
     }
     InterpAccel.Ready = !failed;
@@ -464,9 +513,17 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     return InterpAccel.Ready;
 }
 
+cuFFTEngine::~cuFFTEngine() noexcept
+{
+    cufftDestroy(plan); cudaFree(data);
+    cudaFree(allocTableHandle);
+    InterpAccel.free();
+}
+
 //run interpolation over data to remove jitter
 __global__ void interp(
         float * const __restrict__ data,
+        double* const __restrict__ buffer,
         std::size_t batchSize,
         std::size_t splLen,
         std::size_t outLen,
@@ -478,18 +535,18 @@ __global__ void interp(
 {
     const std::size_t index { (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x * blockDim.y + 
                               threadIdx.y * blockDim.x + threadIdx.x };
+    __shared__ std::size_t memBlock;
 
     if( index > batchSize )
         return; //return if thread lands outside of the batch
 
-    double* a = (double*)malloc(sizeof(double)  * 2 * splLen);
+    if( threadIdx == dim3(0, 0, 0) )
+        allocInterpBuffer( memBlock );
+    __syncthreads();
+
+    double* a = buffer + 2 * splLen *
+        (memBlock * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x);
     double* z = a + splLen;
-    //abort if ran out of memory
-    //TODO: add external indication of failure due to running out of memory 
-    //TODO: can organize it so allocation is in loop and threads will fall out of warp execution until there is enough memory
-    //CAUTION: this will freeze gpu execution if there is no space for even a single thread
-    if(a == NULL)
-        return;
 
     //copy original values into the array 'a'
     for(size_t i = 0; i < splLen; i++)
@@ -499,7 +556,7 @@ __global__ void interp(
     z[0] = 0.;
     for(size_t i = 1; i < splLen; i++)
     {
-        double alpha = 3./h[i] * (*(data + (i + 1) * batchSize + index) - *(data + i * batchSize + index) ) - 
+        double alpha = 3./h[i] * (*(data + (i + 1) * batchSize + index) - *(data + i * batchSize + index) ) -
                        3./h[i - 1] * (*(data + i * batchSize + index) - *(data + (i-1) * batchSize + index) );
         z[i] = (alpha - h[i - 1] * z[i - 1])/l[i];
     }
@@ -518,7 +575,7 @@ __global__ void interp(
             const double dtVal = dt[outLen - 3 - spl_i];
 
             //and assign the interpolated value
-            *(data + (outLen - 2 - spl_i)*batchSize + index) = a[j] +
+            *(data + (outLen - 2 - spl_i) * batchSize + index) = a[j] +
                 ((*(data + (j + 1) * batchSize + index) - *(data + j * batchSize + index))/h[j] -h[j] * (cnext + 2 * c) / 3.) * dtVal +
                 c * dtVal * dtVal +
                 (cnext - c)/(3. * h[j]) * dtVal * dtVal * dtVal;
@@ -531,8 +588,11 @@ __global__ void interp(
         //rotate in the end
         cnext = c;
     }
+    //wait here for all thread to finish before abandoning the allocation
+    __syncthreads();
  
-    free(a);
+    if( threadIdx == dim3(0, 0, 0) )
+        freeInterpBuffer( memBlock );
 }
 
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
@@ -541,32 +601,29 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
         return false;
 
     std::size_t nBatchSize { batchSize - padding };
-    bool result {true};
 
     if( padding != 0 )
-        result = reallocate(nBatchSize);
+        fail = !reallocate(nBatchSize);
     //move data into array
-    result = result && (cudaMemcpy( (void*)data, (void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) == cudaSuccess);
+    fail = fail || cudaMemcpy( (void*)data, (const void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
-    if (false && fftLength > 2 && InterpAccel.Ready )//TODO: uncomment when done implementing 
+    if ( fftLength > 2 && InterpAccel.Ready )//TODO: uncomment when done implementing 
         interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
-                (float*)data, nBatchSize, fftLength - 1, fftLength,
+                (float*)data, InterpAccel.BlockBuffer, nBatchSize, fftLength - 1, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l,
                 InterpAccel.Indices, InterpAccel.dt);
 
-    result = result && (cufftExecR2C( plan, (cufftReal*)data, data ) == CUFFT_SUCCESS);
+    fail = fail || cufftExecR2C( plan, (cufftReal*)data, data ) != CUFFT_SUCCESS;
     //if there is a norm to use, normalize the data
-    if( norm != 1.0f && result )
+    if( norm != 1.0f && fail )
         normalize<<<to_grid(2 * nBatchSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>> ( (cufftReal*)data, 2 * nBatchSize * (fftLength/2 + 1), norm );
 
-    result = result && (cudaMemcpy( (void*)input, (void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) == cudaSuccess);
-    result = result && (cudaDeviceSynchronize() == cudaSuccess);
+    fail = fail || cudaMemcpy( (void*)input, (const void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
+    fail = fail || cudaDeviceSynchronize() != cudaSuccess;
 
     if( padding != 0 )
-        result = result && reallocate(batchSize) != 0;
+        fail = fail && reallocate(batchSize) != 0;
 
-    if( !result )
-        fail = true;
-    return result;
+    return !fail;
 }
 

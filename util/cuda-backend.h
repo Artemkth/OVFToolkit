@@ -47,13 +47,8 @@ class cuFFTEngine: public FFTEngine<float>
     public:
         //create cuda engine bound to GPU #gpu
         cuFFTEngine(int gpu = -1) noexcept : gpuID(gpu)
-        { if(cufftCreate(&plan) != CUFFT_SUCCESS) fail = true; }
-        //TODO: move destructor into .cu
-        ~cuFFTEngine() noexcept
-        {
-            cufftDestroy(plan); cudaFree(data);
-            InterpAccel.free();
-        }
+        {}
+        ~cuFFTEngine() noexcept;
 
         cuFFTEngine(const cuFFTEngine&) = delete;
         cuFFTEngine& operator=(const cuFFTEngine&) = delete;
