@@ -81,8 +81,8 @@ target_include_directories(ovfparser
                            "${PROJECT_BINARY_DIR}"
                           )
 target_compile_options(ovfparser PRIVATE
-    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>: -Werror -Wall -Wextra -pedantic-errors>
-    $<$<CXX_COMPILER_ID:MSVC>: /W4>)
+    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 
 #build recepy for fft util
 IF(BUILD_FFUTIL)
@@ -90,13 +90,14 @@ IF(BUILD_FFUTIL)
         util/fft-util.cpp
         util/cuda-backend.cu)
 
-    IF(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
-        target_link_libraries(ovf-batchfft PUBLIC ovfparser Threads::Threads FFTW::FloatThreads CUDA::cufft GSL::gsl Boost::program_options)
-        target_include_directories(ovf-batchfft PRIVATE "${PROJECT_SOURCE_DIR}/util" ${PROJECT_BINARY_DIR})
-    ELSE()
-        target_link_libraries(ovf-batchfft PUBLIC ovfparser Threads::Threads FFTW::FloatThreads GSL::gsl Boost::program_options ${CUDA_CUFFT_LIBRARIES})
-        target_include_directories(ovf-batchfft PRIVATE "${PROJECT_SOURCE_DIR}/util" ${PROJECT_BINARY_DIR} ${CUDA_INCLUDE_DIRS} )
-    ENDIF()
+    #TODO: use generators to regulate backend inclusion
+    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads FFTW::FloatThreads GSL::gsl Boost::program_options
+        $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_CUFFT_LIBRARIES}>)
+
+    target_include_directories(ovf-batchfft PRIVATE 
+        "${PROJECT_SOURCE_DIR}/util"
+        "${PROJECT_BINARY_DIR}"
+        $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_INCLUDE_DIRS}>)
 ENDIF()
 
 #and install information for library
