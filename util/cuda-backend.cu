@@ -21,7 +21,7 @@ __device__ void allocInterpBuffer( std::size_t& buf )
     //TODO: look if CUDA has spinlock notification like _mu_pause
     while(true)
     {
-        while( allocTable[0] != 0 && atomicCAS(&allocBusy, 0, 1) != 0 );
+        while( allocTable[0] == 0 || atomicCAS(&allocBusy, 0, 1) != 0 );
         if( allocTable[0] != 0)
         {
             buf = allocTable[ allocTable[0] -- ];
@@ -447,7 +447,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
         return false;
     const std::size_t targetBCount {
         //TODO: get max number of active warps/blocks from cuda API instead of 12 LULW
-        std::min( (freeMem - staticOverhead) / activeBlockOverhead, 12lu )
+        std::min( (freeMem - staticOverhead) / activeBlockOverhead, 24lu )
     };
 
     //do some host calculations and upload arithmetic accelerators onto the gpu

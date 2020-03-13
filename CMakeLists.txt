@@ -69,19 +69,18 @@ add_library(ovfparser
 generate_export_header(ovfparser EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h")
 
 configure_file(OVFToolkitConfig.h.in OVFToolkitConfig.h)
-target_include_directories(ovfparser 
-                           PUBLIC 
-                           $<INSTALL_INTERFACE:include/OVFParser>
-                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/OVFParser>
-                           $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/OVFParser>
-                           PRIVATE
-                           #boost for building internals
-                           "${Boost_INCLUDE_DIRS}"
-                           #config header
-                           "${PROJECT_BINARY_DIR}"
-                          )
+target_include_directories(ovfparser PUBLIC 
+    $<INSTALL_INTERFACE:OVFParser>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/OVFParser>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/OVFParser>
+    PRIVATE
+    #boost for building internals
+    "${Boost_INCLUDE_DIRS}"
+    #config header
+    "${PROJECT_BINARY_DIR}")
+
 target_compile_options(ovfparser PRIVATE
-    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors>
+    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors -Wno-strict-aliasing>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 
 #build recepy for fft util
@@ -90,9 +89,9 @@ IF(BUILD_FFUTIL)
         util/fft-util.cpp
         util/cuda-backend.cu)
 
-    #TODO: use generators to regulate backend inclusion
-    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads FFTW::FloatThreads GSL::gsl Boost::program_options
-        $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_CUFFT_LIBRARIES}>)
+    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
+        $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
+        $<IF:$<VERSION_LESS:CMAKE_VERSION,3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft>)
 
     target_include_directories(ovf-batchfft PRIVATE 
         "${PROJECT_SOURCE_DIR}/util"
