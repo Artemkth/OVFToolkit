@@ -515,11 +515,11 @@ std::size_t parseMemSize(const std::string& sizeSpec)
     switch(*after)
     {
         case 'K':
-            return std::lround(size * 1024);
+            return std::llround(size * 1024);
         case 'M':
-            return std::lround(size * 1024 * 1024);
+            return std::llround(size * 1024 * 1024);
         case 'G':
-            return std::lround(size * 1024 * 1024 * 1024);
+            return std::llround(size * 1024 * 1024 * 1024);
         default:
             throw std::invalid_argument( "Unknown memory size suffix \""s + after + "\", expected K, M or G." );
     }

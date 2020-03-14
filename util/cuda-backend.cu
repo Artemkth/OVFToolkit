@@ -79,9 +79,18 @@ inline __host__ bool is4GCompatible( std::size_t size )
 }
 
 //default thread block, 256 threads on square
+#ifdef _WIN32
+
+const dim3 DefaultBlockSize{ 16, 16 };
+const std::size_t threadPerBlock{ DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z };
+
+#else
 constexpr dim3 DefaultBlockSize{16, 16};
+constexpr std::size_t threadPerBlock{
+    DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z };
 static_assert( DefaultBlockSize.x <= 1024 && DefaultBlockSize.y <= 1024 && DefaultBlockSize.z <= 64 &&
                DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z <= 1024, "Default block size is given bad dimensions!" );
+#endif
 
 std::vector<std::tuple<std::size_t, dim3, dim3>> knownGridDim {};
 
@@ -306,7 +315,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
     
     if( fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
-        (maxMem > 2l * std::numeric_limits<int>::max() * sizeof(float) && //only when available gpu space is higher than 16GB, otherwise there is not enough space to fit both data and fft workspace
+        (maxMem > 2ll * std::numeric_limits<int>::max() * sizeof(float) && //only when available gpu space is higher than 16GB, otherwise there is not enough space to fit both data and fft workspace
         std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() &&
         fftLength % 2 != 0 && is4GCompatible(fftLength)) ) //max memory usage is > 8GB
     {
@@ -315,12 +324,12 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         if( fftLength %2 != 0 )
         {
             result += "\nWarning: Limiting the batch size to 2G of data becuase number of time steps is odd!";
-            maxBatch = 2l * 1024 * 1024 * 1024 / sizeof(float);
+            maxBatch = 2ll * 1024 * 1024 * 1024 / sizeof(float);
         }
         if( !is4GCompatible(fftLength) )
         {
             result += "\nWarning: Limiting max batch size to 1G";
-            maxBatch = 1l * 1024 * 1024 * 1024 / sizeof(float);
+            maxBatch = 1ll * 1024 * 1024 * 1024 / sizeof(float);
         }
 
         batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
@@ -425,9 +434,6 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     const auto& sCnt = InterpAccel.sCnt;
     const auto& step = InterpAccel.trueStep;
 
-    constexpr std::size_t threadPerBlock {
-        DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z
-    };
     const std::size_t staticOverhead {
         //shared interp accelerators
         (3 * sCnt + fftLength - 2) * sizeof(double) + 
@@ -447,7 +453,7 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
         return false;
     const std::size_t targetBCount {
         //TODO: get max number of active warps/blocks from cuda API instead of 12 LULW
-        std::min( (freeMem - staticOverhead) / activeBlockOverhead, 24lu )
+        std::min<std::size_t>( (freeMem - staticOverhead) / activeBlockOverhead, 24lu )
     };
 
     //do some host calculations and upload arithmetic accelerators onto the gpu

@@ -24,7 +24,6 @@
 #include<OVFWriter.h>
 #include<OVFDictionary.h>
 
-
 //glue code for mathematica's library
 //handles the connection to mathematica kernel
 #if defined(_WIN32) || defined(WIN32)
@@ -37,7 +36,8 @@ int __stdcall WinMain( HINSTANCE hinstCurrent, HINSTANCE hinstPrevious, LPSTR lp
 
         hinstPrevious = hinstPrevious; /* suppress warning */
 
-        if( !WSInitializeIcon( hinstCurrent, nCmdShow)) return 1;
+        //next one is only usable if link is specified manually, and can be skipped
+        //if( !WSInitializeIcon( hinstCurrent, nCmdShow)) return 1;
         WSScanString( argv, &argv_end, &lpszCmdLine, &buff_start);
         return WSMain( (int)(argv_end - argv), argv);
 }

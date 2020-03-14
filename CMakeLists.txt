@@ -96,6 +96,10 @@ IF(BUILD_FFUTIL)
         "${PROJECT_SOURCE_DIR}/util"
         "${PROJECT_BINARY_DIR}"
         $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_INCLUDE_DIRS}>)
+
+    IF(WIN32)
+        set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "setargv.obj")
+    ENDIF()
 ENDIF()
 
 #and install information for library

@@ -48,10 +48,10 @@ int main(int argc, char** argv)
         ref.set(VField::OVFParameter::Vunit, "\"a.u.\" \"a.u.\" \"a.u.\"");
 
         //and now for mesh parameters
-        ref.set(VField::OVFParameter::Vdim,   3lu  );
-        ref.set(VField::OVFParameter::Xnodes, 256lu);
-        ref.set(VField::OVFParameter::Ynodes, 256lu);
-        ref.set(VField::OVFParameter::Znodes, 8lu  );
+        ref.set(VField::OVFParameter::Vdim,   3llu  );
+        ref.set(VField::OVFParameter::Xnodes, 256llu);
+        ref.set(VField::OVFParameter::Ynodes, 256llu);
+        ref.set(VField::OVFParameter::Znodes, 8llu  );
         ref.setMesh(VField::OVFHeader::MeshType::rectangular);
 
         //and for coordinate grid
