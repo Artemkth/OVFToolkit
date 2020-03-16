@@ -4,25 +4,25 @@
 #include<Windows.h>
 
 struct ConsoleInfo::ConsoleMetadata {
-	HANDLE hTerminal{ INVALID_HANDLE_VALUE };
+    HANDLE hTerminal{ INVALID_HANDLE_VALUE };
 
-	ConsoleMetadata() : hTerminal(GetStdHandle(STD_OUTPUT_HANDLE)) {};
+    ConsoleMetadata() : hTerminal(GetStdHandle(STD_OUTPUT_HANDLE)) {};
 };
 
 ConsoleInfo::ConsoleInfo() noexcept : meta(new ConsoleInfo::ConsoleMetadata()), isRedirected(_isatty(_fileno(stdout))) {}
 
 ConsoleInfo::~ConsoleInfo() noexcept
 {
-	delete meta;
+    delete meta;
 }
 
 int ConsoleInfo::GetConsoleWidth() const
 {
-	CONSOLE_SCREEN_BUFFER_INFO cInfo;
+    CONSOLE_SCREEN_BUFFER_INFO cInfo;
 
-	if (meta->hTerminal == INVALID_HANDLE_VALUE || !GetConsoleScreenBufferInfo(meta->hTerminal, &cInfo))
-		return 0;
+    if (meta->hTerminal == INVALID_HANDLE_VALUE || !GetConsoleScreenBufferInfo(meta->hTerminal, &cInfo))
+        return 0;
 
-	return cInfo.dwMaximumWindowSize.X;
+    return cInfo.dwMaximumWindowSize.X;
 }
 
