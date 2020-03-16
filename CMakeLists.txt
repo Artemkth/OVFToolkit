@@ -86,7 +86,8 @@ target_compile_options(ovfparser PRIVATE
 IF(BUILD_FFUTIL)
     add_executable(ovf-batchfft
         util/fft-util.cpp
-        util/cuda-backend.cu)
+        util/cuda-backend.cu
+        $<IF:$<BOOL:${WIN32}>,util/win-console.cpp, util/console.cpp>)
 
     target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
         $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
