@@ -30,6 +30,9 @@
 //fft engines
 #include"cuda-backend.h"
 
+//console backend
+#include"console.h"
+
 //assert macro
 #include<cassert>
 
@@ -127,6 +130,8 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
     return std::make_pair(std::move(times), std::move(handles));
 }
 
+const ConsoleInfo cInfo;
+
 class CMDMonitor
 {
     private:
@@ -143,13 +148,69 @@ class CMDMonitor
         {out << std::string(n, ' ');}
         void erase_n(std::size_t n)
         {out << std::string(n, '\b');}
-        //TODO: screw emoji
+        //TODO: screw emoji(combininb several utf-8 codepoints into single character)
         std::size_t cntUnicodePts(const std::string& ref)
         { return std::count_if( ref.begin(), ref.end(), [](char c){ return (0xC0&c) != 0x80; }); };
+        //crop a sting based on codepoint count
+        std::string cropString(const std::string& ref, std::size_t point_offset, std::size_t point_size)
+        {
+            std::size_t offset{0}, size{0};
+
+            auto str_begin = ref.cbegin();
+            auto str_end   = ref.cend();
+
+            //increment point offset to count up to next character after requested one
+            point_offset++;
+            for(; str_begin != str_end; str_begin++)
+            {
+                // skip all of the non-leading characters
+                if( (*str_begin & 0xC0) == 0x80 )
+                {
+                    if( point_offset != 0 )
+                        offset++;
+                    else
+                        size++;
+                    continue;
+                }
+
+                if( point_offset != 0 )
+                {
+                    point_offset--;
+                    if( point_offset != 0 ) offset++;
+                    else { size++; point_size--; }
+                }
+                else if ( point_size != 0 )
+                {
+                    size++;
+                    point_size--;
+                }
+                else break;
+            }
+
+            return ref.substr(offset, size);
+        }
+
+        //save the previous overfull string offset so that it can be scrolled there and back in the window
+        std::size_t scrollOffset {0};
+        
+        static constexpr bool cursorOff { false };
 
     public:
-        CMDMonitor(std::ostream& out_): out(out_), ready(true), cCount(0) { out << cOff;}
-        ~CMDMonitor() {if (ready) out << cOn << '\n' << std::flush;}
+        CMDMonitor(std::ostream& out_): out(out_), ready(true), cCount(0) { if(cursorOff) out << cOff;}
+        ~CMDMonitor()
+        {
+            assert(("Somehow missed CMDMonitor initialization!", ready));
+
+            //clear line and output it full if were outputting fragment before
+            const auto nCount = cntUnicodePts(lineData);
+            const auto conWidth = cInfo.GetConsoleWidth();
+            out << '\r' << lineData;
+            //pad the output only if no new line was triggered
+            if( cCount < conWidth && nCount < cCount )
+                pad_n( cCount - nCount );
+            if(cursorOff) out << cOn;
+            out << '\n' << std::flush;
+        }
         CMDMonitor(const CMDMonitor&) = delete; //DAS IST VERBOTTEN
         CMDMonitor& operator= (const CMDMonitor&) = delete;//DIESER AUCH
 
@@ -157,18 +218,33 @@ class CMDMonitor
         void update(const std::string& str)
         {
             assert(("Tried updating without initializing!", ready));
-            out << '\r' << str;
-            auto nCount = cntUnicodePts(str);
 
-            if( cCount > nCount )
+            const auto nCount = cntUnicodePts(str);
+            const auto conWidth = cInfo.GetConsoleWidth();
+
+            if(conWidth > nCount)
+                out << '\r' << str;
+            else
             {
-                pad_n( cCount - nCount );
+                //subtract one character from con width because a cursor triggers new line
+                if( scrollOffset > nCount - conWidth - 1 ) scrollOffset = 0;
+                out << '\r' << cropString(str, scrollOffset++, conWidth - 1);
+            }
+
+            if( cCount > nCount && nCount < conWidth )
+            {
+                const std::size_t padLen { std::min<std::size_t>(cCount, conWidth - 1) - nCount};
+
+                pad_n( padLen );
                 out << std::flush;
-                erase_n( cCount - nCount );
+                erase_n( padLen );
             }
             out << std::flush;
 
-            cCount = nCount;
+            //if there is more stuff left to clean at the of the line, keep remembering last time stuff was 
+            //written past current console width
+            if( cCount < conWidth )
+                cCount = nCount;
             lineData = str;//store a copy just in case
         }
 
@@ -177,8 +253,9 @@ class CMDMonitor
             assert(("Tried updating without initializing!", ready));
             out << '\r' << str;
             auto nCount = cntUnicodePts(str);
+            const auto conWidth = cInfo.GetConsoleWidth();
 
-            if( nCount < cCount )
+            if( nCount < conWidth && nCount < cCount )
                 pad_n( cCount - nCount );
             out << '\n';
 
@@ -629,10 +706,8 @@ int main(int argc, char** argv)
     //first parse command-line options
     try
     {
-        //TODO: write code to get console width to make description more easily readable
-        //https://stackoverflow.com/questions/1022957/getting-terminal-width-in-c
-        //https://docs.microsoft.com/en-us/windows/console/getconsolescreenbufferinfo?redirectedfrom=MSDN
-        boost::program_options::options_description desc("Usage: ovf-batch [options] files...\nOptions");
+        //console width initiated on program start and is assumed to stay the same until output, because program_options doesn't have a way to alter it later
+        boost::program_options::options_description desc("Usage: ovf-batch [options] files...\nOptions", cInfo.GetConsoleWidth());
         //populate options list
         desc.add_options()
             ("help,h", boost::program_options::bool_switch(), "Produce this help message.")
@@ -1088,7 +1163,7 @@ int main(int argc, char** argv)
                 {prState += spin[i].CurState(); ++spin[i]; }
 
                 res += "Buffer[" + std::to_string(i) + "]: " + prState;
-                if(prState.length() < bufferPadding ) res += std::string( bufferPadding - prState.length(), ' ' );
+                if(prState.length() < bufferPadding && i != 1 ) res += std::string( bufferPadding - prState.length(), ' ' );
             }
 
             monitor.update(res);

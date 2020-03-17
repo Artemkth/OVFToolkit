@@ -14,7 +14,7 @@ int ConsoleInfo::GetConsoleWidth() const
 {
     struct winsize ws;
 
-    if( ioctl(0, TIOCGWINSZ, &ws) != 0 )
+    if( ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) != 0 )
         return 0;
 
     return ws.ws_col;
