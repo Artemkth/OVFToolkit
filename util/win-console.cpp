@@ -9,7 +9,7 @@ struct ConsoleInfo::ConsoleMetadata {
     ConsoleMetadata() : hTerminal(GetStdHandle(STD_OUTPUT_HANDLE)) {};
 };
 
-ConsoleInfo::ConsoleInfo() noexcept : meta(new ConsoleInfo::ConsoleMetadata()), isRedirected(_isatty(_fileno(stdout))) {}
+ConsoleInfo::ConsoleInfo() noexcept : meta(new ConsoleInfo::ConsoleMetadata()), isRedirected(!_isatty(_fileno(stdout))) {}
 
 ConsoleInfo::~ConsoleInfo() noexcept
 {

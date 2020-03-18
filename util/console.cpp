@@ -6,7 +6,7 @@
 //nothing needed on *nix systems
 struct ConsoleInfo::ConsoleMetadata {};
 
-ConsoleInfo::ConsoleInfo() noexcept : isRedirected(isatty(STDOUT_FILENO)) {}
+ConsoleInfo::ConsoleInfo() noexcept : isRedirected(!isatty(STDOUT_FILENO)) {}
 
 ConsoleInfo::~ConsoleInfo() noexcept {}
 

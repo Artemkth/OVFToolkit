@@ -90,7 +90,7 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
             }
             else //could not parse time
                 std::cerr << "Could not parse time from 'Description' field in file \"" << *begin << "\", with regular expression \""<< regex_str <<"\"."
-                             "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
+                    "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
             results.push_back({time, handle});
 
             //set last file to the one we processed 
@@ -691,6 +691,7 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
 
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
+//TODO: disable monitors when output is redirected to a file
 int main(int argc, char** argv)
 {
     std::vector<fname_type> fileList{};
@@ -788,53 +789,60 @@ int main(int argc, char** argv)
     std::atomic<std::size_t> progVar{};
     std::atomic<std::size_t> expectProg{fileList.size()};
     std::atomic<const fname_type::value_type*> lastFile { "No file imported yet." };
+    std::thread MonitorThread{};
 
-    //time prefetch phase for profiling
-    std::thread MonitorThread([&] () -> void 
+    if(!cInfo.isRedirected)
     {
-        CMDMonitor monitor(std::cout);
-        const auto expSizeStr = std::to_string(expectProg);
+        //time prefetch phase for profiling
+        MonitorThread = std::thread([&] () -> void 
+                {
+                CMDMonitor monitor(std::cout);
+                const auto expSizeStr = std::to_string(expectProg);
 
-        std::string message {};
+                std::string message {};
 
-        bool lastRun = true;
-        while(true)
-        {
-            std::string message { "File " };
-            const std::size_t cCount = progVar;
-            const auto name = std::string { lastFile };
-            const auto cCountStr = std::to_string(cCount);
+                bool lastRun = true;
+                while(true)
+                {
+                std::string message { "File " };
+                const std::size_t cCount = progVar;
+                const auto name = std::string { lastFile };
+                const auto cCountStr = std::to_string(cCount);
 
-            message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
-            message += cCountStr;
-            message += '/';
-            message += expSizeStr;
-            message += ": \"";
-            message += name;
-            message += '\"';
+                message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
+                message += cCountStr;
+                message += '/';
+                message += expSizeStr;
+                message += ": \"";
+                message += name;
+                message += '\"';
 
-            monitor.update(message);
-            if( cCount >= expectProg )
-                break;
+                monitor.update(message);
+                if( cCount >= expectProg )
+                    break;
 
-            using namespace std::chrono_literals;
-            std::this_thread::sleep_for(100ms);
-        }
-    });
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(100ms);
+                }
+                });
+
+    }
 
     auto t_before = std::chrono::steady_clock::now();
     auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, progVar, lastFile);
     auto t_after = std::chrono::steady_clock::now();
+
     if( progVar != tSeriesLength )
     {
         std::cerr << "Failed to import one or more files, aborting!\n";
-        progVar = tSeriesLength; MonitorThread.join();
+        progVar = tSeriesLength;
+        if(!cInfo.isRedirected) MonitorThread.join();
         return -1;
     }
-    MonitorThread.join();
+    if(!cInfo.isRedirected) MonitorThread.join();
+    std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
 
     std::vector<double> times{}; times.reserve( tSeriesLength );
-    std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
     {
         //check the times
         auto dOptIt = timeOpt.cbegin();
@@ -1130,45 +1138,46 @@ int main(int argc, char** argv)
     };
     //and a monitor function
     std::atomic<bool> monitorOn {true};
-    MonitorThread = std::thread( [&] ()
-    {
-        using namespace std::chrono_literals;
-
-        //static copy of buffer pointers, doesn't rotate
-        GPUBuffer* buff[2];
-        for(int i = 0; i < 2; i++)
-            buff[i] = buffers[i].get();
-
-        auto beginTime = std::chrono::steady_clock::now();
-
-        const int tStampPadding { 10 };
-        const int bufferPadding { 25 };
-
-        Spinner spin[2];
-        CMDMonitor monitor(std::cout);
-
-        while(monitorOn)
-        {
-            std::this_thread::sleep_for(150ms);
-            //output through that handy dandy function
-            std::string res {printTimeStamp( std::chrono::steady_clock::now() - beginTime )};
-            if( res.length() < tStampPadding ) res += std::string( tStampPadding - res.length(), ' ');
-
-            //output buffer states
-            for(int i = 0; i < 2; i++)
+    if(!cInfo.isRedirected)
+        MonitorThread = std::thread( [&] ()
             {
-                auto state = buff[i]->state;
-                auto prState = printState(state);
-                if(state == BufferState::PROCESS || state == BufferState::EXPORT)
-                {prState += spin[i].CurState(); ++spin[i]; }
+                using namespace std::chrono_literals;
 
-                res += "Buffer[" + std::to_string(i) + "]: " + prState;
-                if(prState.length() < bufferPadding && i != 1 ) res += std::string( bufferPadding - prState.length(), ' ' );
-            }
+                //static copy of buffer pointers, doesn't rotate
+                GPUBuffer* buff[2];
+                for(int i = 0; i < 2; i++)
+                buff[i] = buffers[i].get();
 
-            monitor.update(res);
-        }
-    });
+                auto beginTime = std::chrono::steady_clock::now();
+
+                const int tStampPadding { 10 };
+                const int bufferPadding { 25 };
+
+                Spinner spin[2];
+                CMDMonitor monitor(std::cout);
+
+                while(monitorOn)
+                {
+                    std::this_thread::sleep_for(150ms);
+                    //output through that handy dandy function
+                    std::string res {printTimeStamp( std::chrono::steady_clock::now() - beginTime )};
+                    if( res.length() < tStampPadding ) res += std::string( tStampPadding - res.length(), ' ');
+
+                    //output buffer states
+                    for(int i = 0; i < 2; i++)
+                    {
+                        auto state = buff[i]->state;
+                        auto prState = printState(state);
+                        if(state == BufferState::PROCESS || state == BufferState::EXPORT)
+                        {prState += spin[i].CurState(); ++spin[i]; }
+
+                        res += "Buffer[" + std::to_string(i) + "]: " + prState;
+                        if(prState.length() < bufferPadding && i != 1 ) res += std::string( bufferPadding - prState.length(), ' ' );
+                    }
+
+                    monitor.update(res);
+                } 
+            });
 
     //after this main thread works with I/O
     const auto BatchSize = fft_engine -> expectedBatch();
@@ -1206,7 +1215,7 @@ int main(int argc, char** argv)
         {
             monitorOn = false;
             gpuStreamThread.join();
-            MonitorThread.join();
+            if(!cInfo.isRedirected) MonitorThread.join();
             std::cerr << "GPU thread failed!\n";
             tmpFile.close();
             std::filesystem::remove( tmpPath );
@@ -1231,7 +1240,7 @@ int main(int argc, char** argv)
         std::cerr << "GPU thread failed!\n";
         monitorOn = false;
         gpuStreamThread.join();
-        MonitorThread.join();
+        if(!cInfo.isRedirected) MonitorThread.join();
         tmpFile.close();
         std::filesystem::remove( tmpPath );
         return -1;
@@ -1247,7 +1256,7 @@ int main(int argc, char** argv)
         std::cerr << "GPU thread failed!\n";
         monitorOn = false;
         gpuStreamThread.join();
-        MonitorThread.join();
+        if(!cInfo.isRedirected) MonitorThread.join();
         tmpFile.close();
         std::filesystem::remove( tmpPath );
         return -1;
@@ -1261,7 +1270,7 @@ int main(int argc, char** argv)
 
     //deinit the monitor 
     monitorOn = false;
-    MonitorThread.join();
+    if(!cInfo.isRedirected) MonitorThread.join();
 
     //and close tmp file
     tmpFile.close();
@@ -1270,34 +1279,36 @@ int main(int argc, char** argv)
 
     expectProg = (tSeriesLength/2 + 1) * VFSize * 2;
     progVar = 0;
-    MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
-    {
-        CMDMonitor monitor(std::cout);
-        while(true)
-        {
-            using namespace std::chrono_literals;
-            std::this_thread::sleep_for(150ms);
+    if(!cInfo.isRedirected) 
+        MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
+            {
+                CMDMonitor monitor(std::cout);
+                while(true)
+                {
+                    using namespace std::chrono_literals;
+                    std::this_thread::sleep_for(150ms);
 
-            auto curVal = progVar.load();
-            monitor.update("Exporting spectrum into \""s + oFileName + "\": " + printMemSize( sizeof(float) * curVal ) + 
-                                                                          '/' + printMemSize( sizeof(float) * expectProg ) );
-            if(curVal >= expectProg)
-                return;
-        }
-    });
+                    auto curVal = progVar.load();
+                    monitor.update("Exporting spectrum into \""s + oFileName + "\": " + printMemSize( sizeof(float) * curVal ) + 
+                        '/' + printMemSize( sizeof(float) * expectProg ) );
+                    if(curVal >= expectProg)
+                    return;
+                }
+            });
 
     exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
                     head, tSeriesLength/2 + 1, 1 / (times.back() - times.front()), progVar,
                     CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
+    std::filesystem::remove( tmpPath );
     if( progVar != expectProg )
     {
         std::cerr << "Unexpected error occured while exporting the spectrum!\n";
         return -1;
     }
-    MonitorThread.join();
-    std::filesystem::remove( tmpPath );
+    if(!cInfo.isRedirected) MonitorThread.join();
+    else std::cout << "Exported a " << printMemSize( sizeof(float) * expectProg ) << " spectrum into \"" + oFileName + "\"\n";
 
     return 0;
 }
