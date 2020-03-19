@@ -795,7 +795,7 @@ int main(int argc, char** argv)
     {
         //time prefetch phase for profiling
         MonitorThread = std::thread([&] () -> void 
-                {
+            {
                 CMDMonitor monitor(std::cout);
                 const auto expSizeStr = std::to_string(expectProg);
 
@@ -804,28 +804,27 @@ int main(int argc, char** argv)
                 bool lastRun = true;
                 while(true)
                 {
-                std::string message { "File " };
-                const std::size_t cCount = progVar;
-                const auto name = std::string { lastFile };
-                const auto cCountStr = std::to_string(cCount);
+                    std::string message { "File " };
+                    const std::size_t cCount = progVar;
+                    const auto name = std::string { lastFile };
+                    const auto cCountStr = std::to_string(cCount);
 
-                message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
-                message += cCountStr;
-                message += '/';
-                message += expSizeStr;
-                message += ": \"";
-                message += name;
-                message += '\"';
+                    message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
+                    message += cCountStr;
+                    message += '/';
+                    message += expSizeStr;
+                    message += ": \"";
+                    message += name;
+                    message += '\"';
 
-                monitor.update(message);
-                if( cCount >= expectProg )
-                    break;
+                    monitor.update(message);
+                    if( cCount >= expectProg )
+                        break;
 
-                using namespace std::chrono_literals;
-                std::this_thread::sleep_for(100ms);
+                    using namespace std::chrono_literals;
+                    std::this_thread::sleep_for(100ms);
                 }
-                });
-
+            });
     }
 
     auto t_before = std::chrono::steady_clock::now();
@@ -956,17 +955,18 @@ int main(int argc, char** argv)
             auto cPoints = batch * (tSeriesLength/2 + 1);
             if( fft_engine -> isReady() )
             {
-                for( auto& x: buffers )
+                auto maxRamBuffers = maxRam.value_or(0) / (sizeof(float) * 2 * cPoints);
+                auto neededBuffers = (VFSize + batch - 1)/batch;//all the full buffers and one partially filled
+                const std::size_t activeBuffers { std::min<std::size_t>(2, neededBuffers) };
+                for( std::size_t i = 0; i < activeBuffers; i++ )
                 {
-                    x = std::make_unique<GPUBuffer> ();
-                    x -> nSize = 2 * cPoints;
-                    x -> realPoints = batch;
-                    x -> data = std::make_unique<float[]>( x->nSize );
+                    buffers[i] = std::make_unique<GPUBuffer> ();
+                    buffers[i] -> nSize = 2 * cPoints;
+                    buffers[i] -> realPoints = batch;
+                    buffers[i] -> data = std::make_unique<float[]>( buffers[i]->nSize );
                 }
 
                 //and allocate space for ram buffer
-                auto maxRamBuffers = maxRam.value_or(0) / (sizeof(float) * 2 * cPoints);
-                auto neededBuffers = (VFSize + batch - 1)/batch;//all the full buffers and one partially filled
                 if( neededBuffers > 2 && maxRamBuffers > 2 )
                 {
                     CollectorBuffer.cnt = std::min(neededBuffers - 2, maxRamBuffers - 2);
@@ -1076,44 +1076,13 @@ int main(int argc, char** argv)
         return -1;
     }
     //initialize interpolation
-    if( !no_reinterp )
-        if( !fft_engine -> InitInterp(times.data(), times.size()) )
+    if( !no_reinterp && !fft_engine -> InitInterp(times.data(), times.size()) )
             std::cerr << "Failed to initialize an interpolation!\n";
 
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
     const float norm { no_norm? 1.0f : (float)std::sqrt( trueStep ) };//scaling to get value in amplitude/sqrt(Hz)
-    //float norm = 1.0f;
-    std::thread gpuStreamThread( [&] ()
-    {
-        while(true)
-        {
-            //aquire mutex first with condvar and unique lock
-            std::unique_lock<std::mutex> lock(rotLock);
-            gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::PROCESS || buffers[0] -> state == BufferState::STOP;});
-
-            if(buffers[0] -> state == BufferState::STOP && buffers[1] -> state == BufferState::STOP)
-                break;
-
-            //do the data transform
-            auto curBuffer = buffers[0].get();
-
-            if( !fft_engine -> isReady() || curBuffer -> nSize < fft_engine -> expectedLength() || curBuffer -> nSize > 2 * fft_engine -> expectedLength() * fft_engine -> expectedBatch() || 
-                !fft_engine -> RunTransform(curBuffer -> data.get(), norm, fft_engine -> expectedBatch() - curBuffer -> realPoints ))
-            {
-                curBuffer -> state = BufferState::FAIL;
-                lock.unlock();
-                gpuRotate.notify_all();
-                return; //stop if failure was encountered
-            }
-
-            curBuffer -> state = BufferState::EXPORT;
-
-            lock.unlock();
-            gpuRotate.notify_all();
-        }
-    });
 
     auto printState = [&] (BufferState state) -> std::string
     {
@@ -1136,10 +1105,65 @@ int main(int argc, char** argv)
         }
         return "";
     };
-    //and a monitor function
+
+    //after this main thread works with I/O
+    const auto BatchSize = fft_engine -> expectedBatch();
+    std::vector<std::array<std::size_t, 2>> segmentDescriptor;
+    //open a temporary file for outputting results of fft
+    std::filesystem::path tmpPath(".batchfft-temp");
+    std::ofstream tmpFile (tmpPath, std::ios_base::out |
+                                    std::ios_base::binary |
+                                    std::ios_base::trunc );
+ 
+    auto exportData = [&] (GPUBuffer* buff)
+    {
+        if(CollectorBuffer.occup < CollectorBuffer.cnt)
+        {
+            std::copy_n( buff -> data.get(), (tSeriesLength / 2 + 1) * buff ->realPoints * 2, 
+                    CollectorBuffer.data.get() + CollectorBuffer.occup * buff -> nSize );
+            CollectorBuffer.occup++;
+        }
+        else
+            tmpFile.write( (char*) buff -> data.get(), (tSeriesLength / 2 + 1) * buff -> realPoints * 2 * sizeof(float) / sizeof(std::ofstream::char_type) );
+
+        buff -> state = BufferState::WAIT;
+    };
+
     std::atomic<bool> monitorOn {true};
-    if(!cInfo.isRedirected)
-        MonitorThread = std::thread( [&] ()
+    if( BatchSize < VFSize )
+    {
+        std::thread gpuStreamThread( [&] ()
+        {
+            while(true)
+            {
+                //aquire mutex first with condvar and unique lock
+                std::unique_lock<std::mutex> lock(rotLock);
+                gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::PROCESS || buffers[0] -> state == BufferState::STOP;});
+
+                if(buffers[0] -> state == BufferState::STOP && buffers[1] -> state == BufferState::STOP)
+                    break;
+
+                //do the data transform
+                auto curBuffer = buffers[0].get();
+
+                if( !fft_engine -> isReady() || curBuffer -> nSize < fft_engine -> expectedLength() || curBuffer -> nSize > 2 * fft_engine -> expectedLength() * fft_engine -> expectedBatch() || 
+                    !fft_engine -> RunTransform(curBuffer -> data.get(), norm, fft_engine -> expectedBatch() - curBuffer -> realPoints ))
+                {
+                    curBuffer -> state = BufferState::FAIL;
+                    lock.unlock();
+                    gpuRotate.notify_all();
+                    return; //stop if failure was encountered
+                }
+
+                curBuffer -> state = BufferState::EXPORT;
+
+                lock.unlock();
+                gpuRotate.notify_all();
+            }
+        });
+
+        //and a monitor function
+        if(!cInfo.isRedirected) MonitorThread = std::thread( [&] ()
             {
                 using namespace std::chrono_literals;
 
@@ -1175,102 +1199,131 @@ int main(int argc, char** argv)
                         if(prState.length() < bufferPadding && i != 1 ) res += std::string( bufferPadding - prState.length(), ' ' );
                     }
 
-                    monitor.update(res);
-                } 
+                     monitor.update(res);
+                }
             });
 
-    //after this main thread works with I/O
-    const auto BatchSize = fft_engine -> expectedBatch();
-    std::vector<std::array<std::size_t, 2>> segmentDescriptor;
-    //open a temporary file for outputting results of fft
-    std::filesystem::path tmpPath(".batchfft-temp");
-    std::ofstream tmpFile (tmpPath, std::ios_base::out |
-                                    std::ios_base::binary |
-                                    std::ios_base::trunc );
- 
-    auto exportData = [&] (GPUBuffer* buff)
-    {
-        if(CollectorBuffer.occup < CollectorBuffer.cnt)
+        //TODO: handle errors !
+        while(segmentDescriptor.empty() || segmentDescriptor.back()[1] < VFSize)
         {
-            std::copy_n( buff -> data.get(), (tSeriesLength / 2 + 1) * buff ->realPoints * 2, 
-                    CollectorBuffer.data.get() + CollectorBuffer.occup * buff -> nSize );
-            CollectorBuffer.occup++;
+            //gpu thread only lets swap happen after finishing working on data
+            //only when it has failed, or when it is the first run that the following isn't true
+            GPUBuffer* curBuffer = buffers[1].get();
+            if( curBuffer -> state == BufferState::EXPORT )
+                exportData( curBuffer );
+            if( buffers[0] -> state == BufferState::FAIL ||
+                    buffers[1] -> state == BufferState::FAIL )
+            {
+                monitorOn = false;
+                gpuStreamThread.join();
+                if(!cInfo.isRedirected) MonitorThread.join();
+                std::cerr << "GPU thread failed!\n";
+                tmpFile.close();
+                std::filesystem::remove( tmpPath );
+                return -1;
+            }
+
+            curBuffer -> state = BufferState::IMPORT;
+            const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
+            readData( file_handles, curBuffer -> data.get(), begin, 
+                    expectProg, progVar, curBuffer -> realPoints );
+            segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
+            curBuffer -> state = BufferState::PROCESS;
+
+            std::unique_lock<std::mutex> lock(rotLock);
+            gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL || buffers[0] -> state == BufferState::WAIT;});
+            std::swap(buffers[0], buffers[1]);
+            lock.unlock();
+            gpuRotate.notify_all();
         }
-        else
-            tmpFile.write( (char*) buff -> data.get(), (tSeriesLength / 2 + 1) * buff -> realPoints * 2 * sizeof(float) / sizeof(std::ofstream::char_type) );
-
-        buff -> state = BufferState::WAIT;
-    };
-
-    //TODO: handle errors !
-    while(segmentDescriptor.empty() || segmentDescriptor.back()[1] < VFSize)
-    {
-        //gpu thread only lets swap happen after finishing working on data
-        //only when it has failed, or when it is the first run that the following isn't true
-        GPUBuffer* curBuffer = buffers[1].get();
-        if( curBuffer -> state == BufferState::EXPORT )
-            exportData( curBuffer );
-        if( buffers[0] -> state == BufferState::FAIL ||
-            buffers[1] -> state == BufferState::FAIL )
+        if(buffers[1] -> state == BufferState::FAIL)
         {
+            std::cerr << "GPU thread failed!\n";
             monitorOn = false;
             gpuStreamThread.join();
             if(!cInfo.isRedirected) MonitorThread.join();
-            std::cerr << "GPU thread failed!\n";
             tmpFile.close();
             std::filesystem::remove( tmpPath );
             return -1;
         }
+        buffers[1] -> state = BufferState::STOP;
 
-        curBuffer -> state = BufferState::IMPORT;
-        const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
-        readData( file_handles, curBuffer -> data.get(), begin, 
-                expectProg, progVar, curBuffer -> realPoints );
-        segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
-        curBuffer -> state = BufferState::PROCESS;
-
+        //and wait for the last one to finish processing
         std::unique_lock<std::mutex> lock(rotLock);
-        gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL || buffers[0] -> state == BufferState::WAIT;});
-        std::swap(buffers[0], buffers[1]);
+        gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL;});
         lock.unlock();
+        if(buffers[0] -> state == BufferState::FAIL)
+        {
+            std::cerr << "GPU thread failed!\n";
+            monitorOn = false;
+            gpuStreamThread.join();
+            if(!cInfo.isRedirected) MonitorThread.join();
+            tmpFile.close();
+            std::filesystem::remove( tmpPath );
+            return -1;
+        }
+        else 
+            buffers[0] -> state = BufferState::STOP;
+
         gpuRotate.notify_all();
-    }
-    if(buffers[1] -> state == BufferState::FAIL)
-    {
-        std::cerr << "GPU thread failed!\n";
-        monitorOn = false;
         gpuStreamThread.join();
-        if(!cInfo.isRedirected) MonitorThread.join();
-        tmpFile.close();
-        std::filesystem::remove( tmpPath );
-        return -1;
-    }
-    buffers[1] -> state = BufferState::STOP;
+        fft_engine.reset();
 
-    //and wait for the last one to finish processing
-    std::unique_lock<std::mutex> lock(rotLock);
-    gpuRotate.wait(lock, [&](){return buffers[0] -> state == BufferState::EXPORT || buffers[0] -> state == BufferState::FAIL;});
-    lock.unlock();
-    if(buffers[0] -> state == BufferState::FAIL)
-    {
-        std::cerr << "GPU thread failed!\n";
+        //deinit the monitor 
         monitorOn = false;
-        gpuStreamThread.join();
         if(!cInfo.isRedirected) MonitorThread.join();
-        tmpFile.close();
-        std::filesystem::remove( tmpPath );
-        return -1;
+    } // endif( BatchSize < VFSize )
+    else
+    {
+        std::cout << "All data fits into one buffer, evaluating sequentially.\n";
+        GPUBuffer* buff = buffers[0].get();
+
+        //special monitor for single batch
+        if(!cInfo.isRedirected) MonitorThread = std::thread( [&] ()
+            {
+                using namespace std::chrono_literals;
+                auto beginTime = std::chrono::steady_clock::now();
+
+                const int tStampPadding { 10 };
+
+                Spinner spin;
+                CMDMonitor monitor(std::cout);
+
+                while(monitorOn)
+                {
+                    std::this_thread::sleep_for(150ms);
+                    //output through that handy dandy function
+                    std::string res {printTimeStamp( std::chrono::steady_clock::now() - beginTime )};
+                    if( res.length() < tStampPadding ) res += std::string( tStampPadding - res.length(), ' ');
+
+                    res += printState( buff -> state );
+
+                    monitor.update(res);
+                }
+            });
+
+        buff -> state = BufferState::IMPORT;
+        readData( file_handles, buff -> data.get(), 0lu, 
+                expectProg, progVar, buff -> realPoints );
+        segmentDescriptor.push_back( {0lu, buff -> realPoints} );
+        buff -> state = BufferState::PROCESS;
+
+        //now launch kernel to do the processing
+        if( buff -> nSize < fft_engine -> expectedLength() || buff -> nSize > 2 * fft_engine -> expectedLength() * fft_engine -> expectedBatch() || 
+            !fft_engine -> RunTransform(buff -> data.get(), norm, fft_engine -> expectedBatch() - buff -> realPoints ))
+        {
+            monitorOn = false;
+            MonitorThread.join();
+
+            std::cerr << "Error processing the data, aborting!";
+            return -1;
+        }
+        buff -> state = BufferState::STOP;
+
+        monitorOn = false;
+        MonitorThread.join();
+        //and that's all, Pogchamp
     }
-    else 
-        buffers[0] -> state = BufferState::STOP;
-
-    gpuRotate.notify_all();
-    gpuStreamThread.join();
-    fft_engine.reset();
-
-    //deinit the monitor 
-    monitorOn = false;
-    if(!cInfo.isRedirected) MonitorThread.join();
 
     //and close tmp file
     tmpFile.close();
@@ -1279,26 +1332,27 @@ int main(int argc, char** argv)
 
     expectProg = (tSeriesLength/2 + 1) * VFSize * 2;
     progVar = 0;
-    if(!cInfo.isRedirected) 
-        MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
+    if(!cInfo.isRedirected) MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
+        {
+            CMDMonitor monitor(std::cout);
+            while(true)
             {
-                CMDMonitor monitor(std::cout);
-                while(true)
-                {
-                    using namespace std::chrono_literals;
-                    std::this_thread::sleep_for(150ms);
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(150ms);
 
-                    auto curVal = progVar.load();
-                    monitor.update("Exporting spectrum into \""s + oFileName + "\": " + printMemSize( sizeof(float) * curVal ) + 
-                        '/' + printMemSize( sizeof(float) * expectProg ) );
-                    if(curVal >= expectProg)
-                    return;
-                }
-            });
+                auto curVal = progVar.load();
+                monitor.update("Exporting spectrum into \""s + oFileName + "\": " + printMemSize( sizeof(float) * curVal ) + 
+                    '/' + printMemSize( sizeof(float) * expectProg ) );
+                if(curVal >= expectProg)
+                return;
+            }
+        });
 
-    exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
-                    head, tSeriesLength/2 + 1, 1 / (times.back() - times.front()), progVar,
-                    CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
+    if(BatchSize < VFSize) exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
+                        head, tSeriesLength/2 + 1, 1 / (times.back() - times.front()), progVar,
+                        CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
+    else exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[0] -> data.get(), nullptr, head, tSeriesLength/2 + 1, 1/(times.back() - times.front()),
+                         progVar, CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
     std::filesystem::remove( tmpPath );
