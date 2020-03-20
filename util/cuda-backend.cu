@@ -623,7 +623,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 
     fail = fail || cufftExecR2C( plan, (cufftReal*)data, data ) != CUFFT_SUCCESS;
     //if there is a norm to use, normalize the data
-    if( norm != 1.0f && fail )
+    if( norm != 1.0f && !fail )
         normalize<<<to_grid(2 * nBatchSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>> ( (cufftReal*)data, 2 * nBatchSize * (fftLength/2 + 1), norm );
 
     fail = fail || cudaMemcpy( (void*)input, (const void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
