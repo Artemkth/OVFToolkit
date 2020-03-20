@@ -571,7 +571,6 @@ __global__ void interp(
     *(data + (outLen - 1) * batchSize + index) = *(data + splLen * batchSize + index);
     double cnext = 0.;
     size_t spl_i = 0;//number of spline from the end
-    __shared__ double dtVal;
     for(size_t i = 0; i < splLen; i++)
     {
         const size_t j = splLen - i - 1;
@@ -581,9 +580,7 @@ __global__ void interp(
         //range check before result fetch
         for(; spl_i < outLen - 2 && ind[outLen - 3 - spl_i] == j; spl_i++ )
         {
-            if( threadIdx == dim3(0, 0, 0) )
-                dtVal = dt[outLen - 3 - spl_i];
-            __syncthreads();
+            const double dtVal = dt[outLen - 3 - spl_i];
 
             //and assign the interpolated value
             *(data + (outLen - 2 - spl_i) * batchSize + index) = a[j] +
