@@ -44,12 +44,13 @@ __device__ void freeInterpBuffer( std::size_t buf )
 __host__ __device__ inline bool operator==(const dim3& ref1, const dim3& ref2)
 { return ref1.x == ref2.x && ref1.y == ref2.y && ref1.z == ref2.z; }
 
-__global__ void InitAllocTable( std::size_t size )
+__global__ void InitAllocTable( std::size_t* allocHandle, std::size_t size )
 {
     //only one thread of a block matters
     if( threadIdx == dim3(0, 0, 0) )
     {
         atomicCAS(&allocBusy, 0, 1);
+        allocTable = allocHandle;
         allocTable[0] = size;
         for(std::size_t i = 0; i < size; i++)
             allocTable[i + 1] = i;
@@ -488,9 +489,9 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
                   cudaMalloc(&InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2)) != cudaSuccess ||
                   cudaMalloc(&InterpAccel.BlockBuffer, activeBlockOverhead * targetBCount) != cudaSuccess ||
                   cudaMemcpy((void*)InterpAccel.h, (const void*)h, 
-                          3 * sCnt + fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess ||
+                          (3 * sCnt + fftLength - 2) * sizeof(double), cudaMemcpyHostToDevice) != cudaSuccess ||
                   cudaMemcpy((void*)InterpAccel.Indices, (const void*)ind,
-                          fftLength - 2, cudaMemcpyHostToDevice) != cudaSuccess;
+                          (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice) != cudaSuccess;
     if(!failed)
     {
         InterpAccel.mu = InterpAccel.h + sCnt;
@@ -501,9 +502,8 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     //TODO: implement retrying BlockBuffer allocation
 
     //next initialize the allocation table
-    failed = failed || cudaMalloc(&allocTableHandle, sizeof(std::size_t) * (targetBCount + 1)) != cudaSuccess ||
-             cudaMemcpyToSymbol((const void*)&allocTable, (const void*)&allocTableHandle, sizeof(std::size_t*)) != cudaSuccess;
-    if(!failed) InitAllocTable<<<1,1>>>(InterpAccel.blockBufferCnt);
+    failed = failed || cudaMalloc(&allocTableHandle, sizeof(std::size_t) * (targetBCount + 1)) != cudaSuccess; 
+    if(!failed) InitAllocTable<<<1,1>>>(allocTableHandle, InterpAccel.blockBufferCnt);
 
     //and cleanup if failed along the way 
     if(failed || cudaDeviceSynchronize() != cudaSuccess)
@@ -576,7 +576,9 @@ __global__ void interp(
         const size_t j = splLen - i - 1;
         double c = z[j] - mu[j] * cnext;
 
-        while( ind[outLen - 3 - spl_i] == j && spl_i < outLen - 2 )
+        //TODO: optimize by making index and dtVal shared
+        //range check before result fetch
+        while( spl_i < outLen - 2 && ind[outLen - 3 - spl_i] == j )
         {
             const double dtVal = dt[outLen - 3 - spl_i];
 

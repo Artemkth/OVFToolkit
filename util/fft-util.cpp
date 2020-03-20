@@ -532,7 +532,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
             const float* curSection { nullptr };
             if( j < ramBufferCnt )
                 curSection = hostBuffer + cnt * offset + i * dist; 
-            else if( j == bufTotal - 2 || bufTotal == 1 )//TODO: check behaviour with only single buffer of work
+            else if( j == bufTotal - 2 || bufTotal == 1 )
                 curSection = n2last_buffer + i * dist;
             else if( j == bufTotal - 1 )
                 curSection = last_buffer + i * dist;
@@ -1053,13 +1053,13 @@ int main(int argc, char** argv)
             if( std::abs( *tIt - expectedTime ) > 3 * TstepDisp )
             {
                 if( !outliers.empty() ) outliers += ", ";
-                outliers += "\""s + fIt -> getCurrentPath() + "\" (dt=" + std::to_string( *tIt - expectedTime ) + ")";
+                outliers += "\""s + fIt -> getCurrentPath() + "\" (dt/disp=" + std::to_string( (*tIt - expectedTime) / TstepDisp ) + ")";
             }
 
             ++fIt; expectedTime += trueStep;
         }
         if(!outliers.empty())
-            std::cout << "Following files found to be far away from expected times: " << outliers << '\n';
+            std::cout << "Following files found to be far away from expected times: " << outliers << ";\n";
 
         //and then check if we still need to reinterpolate
         //abort interpolation iff dispersion is less than 5 rounding errors of float and there are no outliers
@@ -1273,7 +1273,7 @@ int main(int argc, char** argv)
         monitorOn = false;
         if(!cInfo.isRedirected) MonitorThread.join();
     } // endif( BatchSize < VFSize )
-    else
+    else // if(BatchSize == VFSize)
     {
         std::cout << "All data fits into one buffer, evaluating sequentially.\n";
         GPUBuffer* buff = buffers[0].get();
