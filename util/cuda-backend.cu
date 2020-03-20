@@ -571,6 +571,7 @@ __global__ void interp(
     *(data + (outLen - 1) * batchSize + index) = *(data + splLen * batchSize + index);
     double cnext = 0.;
     size_t spl_i = 0;//number of spline from the end
+    __shared__ double dtVal;
     for(size_t i = 0; i < splLen; i++)
     {
         const size_t j = splLen - i - 1;
@@ -578,17 +579,17 @@ __global__ void interp(
 
         //TODO: optimize by making index and dtVal shared
         //range check before result fetch
-        while( spl_i < outLen - 2 && ind[outLen - 3 - spl_i] == j )
+        for(; spl_i < outLen - 2 && ind[outLen - 3 - spl_i] == j; spl_i++ )
         {
-            const double dtVal = dt[outLen - 3 - spl_i];
+            if( threadIdx == dim3(0, 0, 0) )
+                dtVal = dt[outLen - 3 - spl_i];
+            __syncthreads();
 
             //and assign the interpolated value
             *(data + (outLen - 2 - spl_i) * batchSize + index) = a[j] +
                 ((*(data + (j + 1) * batchSize + index) - *(data + j * batchSize + index))/h[j] -h[j] * (cnext + 2 * c) / 3.) * dtVal +
                 c * dtVal * dtVal +
                 (cnext - c)/(3. * h[j]) * dtVal * dtVal * dtVal;
-
-            spl_i++;
         }
         if( spl_i == outLen - 2 )
             break;
@@ -597,6 +598,7 @@ __global__ void interp(
         cnext = c;
     }
     //wait here for all thread to finish before abandoning the allocation
+    //ideally does nothing, TODO: check if this can be removed
     __syncthreads();
  
     if( threadIdx == dim3(0, 0, 0) )
@@ -615,7 +617,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     //move data into array
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
-    if ( fftLength > 2 && InterpAccel.Ready )//TODO: uncomment when done implementing 
+    if ( fftLength > 2 && InterpAccel.Ready && !fail)
         interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
                 (float*)data, InterpAccel.BlockBuffer, nBatchSize, fftLength - 1, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l,
