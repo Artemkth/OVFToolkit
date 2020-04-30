@@ -87,16 +87,18 @@ IF(BUILD_FFUTIL)
     add_executable(ovf-batchfft
         util/fft-util.cpp
         util/cuda-backend.cu
-        $<IF:$<BOOL:${WIN32}>,util/win-console.cpp, util/console.cpp>)
+        $<IF:$<BOOL:${WIN32}>,util/win-console.cpp,util/console.cpp>)
 
     target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
         $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
-        $<IF:$<VERSION_LESS:CMAKE_VERSION,3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft>)
+        "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
 
     target_include_directories(ovf-batchfft PRIVATE 
         "${PROJECT_SOURCE_DIR}/util"
         "${PROJECT_BINARY_DIR}"
         $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_INCLUDE_DIRS}>)
+
+    set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 11)
 
     IF(WIN32)
         set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "setargv.obj")
