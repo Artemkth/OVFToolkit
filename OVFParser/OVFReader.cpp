@@ -633,7 +633,7 @@ namespace VField{
             std::size_t pnts = cnt;
             if(pnts == 0) pnts = advertisedCnt * advertisedDim;
             if(isBinary)
-                file.ignore( (pnts + 1)  * internalSize / sizeof(std::istream::char_type) );
+                file.seekg(  (pnts + 1)  * internalSize / sizeof(std::istream::char_type) , std::ios_base::cur);
             else
                 for(std::size_t i = 0; i < advertisedCnt && file.good(); i++)
                     file.ignore( std::numeric_limits<std::streamsize>::max(), '\n');
@@ -730,7 +730,7 @@ namespace VField{
                         return log;
                     }
                     //then seek the first value
-                    file.ignore(begin * advertisedDim * sizeof(float) / sizeof(std::istream::char_type));
+                    file.seekg( begin * advertisedDim * sizeof(float) / sizeof(std::istream::char_type), std::ios_base::cur);
                     const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
                     auto buffer = new float[importDepth];
                     file.read(reinterpret_cast<std::istream::char_type*>(buffer), 
@@ -774,7 +774,7 @@ namespace VField{
                         return log;
                     }
                     //then seek the first value
-                    file.ignore(begin * sizeof(double) / sizeof(std::istream::char_type));
+                    file.seekg( begin * sizeof(double) / sizeof(std::istream::char_type), std::ios_base::cur);
                     const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
                     auto buffer = new double[importDepth];
                     file.read(reinterpret_cast<std::istream::char_type*>(buffer), 

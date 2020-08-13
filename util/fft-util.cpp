@@ -538,12 +538,12 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                 curSection = last_buffer + i * dist;
             else
             {
-                fsBuffer.ignore( i * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
+                fsBuffer.seekg( i * sizeof(float)/sizeof(std::ofstream::char_type) * dist , std::ios_base::cur);
 
                 //reserve space for data
                 importData = std::make_unique<float[]>( dist );
                 fsBuffer.read( (std::ofstream::char_type*)importData.get(), sizeof(float)/sizeof(std::ofstream::char_type) * dist );
-                fsBuffer.ignore( (cnt - i - 1) * sizeof(float)/sizeof(std::ofstream::char_type) * dist );
+                fsBuffer.seekg( (cnt - i - 1) * sizeof(float)/sizeof(std::ofstream::char_type) * dist , std::ios_base::cur);
                 curSection = importData.get();
             }
 

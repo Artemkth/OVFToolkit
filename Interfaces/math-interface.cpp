@@ -27,6 +27,7 @@
 //glue code for mathematica's library
 //handles the connection to mathematica kernel
 #if defined(_WIN32) || defined(WIN32)
+#include<Windows.h>
 int __stdcall WinMain( HINSTANCE hinstCurrent, HINSTANCE hinstPrevious, LPSTR lpszCmdLine, int nCmdShow)
 {
         char  buff[512];
