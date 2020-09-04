@@ -59,7 +59,6 @@ __global__ void InitAllocTable( std::size_t* allocHandle, std::size_t size )
     }
 }
 
-using namespace std::string_literals;
 constexpr std::array<std::size_t, 31> AllowedFactors { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
 inline __host__ bool is4GCompatible( std::size_t size )
 {
@@ -263,12 +262,12 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     if( devCount == 0 )
     {
         fail = true;
-        return "Found no CUDA-enabled devices!"s ;
+        return "Found no CUDA-enabled devices!" ;
     }
     if( gpuID >= devCount )
     {
         fail = true;
-        return "The GPU id"s + std::to_string(gpuID) + " received is invalid(larger than number of available GPUs).";
+        return (std::string)"The GPU id" + std::to_string(gpuID) + " received is invalid(larger than number of available GPUs).";
     }
     int curGPU; cudaGetDevice(&curGPU);
     if( gpuID != -1 )
@@ -281,7 +280,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         }
 
         if(fail)
-            return "Failed to get GPU id#"s + std::to_string(gpuID) + ".";
+            return (std::string)"Failed to get GPU id#" + std::to_string(gpuID) + ".";
     }
     fail = cufftCreate(&plan) != CUFFT_SUCCESS;
     if(fail) return "Failed to create a plan on requested gpu!\n";
@@ -292,7 +291,7 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     cudaDeviceProp props{};
     cudaGetDeviceProperties(&props, curGPU);
     cudaMemGetInfo(&freeMem, &totalMem);
-    result += "Using GPU #"s + std::to_string(curGPU) + " \"" + props.name + "\" "
+    result += (std::string)"Using GPU #" + std::to_string(curGPU) + " \"" + props.name + "\" "
            +  std::to_string( props.multiProcessorCount ) + "SM" + '@' + std::to_string( props.clockRate / 1000 ) + "MHz, "
            +  printMemSize( totalMem ) + "s of global memory on device (" + printMemSize(freeMem) + " free)." ;
     if(maxMem > freeMem)

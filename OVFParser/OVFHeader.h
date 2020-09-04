@@ -7,6 +7,7 @@
 //only standard header cluttering output will be string, with exceptions included inside, which is everywhere anyway and has good integration
 #pragma once
 #include<string>
+#include<stdexcept>
 #include"ovfparser_export.h" //generated with cmake, shared lib export macros
 
 namespace VField{
