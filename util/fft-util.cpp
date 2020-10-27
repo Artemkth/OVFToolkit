@@ -841,73 +841,61 @@ int main(int argc, char** argv)
     if(!cInfo.isRedirected) MonitorThread.join();
     std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
 
-    std::vector<double> times{}; times.reserve( tSeriesLength );
+    std::vector<double> times(tSeriesLength, 0.);
     {
         //check the times
-        auto dOptIt = timeOpt.cbegin();
-        auto dOptEnd = timeOpt.cend();
-        auto fileIt = file_handles.cbegin();
         std::string noTSFiles{};
         std::string dupTSFiles{};
         bool encounteredDup {false};
 
-        //iterators for duplicate checks
-        std::vector<VField::VFieldFile>::const_iterator curFileIt {};
-
         //first loop. merged duplicate check and time set check
-        for(; dOptIt != dOptEnd; ++dOptIt)
+        for(std::size_t i = 0; i < tSeriesLength; i++)
         {
-            if( !dOptIt -> has_value() )
-                noTSFiles += ( noTSFiles.empty() ? ""s :", "s) + fileIt -> getCurrentPath();
+            if( !timeOpt[i].has_value() )
+                noTSFiles += ( noTSFiles.empty() ? ""s :", "s) + file_handles[i].getCurrentPath();
             else
             {
-                if(times.empty())
-                { curFileIt = fileIt; }
-                if(!times.empty() && times.front() == *dOptIt)
+                //push value onto the list
+                times[i] = timeOpt[i].value();
+
+                if(i > 0 && times[0] == times[i]) //duplicate check
                 {
                     if(!encounteredDup)
                     {
+                        encounteredDup = true;
                         if(!dupTSFiles.empty()) dupTSFiles += '\n';
-                        dupTSFiles += "t="s + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
+                        dupTSFiles += "t="s + std::to_string(times.front()) + ": " + '\"' + file_handles.front().getCurrentPath() + '\"';
                     }
-                    else
-                        dupTSFiles += ", "s;
 
-                    dupTSFiles += "\""s + fileIt -> getCurrentPath() + '\"';
+                    dupTSFiles += ", \""s + file_handles[i].getCurrentPath() + '\"';
                 }
-                times.push_back( dOptIt -> value() );
             }
-
-            fileIt++;
         }
 
         //duplicate check loop, starts from second value
-        if(times.size() == tSeriesLength)   //equivalent to noTSFiles.empty()
+        for(std::size_t i = 1; i < tSeriesLength - 1; i++)
         {
-            auto cValIt = ++times.cbegin();
-            auto endIt = times.cend();
-            while(++cValIt != endIt)
+            //reset for next run
+            if(encounteredDup)
             {
-                //reset for next run
-                curFileIt++;
-                if(encounteredDup) dupTSFiles += '\n';
+                dupTSFiles += '\n';
                 encounteredDup = false;
-
-                auto startVal = cValIt;
-                while( ++startVal != endIt )
-                    if ( *startVal == *cValIt )
-                    {
-                        if(!encounteredDup)
-                        {
-                            if(!dupTSFiles.empty()) dupTSFiles += '\n';
-                            dupTSFiles += "t="s + std::to_string(times.front()) + ": \"" + curFileIt -> getCurrentPath() + "\", ";
-                        }
-                        else
-                            dupTSFiles += ", "s;
-
-                        dupTSFiles += "\""s + fileIt -> getCurrentPath() + '\"';
-                    }
             }
+            if( !timeOpt[i].has_value() )
+                continue;
+
+            for( std::size_t j = i + 1; j < tSeriesLength; j++ )
+                if ( !timeOpt[j].has_value() && times[i] == times[j] )
+                {
+                    if(!encounteredDup)
+                    {
+                        encounteredDup = true;
+                        if(!dupTSFiles.empty()) dupTSFiles += '\n';
+                        dupTSFiles += "t="s + std::to_string(times[i]) + ": " + '\"' + file_handles[i].getCurrentPath() + '\"';
+                    }
+
+                    dupTSFiles += ", \""s + file_handles[j].getCurrentPath() + '\"';
+                }
         }
 
         //outputting stuff
