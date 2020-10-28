@@ -60,20 +60,23 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
         VField::VFieldFile handle{}; 
         std::smatch pat_matches{};
 
-        auto begin = fList.begin();
-        std::advance( begin, shift );
-        auto end = fList.end();
-        while( begin < end )
+        auto it = fList.cbegin();
+        auto end = fList.cend();
+        //TODO: check if following check is redundant
+        if (std::distance(it, end) <= shift)
+            return results;
+        std::advance( it, shift );
+        while( true )
         {
-            handle.read( *begin, true ); //only fetch the header, TODO: check if I want to output some file errors in here
+            handle.read( *it, true ); //only fetch the header, TODO: check if I want to output some file errors in here
             //if file is not single segment, give up LULW
             if( handle.cntSegments() != 1 )
             {
-                std::cerr << "Encountered bad segment count in file: \"" << *begin << "\": " << handle.cntSegments() << "\n";
+                std::cerr << "Encountered bad segment count in file: \"" << *it << "\": " << handle.cntSegments() << "\n";
                 results.push_back({std::nullopt, {}});
-                std::advance( begin, tCount ); ++progCnt;
+                std::advance( it, tCount ); ++progCnt;
                 //set last file to the one we processed 
-                curStr = begin -> c_str();
+                curStr = it -> c_str();
                 continue;
             }
 
@@ -89,14 +92,17 @@ auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& rege
                     time = val;
             }
             else //could not parse time
-                std::cerr << "Could not parse time from 'Description' field in file \"" << *begin << "\", with regular expression \""<< regex_str <<"\"."
+                std::cerr << "Could not parse time from 'Description' field in file \"" << *it << "\", with regular expression \""<< regex_str <<"\"."
                     "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
             results.push_back({time, handle});
 
             //set last file to the one we processed 
-            curStr = begin -> c_str();
+            curStr = it -> c_str();
 
-            std::advance( begin, tCount ); ++progCnt;
+            ++progCnt;
+            if ( std::distance(it, end) <= tCount )
+                break;
+            std::advance( it, tCount );
         }
 
         return results;
@@ -838,7 +844,7 @@ int main(int argc, char** argv)
         if(!cInfo.isRedirected) MonitorThread.join();
         return -1;
     }
-    if(!cInfo.isRedirected) MonitorThread.join();
+    if (!cInfo.isRedirected) MonitorThread.join();
     std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
 
     std::vector<double> times(tSeriesLength, 0.);
@@ -864,7 +870,13 @@ int main(int argc, char** argv)
                     {
                         encounteredDup = true;
                         if(!dupTSFiles.empty()) dupTSFiles += '\n';
-                        dupTSFiles += "t="s + std::to_string(times.front()) + ": " + '\"' + file_handles.front().getCurrentPath() + '\"';
+
+                        std::ostringstream strStream;
+
+                        strStream << std::scientific << std::setprecision(4);
+                        strStream << times.front();
+
+                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + file_handles.front().getCurrentPath() + '\"';
                     }
 
                     dupTSFiles += ", \""s + file_handles[i].getCurrentPath() + '\"';
@@ -885,13 +897,19 @@ int main(int argc, char** argv)
                 continue;
 
             for( std::size_t j = i + 1; j < tSeriesLength; j++ )
-                if ( !timeOpt[j].has_value() && times[i] == times[j] )
+                if ( timeOpt[j].has_value() && times[i] == times[j] )
                 {
                     if(!encounteredDup)
                     {
                         encounteredDup = true;
-                        if(!dupTSFiles.empty()) dupTSFiles += '\n';
-                        dupTSFiles += "t="s + std::to_string(times[i]) + ": " + '\"' + file_handles[i].getCurrentPath() + '\"';
+                        if (!dupTSFiles.empty()) dupTSFiles += '\n';
+
+                        std::ostringstream strStream;
+
+                        strStream << std::scientific << std::setprecision(4);
+                        strStream << times[i];
+
+                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + file_handles.front().getCurrentPath() + '\"';
                     }
 
                     dupTSFiles += ", \""s + file_handles[j].getCurrentPath() + '\"';
