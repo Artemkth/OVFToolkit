@@ -282,8 +282,9 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         if(fail)
             return (std::string)"Failed to get GPU id#" + std::to_string(gpuID) + ".";
     }
-    fail = cufftCreate(&plan) != CUFFT_SUCCESS;
-    if(fail) return "Failed to create a plan on requested gpu!\n";
+    
+    if(fail = cufftCreate(&plan) != CUFFT_SUCCESS) 
+        return "Failed to create a plan on requested gpu!\n";
 
     //get device characteristics
     std::string result{};
@@ -304,8 +305,9 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     //conversion to acceptable type for fft
     if( fftLength  > std::numeric_limits<long long int>::max() )
     {
+        //only possible to trip because currently std::size_t is ull
         fail = true;
-        return result + "\nTime series lenth or memory size values received overflow supported range!";
+        return result + "\nTime series lenth overflows supported index range!";
     }
 
     //estimate how much size bundle would take
@@ -313,34 +315,36 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     //note: need at least 2x and at most 9x the data size for FFT transform(depending on length of the fft set)
     //greedy greedy host wants to have ALL the memory :D
     if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
-    
-    if( fftLength + 2 > std::numeric_limits<int>::max() || //either index for internal array is OOB, or
-        (maxMem > 2ll * std::numeric_limits<int>::max() * sizeof(float) && //only when available gpu space is higher than 16GB, otherwise there is not enough space to fit both data and fft workspace
-        std::min<std::size_t>( maxBatch * (fftLength + 2) * sizeof(float), maxMem ) > sizeof(float) * std::numeric_limits<int>::max() &&
-        fftLength % 2 != 0 && is4GCompatible(fftLength)) ) //max memory usage is > 8GB
+
+    //decide which backend to use, 64bit one allows *insane* sampling depthes
+    //larger data size backend has limitations https://docs.nvidia.com/cuda/cufft/index.html#unique_184649339
+    //first check if we *absolutely* have to use 64-bit backend
+    bool needExtended = fftLength + 1 > std::numeric_limits<int>::max();     //if single batch cannot be addressed with 32bit 'int'
+    useExtended = needExtended || maxMem/(sizeof(float) * (fftLength + 2)) > std::numeric_limits<int>::max(); //if we can get any advantage from batching more
+
+    //and then check if backend is actually usable
+    if (needExtended)
     {
-        useExtended = true;//to indicate if *64 methods are called later, in a case where GPU supports craploads of data
-        
-        if( fftLength %2 != 0 )
+        //abort if there is not enough VRAM to accomodate even a single batch
+        if (maxMem < sizeof(float) * (fftLength + 2) * 2)
         {
-            result += "\nWarning: Limiting the batch size to 2G of data becuase number of time steps is odd!";
-            maxBatch = 2ll * 1024 * 1024 * 1024 / sizeof(float);
+            fail = true;
+            return result + "\n64bit API fail, doesn't have enough VRAM to accomodate a single spatial point batch!";
         }
-        if( !is4GCompatible(fftLength) )
+        //abort if fftLength is not 
+        else if ((fftLength % 2 != 0 || !is4GCompatible(fftLength)) && fftLength + 2 > 4ll * 1024 * 1024 * 1024)
         {
-            result += "\nWarning: Limiting max batch size to 1G";
-            maxBatch = 1ll * 1024 * 1024 * 1024 / sizeof(float);
+            fail = true;
+            return result + "\n64bit API fail, to be able to use more than 2^32 time points, number of points should be even and largest prime divisor should be less than 127!";
         }
 
+        //else good to try
         batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
     }
+    else if (useExtended)
+        batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
     else
-    {
-        useExtended = false;
-        if( maxBatch > std::numeric_limits<int>::max() && maxMem > 2l * std::numeric_limits<int>::max() * sizeof(float) )
-            result += "\nWarning: Batch size is being limited by transform lenth being odd, or having prime factors higher than 127!";
         batchSize = EstimateBatch(plan, fftLength, maxMem, std::min<std::size_t>(maxBatch, std::numeric_limits<int>::max()));
-    }
 
     if(batchSize == 0)
     {
@@ -627,8 +631,8 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     fail = fail || cudaMemcpy( (void*)input, (const void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
     fail = fail || cudaDeviceSynchronize() != cudaSuccess;
 
-    if( padding != 0 )
-        fail = fail && reallocate(batchSize) != 0;
+    if( !fail && padding != 0 )
+        fail = reallocate(batchSize) != 0;
 
     return !fail;
 }

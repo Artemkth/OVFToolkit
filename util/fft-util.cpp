@@ -909,7 +909,7 @@ int main(int argc, char** argv)
                         strStream << std::scientific << std::setprecision(4);
                         strStream << times[i];
 
-                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + file_handles.front().getCurrentPath() + '\"';
+                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + file_handles[i].getCurrentPath() + '\"';
                     }
 
                     dupTSFiles += ", \""s + file_handles[j].getCurrentPath() + '\"';
