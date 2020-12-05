@@ -44,7 +44,7 @@ using namespace std::string_literals;
 //vector of time/handle pairs
 using metaPair = std::pair<std::optional<double>, VField::VFieldFile>;
 //policy for importing and parsing files
-constexpr auto ioPolicy = std::execution::par_unseq;
+constexpr auto ioPolicy = std::execution::seq;
 
 const ConsoleInfo cInfo;
 
