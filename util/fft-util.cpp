@@ -16,6 +16,8 @@
 #include<future>
 #include<thread>
 #include<mutex>
+//for C++17 built-in algorithm parallelization
+#include<execution>
 
 //parsing program options
 #include<boost/program_options.hpp>
@@ -39,102 +41,10 @@
 using fname_type = std::string;
 using namespace std::string_literals;
 
-//prefetch metadata, form it into arrays of times and metadata
-auto ParseMetadata(const std::vector<fname_type>& fList, const std::string& regex_str, std::atomic<std::size_t>& progCnt, std::atomic<const fname_type::value_type*>& curStr)
-{
-    //compile the regex for getting time stamp as best as we can
-    std::regex timeRegex( regex_str, std::regex_constants::ECMAScript | std::regex_constants::optimize );
-
-    //get the hint for how much thread can run on a machine, and if it is non-zero target at most 4 threads
-    //otherwise run import single thread
-    const auto concHint = std::thread::hardware_concurrency();
-    const auto fCount = fList.size();
-    const std::size_t tCount {std::min<std::size_t>(concHint == 0 ? 1 : std::min<std::size_t>(concHint, 4), fCount)};
-
-    //main worker lambda, checkerboard process the file list
-    auto worker = [&] (std::size_t shift) -> auto 
-    {
-        std::vector< std::pair<std::optional<double>, VField::VFieldFile> > results{};
-        results.reserve( fList.size()/tCount + 1 ); //reserve space since we roughly know the size
-        const auto regexThreadCopy = timeRegex;
-        VField::VFieldFile handle{}; 
-        std::smatch pat_matches{};
-
-        auto it = fList.cbegin();
-        auto end = fList.cend();
-        //TODO: check if following check is redundant
-        if (std::distance(it, end) <= shift)
-            return results;
-        std::advance( it, shift );
-        while( true )
-        {
-            handle.read( *it, true ); //only fetch the header, TODO: check if I want to output some file errors in here
-            //if file is not single segment, give up LULW
-            if( handle.cntSegments() != 1 )
-            {
-                std::cerr << "Encountered bad segment count in file: \"" << *it << "\": " << handle.cntSegments() << "\n";
-                results.push_back({std::nullopt, {}});
-                std::advance( it, tCount ); ++progCnt;
-                //set last file to the one we processed 
-                curStr = it -> c_str();
-                continue;
-            }
-
-            std::optional<double> time {std::nullopt};
-            //and then check if header is oiro
-            const VField::OVFHeader& ref = handle.getSegmentHeader(0);
-            if( ref.isSet(VField::OVFParameter::Desc) && std::regex_search( ref.getString(VField::OVFParameter::Desc), pat_matches, regexThreadCopy ) )
-            {
-                char* ret {nullptr};
-                auto str = pat_matches[1].str();
-                double val = strtod(str.c_str(), &ret);
-                if( ret != str.c_str() )
-                    time = val;
-            }
-            else //could not parse time
-                std::cerr << "Could not parse time from 'Description' field in file \"" << *it << "\", with regular expression \""<< regex_str <<"\"."
-                    "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
-            results.push_back({time, handle});
-
-            //set last file to the one we processed 
-            curStr = it -> c_str();
-
-            ++progCnt;
-            if ( std::distance(it, end) <= tCount )
-                break;
-            std::advance( it, tCount );
-        }
-
-        return results;
-    }; 
-
-    //vector of futures with results of prefetching
-    progCnt = 0;
-    std::vector<std::future<
-        std::vector< std::pair<std::optional<double>, VField::VFieldFile> >
-        >> resultFuture{}; resultFuture.reserve(tCount - 1);
-    //initialize with async, last future is set to deferred to not waste a good thread LULW
-    for(std::size_t i = 0; i < tCount - 1; i++)
-        resultFuture.push_back(std::async( std::launch::async, worker, i));
-    //alternative is creating promise and then forwarding result through it
-    auto mainThreadRes = worker( tCount - 1);
-    std::vector< std::vector<std::pair<std::optional<double>, VField::VFieldFile>> > results{}; results.reserve(tCount);
-    for(auto& x: resultFuture)
-        results.push_back( x.get() );
-    results.push_back(std::move(mainThreadRes));
-
-    //and reshape data to fill in the return structure
-    std::vector<std::optional<double>> times{};   times.reserve(fCount);
-    std::vector<VField::VFieldFile>    handles{}; handles.reserve(fCount);
-    for(std::size_t i = 0; i < fCount; i++)
-    {
-        auto& value = results[ i%tCount ][ i/tCount ];
-        times.push_back( std::move(value.first) );
-        handles.push_back( std::move(value.second) );
-    }
-
-    return std::make_pair(std::move(times), std::move(handles));
-}
+//vector of time/handle pairs
+using metaPair = std::pair<std::optional<double>, VField::VFieldFile>;
+//policy for importing and parsing files
+constexpr auto ioPolicy = std::execution::par_unseq;
 
 const ConsoleInfo cInfo;
 
@@ -342,28 +252,6 @@ auto Average(const T& array)
     return accum.front().second / accum.front().first;
 }
 
-template<typename... T>
-class sort_helper : public std::tuple<std::decay_t<T>* ...>
-{
-    using baseTuple = std::tuple<std::decay_t<T>*...>;
-    
-    template<typename U, std::size_t... I>
-    void swap_content(sort_helper&& ref, std::integer_sequence<U, I...>)
-    { (std::swap(*std::get<I>(*this), *std::get<I>(ref)),...); }
-public:
-    sort_helper() = default;
-    sort_helper(std::decay_t<T>*... args): baseTuple(args...) {}
-
-    sort_helper(const sort_helper&) = delete;
-    sort_helper& operator=(const sort_helper&) = delete;
-
-    //and move operators
-    sort_helper(sort_helper&& ref) //TODO: investigate why std::forward doesn't work here, wtf!
-    { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); }
-    sort_helper& operator=(sort_helper&& ref)
-    { swap_content(std::move(ref), std::make_index_sequence<std::tuple_size_v<baseTuple>>{}); return *this; }
-};
-
 //processing data
 enum class BufferState { WAIT, IMPORT, POST, PROCESS, EXPORT, STOP, FAIL };
 struct GPUBuffer {
@@ -411,15 +299,16 @@ inline void loadData( const VField::VField& field, float *arr, std::size_t offse
 }
 
 //group import data
-void readData( const std::vector<VField::VFieldFile>& handles, float* data,
+void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile>>& handles,
+               float* data,
                std::size_t offset,
                std::atomic<std::size_t>& progMax,
                std::atomic<std::size_t>& progress,
-               std::size_t& impLen) 
+               std::size_t& impLen )
 {
     progress = 0;
     
-    const auto& head = handles.front().getSegmentHeader(0);
+    const auto& head = handles.front().second.getSegmentHeader(0);
     const auto mType = head.getMeshType();
     const auto dim   = head.expectedDimension();
     const auto pts   = head.expectedPoints();
@@ -428,41 +317,23 @@ void readData( const std::vector<VField::VFieldFile>& handles, float* data,
     impLen = std::min( impLen, vdim * pts - offset );
     progMax = impLen * len;
 
-    const auto concHint = std::thread::hardware_concurrency();
-    const std::size_t tCount {std::min<std::size_t>(concHint == 0 ? 1 : std::min<std::size_t>(concHint, 4), len)};
-
     //for irregular meshes offset skips over coordinate tripplets
     const auto adjBegin  = (mType == VField::OVFHeader::MeshType::rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
     const auto adjEnd    = ((mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim + 1;
 
-    auto importer = [&] (std::size_t off)
+    auto importer = [&](const std::pair<std::size_t, VField::VFieldFile>& handle)
     {
-        auto begin = handles.cbegin();
-        auto end   = handles.end();
-        auto* dest = data + impLen * off;
+        auto slice = handle.second.readSlice(0, { adjBegin, adjEnd, 1 });
 
-        std::advance(begin, off);
-        while( begin < end )
-        {
-            auto slice = begin -> readSlice(0, {adjBegin, adjEnd, 1});
+        if (slice.curDataInternalSize() == 4)
+            loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
+        else
+            loadData<double>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
 
-            if( slice.curDataInternalSize() == 4 )
-                loadData<float>( slice, dest, offset%vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular? 0 : 3 );
-            else
-                loadData<double>( slice, dest, offset%vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular? 0 : 3 );
-
-            std::advance(begin, tCount);
-            dest += impLen * tCount;
-            progress += impLen;
-        }
+        progress += impLen;
     };
 
-    std::vector<std::thread> workers; workers.reserve(tCount - 1);
-    for(std::size_t i = 0; i < tCount - 1; i++)
-        workers.emplace_back(importer, i);
-    importer(tCount - 1);
-    for(auto& x: workers)
-        x.join();
+    std::for_each(ioPolicy, handles.cbegin(), handles.cend(), importer);
 }
 
 //export into one yuge ovf with multiple segments, defaults to OVF version 2 trying to convert the headers
@@ -815,13 +686,7 @@ int main(int argc, char** argv)
                     const auto name = std::string { lastFile };
                     const auto cCountStr = std::to_string(cCount);
 
-                    message += std::string ( expSizeStr.length() - cCountStr.length(), ' ' );
-                    message += cCountStr;
-                    message += '/';
-                    message += expSizeStr;
-                    message += ": \"";
-                    message += name;
-                    message += '\"';
+                    message += std::string( expSizeStr.length() - cCountStr.length(), ' ' ) + cCountStr + '/' + expSizeStr + ": \"" + name + '\"';
 
                     monitor.update(message);
                     if( cCount >= expectProg )
@@ -833,8 +698,49 @@ int main(int argc, char** argv)
             });
     }
 
+    std::vector<metaPair> filesMeta( fileList.size() );
+    //comparison operator for time/handle pair
+    auto metaCompPred = [](const metaPair& pair1, const metaPair& pair2) { return pair1.first < pair2.first;  };
+    //parsing predicate
+    const std::regex timeRegEx(TimeRegExStr, std::regex_constants::ECMAScript | std::regex_constants::optimize);
+    auto parseMetaPred = [&lastFile, &progVar, &timeRegEx, &TimeRegExStr](const std::string& fName) -> metaPair
+    {
+        VField::VFieldFile file(fName, true); //only fetch the header, TODO: check if I want to output some file errors in here
+
+        //if file is not single segment, give up LULW
+        if (file.cntSegments() != 1)
+        {
+            std::cerr << "Encountered bad segment count in file: \"" << fName << "\": " << file.cntSegments() << "\n";
+            //set last file to the one we processed 
+            lastFile = fName.c_str();
+            ++progVar;
+            return { std::nullopt, std::move(file) };
+        }
+
+        std::optional<double> time{ std::nullopt };
+        //and then check if header is oiro
+        const VField::OVFHeader& ref = file.getSegmentHeader(0);
+        std::smatch pat_matches{};
+        if (ref.isSet(VField::OVFParameter::Desc) && std::regex_search(ref.getString(VField::OVFParameter::Desc), pat_matches, timeRegEx))
+        {
+            char* ret{ nullptr };
+            auto str = pat_matches[1].str();
+            double val = strtod(str.c_str(), &ret);
+            if (ret != str.c_str())
+                time = val;
+        }
+        else //could not parse time
+            std::cerr << "Could not parse time from 'Description' field in file \"" << fName << "\", with regular expression \"" << TimeRegExStr << "\"."
+            "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
+        
+        //set last file to the one we processed 
+        lastFile = fName.c_str();
+        ++progVar;
+        return {std::move(time), std::move(file)};
+    };
+
     auto t_before = std::chrono::steady_clock::now();
-    auto [timeOpt, file_handles] = ParseMetadata(fileList, TimeRegExStr, progVar, lastFile);
+    std::transform(ioPolicy, fileList.cbegin(), fileList.cend(), filesMeta.begin(), parseMetaPred);
     auto t_after = std::chrono::steady_clock::now();
 
     if( progVar != tSeriesLength )
@@ -847,40 +753,59 @@ int main(int argc, char** argv)
     if (!cInfo.isRedirected) MonitorThread.join();
     std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
 
-    std::vector<double> times(tSeriesLength, 0.);
+    //process timestamp data
+    //first check if all the times are present
+    {
+        std::string noTSFiles{};
+        for(const auto& [timeOpt, handle]: filesMeta)
+            if( !timeOpt.has_value() )
+                noTSFiles += (noTSFiles.empty() ? ""s : ", "s) + handle.getCurrentPath();
+
+        if (!noTSFiles.empty())
+        {
+            std::cout << "Following files were found to have no time stamp: " << noTSFiles << "\n";
+            std::cout << "Aborting!\n";
+            return -1;
+        }
+    }
+
+    //it is safe to assume now that all the times are populated, sort everything by time
+    if (!std::is_sorted(filesMeta.begin(), filesMeta.end(), metaCompPred))
+    {
+        std::cout << "File list received was not ordered by time, sorting it now!\n";
+        std::sort(filesMeta.begin(), filesMeta.end(), metaCompPred);
+    }
+
+    //check the duplicates and transfer times into their own array
+    std::vector<double> times(tSeriesLength);
     {
         //check the times
-        std::string noTSFiles{};
         std::string dupTSFiles{};
         bool encounteredDup {false};
 
         //first loop. merged duplicate check and time set check
-        for(std::size_t i = 0; i < tSeriesLength; i++)
+        for (std::size_t i = 0; i < tSeriesLength; i++)
         {
-            if( !timeOpt[i].has_value() )
-                noTSFiles += ( noTSFiles.empty() ? ""s :", "s) + file_handles[i].getCurrentPath();
-            else
+
+            //push value onto the list
+            times[i] = filesMeta[i].first.value();
+
+            if (i > 0 && times[0] == times[i]) //duplicate check
             {
-                //push value onto the list
-                times[i] = timeOpt[i].value();
-
-                if(i > 0 && times[0] == times[i]) //duplicate check
+                if (!encounteredDup)
                 {
-                    if(!encounteredDup)
-                    {
-                        encounteredDup = true;
-                        if(!dupTSFiles.empty()) dupTSFiles += '\n';
+                    encounteredDup = true;
+                    if (!dupTSFiles.empty()) dupTSFiles += '\n';
 
-                        std::ostringstream strStream;
+                    std::ostringstream strStream;
 
-                        strStream << std::scientific << std::setprecision(4);
-                        strStream << times.front();
+                    strStream << std::scientific << std::setprecision(4);
+                    strStream << times.front();
 
-                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + file_handles.front().getCurrentPath() + '\"';
-                    }
-
-                    dupTSFiles += ", \""s + file_handles[i].getCurrentPath() + '\"';
+                    dupTSFiles += "t="s + strStream.str() + ": " + '\"' + filesMeta.front().second.getCurrentPath() + '\"';
                 }
+
+                dupTSFiles += ", \""s + filesMeta[i].second.getCurrentPath() + '\"';
             }
         }
 
@@ -893,11 +818,9 @@ int main(int argc, char** argv)
                 dupTSFiles += '\n';
                 encounteredDup = false;
             }
-            if( !timeOpt[i].has_value() )
-                continue;
 
             for( std::size_t j = i + 1; j < tSeriesLength; j++ )
-                if ( timeOpt[j].has_value() && times[i] == times[j] )
+                if ( times[i] == times[j] )
                 {
                     if(!encounteredDup)
                     {
@@ -909,20 +832,17 @@ int main(int argc, char** argv)
                         strStream << std::scientific << std::setprecision(4);
                         strStream << times[i];
 
-                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + file_handles[i].getCurrentPath() + '\"';
+                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + filesMeta[i].second.getCurrentPath() + '\"';
                     }
 
-                    dupTSFiles += ", \""s + file_handles[j].getCurrentPath() + '\"';
+                    dupTSFiles += ", \""s + filesMeta[j].second.getCurrentPath() + '\"';
                 }
         }
 
         //outputting stuff
-        if( !noTSFiles.empty() )
-            std::cout << "Following files were found to have no time stamp: " << noTSFiles << "\n";
-        if( !dupTSFiles.empty() )
-            std::cout << "Following timestamps were duplicated:\n" << dupTSFiles << "\n";
-        if( !noTSFiles.empty() || !dupTSFiles.empty() )
+        if (!dupTSFiles.empty())
         {
+            std::cout << "Following timestamps were duplicated:\n" << dupTSFiles << "\n";
             std::cout << "Aborting!\n";
             return -1;
         }
@@ -940,8 +860,8 @@ int main(int argc, char** argv)
 
     {
         //check if internal dimensions are compatible
-        const auto expDim = file_handles.front().getSegmentHeader(0).expectedDimension();
-        const auto expCnt = file_handles.front().getSegmentHeader(0).expectedPoints();
+        const auto expDim = filesMeta.front().second.getSegmentHeader(0).expectedDimension();
+        const auto expCnt = filesMeta.front().second.getSegmentHeader(0).expectedPoints();
 
         if( expDim == 0 || expCnt == 0)
         {
@@ -949,7 +869,7 @@ int main(int argc, char** argv)
             return 1;
         }
         //guaranteed to be set by this point
-        const auto mType = file_handles.front().getSegmentHeader(0).getMeshType();
+        const auto mType = filesMeta.front().second.getSegmentHeader(0).getMeshType();
         VFSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt;
         //begin initialization of engines outside main thread once dimensions are known
         engineInit = std::async( std::launch::async, [&] ()
@@ -984,18 +904,18 @@ int main(int argc, char** argv)
             return res;
         });
 
-        auto begin = ++file_handles.cbegin();
-        auto end = file_handles.cend();
+        auto it = ++filesMeta.cbegin();
+        auto end = filesMeta.cend();
         std::string badFiles {};
-        for(; begin != end; ++begin)
+        for(; it != end; ++it)
         {
-            const auto& head = begin -> getSegmentHeader(0);
+            const auto& head = it -> second.getSegmentHeader(0);
             if ( head.expectedDimension() != expDim ||
                  head.expectedPoints()    != expCnt ||
                  head.getMeshType()       != mType    )
             {
                 if(!badFiles.empty()) badFiles += ", ";
-                badFiles += "\""s + begin -> getCurrentPath() + "\"";
+                badFiles += "\""s + it -> second.getCurrentPath() + "\"";
             }
         }
 
@@ -1009,24 +929,7 @@ int main(int argc, char** argv)
         std::cout << "Found " << totSize << " values to be handled (" << printMemSize( sizeof(float) * totSize ) << " of data in single precision).\n"; 
     }
 
-    //check if files are sorted by timestamp
-    if( !std::is_sorted(times.begin(), times.end()) )
-    {
-        std::cout << "File list received was not ordered by time, sorting it now!\n";
-        auto tItBegin = times.begin();
-        auto tItEnd   = times.begin();
-        auto fItBegin = file_handles.begin();      
-
-        std::vector<sort_helper<double, VField::VFieldFile>> helper; helper.reserve(tSeriesLength);
-        for(; tItBegin != tItEnd; ++tItBegin)
-            helper.emplace_back(&(*tItBegin), &(*fItBegin++));
-
-        //TODO: see if this hack works, and if it can be replaced completely
-        //CAUTION: I am surprised this even compiles :D
-        std::sort( helper.begin(), helper.end(), [&](const sort_helper<double, VField::VFieldFile>& el1,
-                                                     const sort_helper<double, VField::VFieldFile>& el2) { return *std::get<0>(el1) < *std::get<0>(el2); } );
-    }
-
+    
     //work on time array to set some more options
     double trueStep{ (times.back() - times.front())/(tSeriesLength - 1) };
     {
@@ -1052,14 +955,14 @@ int main(int argc, char** argv)
         //find and report outliers ( >3 sigma )
         std::string outliers {};
         tIt = times.cbegin(); tEnd = times.cend();
-        auto fIt = file_handles.cbegin();
+        auto fIt = filesMeta.cbegin();
         double expectedTime = *tIt;
         for(; tIt != tEnd; ++tIt)
         {
             if( std::abs( *tIt - expectedTime ) > 3 * TstepDisp )
             {
                 if( !outliers.empty() ) outliers += ", ";
-                outliers += "\""s + fIt -> getCurrentPath() + "\" (dt/disp=" + std::to_string( (*tIt - expectedTime) / TstepDisp ) + ")";
+                outliers += "\""s + fIt -> second.getCurrentPath() + "\" (dt/disp=" + std::to_string( (*tIt - expectedTime) / TstepDisp ) + ")";
             }
 
             ++fIt; expectedTime += trueStep;
@@ -1112,6 +1015,7 @@ int main(int argc, char** argv)
         return "";
     };
 
+    //prepare for work
     //after this main thread works with I/O
     const auto BatchSize = fft_engine -> expectedBatch();
     std::vector<std::array<std::size_t, 2>> segmentDescriptor;
@@ -1120,6 +1024,11 @@ int main(int argc, char** argv)
     std::ofstream tmpFile (tmpPath, std::ios_base::out |
                                     std::ios_base::binary |
                                     std::ios_base::trunc );
+    //created array of handle-index pairs
+    std::vector< std::pair<std::size_t, const VField::VFieldFile> > indexedHandles{};
+    indexedHandles.reserve(filesMeta.size());
+    for (std::size_t i = 0; i < filesMeta.size(); i++)
+        indexedHandles.emplace_back(i, filesMeta[i].second);
  
     auto exportData = [&] (GPUBuffer* buff)
     {
@@ -1231,7 +1140,7 @@ int main(int argc, char** argv)
 
             curBuffer -> state = BufferState::IMPORT;
             const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
-            readData( file_handles, curBuffer -> data.get(), begin, 
+            readData(indexedHandles, curBuffer -> data.get(), begin,
                     expectProg, progVar, curBuffer -> realPoints );
             segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
             curBuffer -> state = BufferState::PROCESS;
@@ -1309,7 +1218,7 @@ int main(int argc, char** argv)
             });
 
         buff -> state = BufferState::IMPORT;
-        readData( file_handles, buff -> data.get(), 0lu, 
+        readData(indexedHandles, buff -> data.get(), 0lu,
                 expectProg, progVar, buff -> realPoints );
         segmentDescriptor.push_back( {0lu, buff -> realPoints} );
         buff -> state = BufferState::PROCESS;
@@ -1333,7 +1242,7 @@ int main(int argc, char** argv)
 
     //and close tmp file
     tmpFile.close();
-    auto head = file_handles.front().getSegmentHeader(0);
+    auto head = filesMeta.front().second.getSegmentHeader(0);
     transformHeader( head, TimeRegExStr );
 
     expectProg = (tSeriesLength/2 + 1) * VFSize * 2;
