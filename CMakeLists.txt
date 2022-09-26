@@ -56,6 +56,7 @@ ENDIF()
 IF(MSVC)
 	add_definitions(-DNOMINMAX)
 ENDIF()
+SET(CMAKE_INSTALL_RPATH $ORIGIN)
 #ovfparser library
 add_library(ovfparser
     OVFParser/OVFHeader.cpp
@@ -89,7 +90,7 @@ IF(BUILD_FFUTIL)
         util/cuda-backend.cu
         $<IF:$<BOOL:${WIN32}>,util/win-console.cpp,util/console.cpp>)
 
-    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
+    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options tbb
         $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
         "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
 

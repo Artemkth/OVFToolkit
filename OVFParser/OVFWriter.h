@@ -43,8 +43,8 @@ namespace VField
             return "WriteOVF: Version string was not set, aborting!";
         //making sure version strings are the same
         for(auto it = begin; it != end; it++)
-            it -> at<pType::String> (OVFParameter::VersionString) = 
-                begin -> at<pType::String> (OVFParameter::VersionString);
+            it -> template at<pType::String> (OVFParameter::VersionString) = 
+                begin -> template at<pType::String> (OVFParameter::VersionString);
         std::string log{""};
         std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())

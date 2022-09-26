@@ -1,5 +1,6 @@
 #pragma once
 //testing utilities used across parser and writer
+#include<limits>
 #include"OVFVersion.h"
 
 namespace VField
