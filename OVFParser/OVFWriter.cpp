@@ -4,6 +4,7 @@
 #include<vector>
 #include<utility>
 #include<iomanip>
+#include<cstdint>
 #include"OVFUtil.h"
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
