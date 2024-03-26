@@ -189,6 +189,7 @@ inline void PostErrorMessage(
 
     //increment ignored expression count
     skip_cnt++;
+    WSFlush(stdlink);
 }
 //template for signiling failure
 inline bool PostFailure()
@@ -296,11 +297,11 @@ const std::map<
     {VField::OVFParameter::Vmin, "MinVal"},
     {VField::OVFParameter::Vmax, "MaxVal"},
     {VField::OVFParameter::Xmin, "MinX"},
-    {VField::OVFParameter::Xmin, "MinY"},
-    {VField::OVFParameter::Xmin, "MinZ"},
-    {VField::OVFParameter::Xmin, "MaxX"},
-    {VField::OVFParameter::Xmin, "MaxY"},
-    {VField::OVFParameter::Xmin, "MaxZ"}
+    {VField::OVFParameter::Ymin, "MinY"},
+    {VField::OVFParameter::Zmin, "MinZ"},
+    {VField::OVFParameter::Xmax, "MaxX"},
+    {VField::OVFParameter::Ymax, "MaxY"},
+    {VField::OVFParameter::Zmax, "MaxZ"}
 };
 
 //putting a value from header
@@ -1316,9 +1317,10 @@ void ParseWSTPHeader(const Expression& expr, VField::VField& field)
         {
             if (it != defParams.begin())
                 col += ", ";
-            col += (ParamKeys.at(*it));
+            auto paramName = ParamKeys.find(*it);
+            col += paramName!=ParamKeys.end()? paramName->second:"Unimplemented Param";
         }
-        PostErrorMessage("ExportOVF", "dedfail", col);
+        PostErrorMessage("ExportOVF", "dedfail", "Following arguments couldn't be filled automatically:" + col);
     }
 }
 
