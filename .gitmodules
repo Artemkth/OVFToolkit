@@ -1,0 +1,3 @@
+[submodule "external/FindMathematica"]
+	path = external/FindMathematica
+	url = https://github.com/sakra/FindMathematica.git
