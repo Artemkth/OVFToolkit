@@ -7,6 +7,7 @@
 
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
+//TODO Remove custom memory manager!!
 //mutex for memory management, used on block level
 __device__ int allocBusy = 0;
 //and allocation table
