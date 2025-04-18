@@ -61,22 +61,15 @@ __global__ void InitAllocTable( std::size_t* allocHandle, std::size_t size )
 }
 
 constexpr std::array<std::size_t, 31> AllowedFactors { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
+//Determine if the data set is compatible with extended 64 bit addressing, by checking if the size is a product of allowed primes only
 inline __host__ bool is4GCompatible( std::size_t size )
 {
-    while(size != 1)
+    for (const auto x: AllowedFactors)
     {
-        auto old = size;
-        for (const auto& x: AllowedFactors)
-            if( size % x == 0 )
-            {
-                size /= x;
-                break;
-            }
-
-        if(old == size)
-            return false;
+        while (size != 1 && size % x == 0)
+            size /= x;
     }
-    return true;
+    return size == 1;
 }
 
 //default thread block, 256 threads on square
