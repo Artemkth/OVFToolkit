@@ -12,7 +12,6 @@ find_package(Threads REQUIRED)
 # using boost for endianess, need to check if it is available!
 find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
 
-
 #library build file
 include(GenerateExportHeader)
 #like in windows make only certain function exported
@@ -90,7 +89,7 @@ IF(BUILD_FFUTIL)
         util/cuda-backend.cu
         $<IF:$<BOOL:${WIN32}>,util/win-console.cpp,util/console.cpp>)
 
-    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options tbb
+    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
         $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
         "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
 
@@ -103,6 +102,13 @@ IF(BUILD_FFUTIL)
 
     IF(WIN32)
         set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "setargv.obj")
+    ENDIF()
+
+    if(MSVC)
+        #microsoft trolling by misreporting c++ standard
+        #https://learn.microsoft.com/en-us/cpp/build/reference/zc-cplusplus?view=msvc-170&viewFallbackFrom=msvc-190
+        target_compile_options(ovf-batchfft PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
+                                -Xcompiler "/Zc:__cplusplus" >)
     ENDIF()
 ENDIF()
 

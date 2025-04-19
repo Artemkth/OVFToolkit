@@ -60,10 +60,19 @@ __global__ void InitAllocTable( std::size_t* allocHandle, std::size_t size )
     }
 }
 
-constexpr std::array<std::size_t, 31> AllowedFactors { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
-//Determine if the data set is compatible with extended 64 bit addressing, by checking if the size is a product of allowed primes only
+//allowed factors for the batch size
+//https://docs.nvidia.com/cuda/cufft/index.html#cufftmakeplanmany64
+constexpr std::array<std::size_t, 31> AllowedFactors { 
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 
+    59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127 };
+//Determine if the data set is compatible with extended 64 bit addressing
 inline __host__ bool is4GCompatible( std::size_t size )
 {
+    //the one and only dimension (time) should have even number for R2C and C2R transforms
+    if (size % 2 != 0)
+        return false;
+
+    //check if the factors in dimension are divisible by allowed primes only
     for (const auto x: AllowedFactors)
     {
         while (size != 1 && size % x == 0)
@@ -73,20 +82,18 @@ inline __host__ bool is4GCompatible( std::size_t size )
 }
 
 //default thread block, 256 threads on square
-#ifdef _WIN32
-
-const dim3 DefaultBlockSize{ 16, 16 };
-const std::size_t threadPerBlock{ DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z };
-
-#else
+//https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#thread-hierarchy
+//TODO it seems that when I coded it was not possible to constexpr dim3 in Visual Studio
+//TODO possibly implement check in cmake for the specific feature
 constexpr dim3 DefaultBlockSize{16, 16};
-constexpr std::size_t threadPerBlock{
-    DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z };
+constexpr std::size_t threadPerBlock{ DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z };
+//limits from API documentation
 static_assert( DefaultBlockSize.x <= 1024 && DefaultBlockSize.y <= 1024 && DefaultBlockSize.z <= 64 &&
                DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z <= 1024, "Default block size is given bad dimensions!" );
-#endif
 
 std::vector<std::tuple<std::size_t, dim3, dim3>> knownGridDim {};
+
+//Section for calculating block grid for interpolation kernel
 
 //calculate a cuda reference compliant grid fitting requested ammount of kernel launches
 __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
