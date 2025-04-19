@@ -40,7 +40,7 @@ ELSE()
     MESSAGE(STATUS "Cuda was not found!")
 ENDIF()
 #TODO: implement backend switching later
-set(BUILD_FFUTIL (FFTW_FOUND AND CUDA_FOUND) AND GSL_FOUND)
+set(BUILD_FFUTIL (FFTW_FOUND AND CUDA_FOUND) AND GSL_FOUND AND Boost_PROGRAM_OPTIONS_FOUND)
 IF(BUILD_FFUTIL)
     SET(FFMESSAGE "Building fourier analysis utility with following fftw engines: ")
     IF(FFTW_FOUND)
@@ -88,6 +88,8 @@ IF(BUILD_FFUTIL)
         util/fft-util.cpp
         util/cuda-backend.cu
         $<IF:$<BOOL:${WIN32}>,util/win-console.cpp,util/console.cpp>)
+
+    set_property(TARGET ovf-batchfft PROPERTY CUDA_ARCHITECTURES all)
 
     target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
         $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
