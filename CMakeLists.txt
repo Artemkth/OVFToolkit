@@ -110,7 +110,8 @@ IF(BUILD_FFUTIL)
         #microsoft trolling by misreporting c++ standard
         #https://learn.microsoft.com/en-us/cpp/build/reference/zc-cplusplus?view=msvc-170&viewFallbackFrom=msvc-190
         target_compile_options(ovf-batchfft PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
-                                -Xcompiler "/Zc:__cplusplus" >)
+                                -Xcompiler "/Zc:__cplusplus" 
+                                --std c++17>)
     ENDIF()
 ENDIF()
 
