@@ -1,9 +1,11 @@
 #include"cuda-backend.h"
+#include<iostream>
 #include<limits>
 #include<array>
 #include<vector>
 #include<tuple>
 #include<algorithm>
+#include<string>
 
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
@@ -60,6 +62,86 @@ __global__ void InitAllocTable( std::size_t* allocHandle, std::size_t size )
     }
 }
 
+//CUDA APIs error handling wrapper
+//Definition of success result for different sub-APIs
+template<typename resType> resType cudaSuccVal = 0;
+template<> cufftResult_t cudaSuccVal<cufftResult_t> = CUFFT_SUCCESS;
+template<> cudaError_t cudaSuccVal<cudaError_t> = cudaSuccess;
+
+//decode error message to something humanly readable
+template<typename resType> std::string_view decodeCuError(resType);
+//https://docs.nvidia.com/cuda/archive/12.0.0/cufft/index.html#return-value-cufftresult
+template<> constexpr std::string_view decodeCuError<cufftResult_t>(cufftResult_t res)
+{
+    switch(res)
+    {
+        case CUFFT_SUCCESS:
+            return "CUFFT_SUCCESS";
+        case CUFFT_INVALID_PLAN:
+            return "CUFFT_INVALID_PLAN";
+        case CUFFT_ALLOC_FAILED:
+            return "CUFFT_ALLOC_FAILED";
+        case CUFFT_INVALID_TYPE:
+            return "CUFFT_INVALID_TYPE";
+        case CUFFT_INVALID_VALUE:
+            return "CUFFT_INVALID_VALUE";
+        case CUFFT_INTERNAL_ERROR:
+            return "CUFFT_INTERNAL_ERROR";
+        case CUFFT_EXEC_FAILED:
+            return "CUFFT_EXEC_FAILED";
+        case CUFFT_SETUP_FAILED:
+            return "CUFFT_SETUP_FAILED";
+        case CUFFT_INVALID_SIZE:
+            return "CUFFT_INVALID_SIZE";
+        case CUFFT_UNALIGNED_DATA:
+            return "CUFFT_UNALIGNED_DATA";
+        case CUFFT_INCOMPLETE_PARAMETER_LIST:
+            return "CUFFT_INCOMPLETE_PARAMETER_LIST";
+        case CUFFT_INVALID_DEVICE:
+            return "CUFFT_INVALID_DEVICE";
+        case CUFFT_PARSE_ERROR:
+            return "CUFFT_PARSE_ERROR";
+        case CUFFT_NO_WORKSPACE:
+            return "CUFFT_NO_WORKSPACE";
+        case CUFFT_NOT_IMPLEMENTED:
+            return "CUFFT_NOT_IMPLEMENTED";
+        case CUFFT_LICENSE_ERROR:
+            return "CUFFT_LICENSE_ERROR";
+        case CUFFT_NOT_SUPPORTED:
+            return "CUFFT_NOT_SUPPORTED";
+        default:
+            return "Unimplemented";
+    }
+}
+//https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__ERROR.html
+template<> constexpr std::string_view decodeCuError<cudaError_t>(cudaError_t res) { return cudaGetErrorName(res); }
+
+//wrapper for cuda/cufft APIs
+template<typename resType, typename... argsT>
+struct PackedAPI {
+    using funcType = resType (*)(argsT...);
+
+    funcType func;
+    std::tuple<argsT...> argsTpl;
+    std::string_view erMsg;
+    
+    constexpr PackedAPI(funcType f, std::string_view msg, argsT... args):
+        func(f), argsTpl(std::make_tuple(args...)), erMsg(msg) {}
+
+    inline bool exec() {
+        auto res = std::apply(func, argsTpl);
+        if (res != cudaSuccVal<resType>)
+            std::cout << "Running " << erMsg << " got unexpected result "
+                << decodeCuError(res) << "(" << res << "); Aborting!" << std::endl;
+        return res == cudaSuccVal<resType>;
+    }
+};
+
+//run the packs of APIs
+template<typename... packsT>
+inline bool run_api_pack(packsT... packs)
+{ return ( packs.exec() && ... ); }
+
 //allowed factors for the batch size
 //https://docs.nvidia.com/cuda/cufft/index.html#cufftmakeplanmany64
 constexpr std::array<std::size_t, 31> AllowedFactors { 
@@ -81,10 +163,8 @@ inline __host__ bool is4GCompatible( std::size_t size )
     return size == 1;
 }
 
-//default thread block, 256 threads on square
+//default thread block, 256 threads on square (recommended value)
 //https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#thread-hierarchy
-//TODO it seems that when I coded it was not possible to constexpr dim3 in Visual Studio
-//TODO possibly implement check in cmake for the specific feature
 constexpr dim3 DefaultBlockSize{16, 16};
 constexpr std::size_t threadPerBlock{ DefaultBlockSize.x * DefaultBlockSize.y * DefaultBlockSize.z };
 //limits from API documentation
@@ -525,7 +605,10 @@ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
 
 cuFFTEngine::~cuFFTEngine() noexcept
 {
-    cufftDestroy(plan); cudaFree(data);
+    run_api_pack( 
+            PackedAPI{cufftDestroy, "destroying the plan", plan},
+            PackedAPI{cudaFree, "freeing the data buffer", (void*)data}
+            );
     cudaFree(allocTableHandle);
     InterpAccel.free();
 }
