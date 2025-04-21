@@ -507,7 +507,7 @@ __global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
 }
 
 //init interpolation
-bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
+__host__ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
 {
     if( fail || cnt > fftLength || cnt < 2 )
         return false;

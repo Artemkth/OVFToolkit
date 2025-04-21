@@ -5,9 +5,9 @@ template<typename T>
 class FFTEngine
 {
     protected:
-        std::size_t batchSize {0};
-        std::size_t fftLength {0};
-        bool fail {false};
+        std::size_t batchSize {0};  //number of concurrent transforms in a batch
+        std::size_t fftLength {0};  //size of single FFT source dataset
+        bool fail {false};          //fail flag
 
     public:
         //should always have a destructor to free the resources
@@ -23,8 +23,10 @@ class FFTEngine
 
         //interfaces
         //initialize the engine and return some information about how it went
-        //len tells the length of fft sets, and maxBatch tells maximum memory which can be allocated
-        virtual std::string Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem ) = 0;
+        //len tells the length of fft sets
+        //maxBatch is the size of the original dataset
+        //suggests maximum memory to be used 
+        virtual std::string Init( std::size_t t_len, std::size_t dataSize, std::size_t maxMem ) = 0;
 
         //function to run a transform with given data and padding for it,
         //will pad out the data in gpu memory with reinitializing for new array
