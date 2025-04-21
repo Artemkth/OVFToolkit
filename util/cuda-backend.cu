@@ -114,7 +114,7 @@ template<> constexpr std::string_view decodeCuError<cufftResult_t>(cufftResult_t
     }
 }
 //https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__ERROR.html
-template<> constexpr std::string_view decodeCuError<cudaError_t>(cudaError_t res) { return cudaGetErrorName(res); }
+template<> std::string_view decodeCuError<cudaError_t>(cudaError_t res) { return cudaGetErrorName(res); }
 
 //wrapper for cuda/cufft APIs
 template<typename resType, typename... argsT>

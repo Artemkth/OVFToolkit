@@ -100,7 +100,7 @@ IF(BUILD_FFUTIL)
         "${PROJECT_BINARY_DIR}"
         $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_INCLUDE_DIRS}>)
 
-    set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 11)
+    set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 17)
 
     IF(WIN32)
         set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "setargv.obj")
