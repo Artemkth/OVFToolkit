@@ -16,7 +16,7 @@ class cuFFTEngine: public FFTEngine<float>
         std::size_t reallocate(std::size_t);
 
         //hold interpolation's global constants
-        struct {
+        struct InterpAccel_t {
             bool Ready {false};
             double trueStep;
             std::size_t sCnt; //spline count
@@ -31,19 +31,8 @@ class cuFFTEngine: public FFTEngine<float>
             float* dt{nullptr};
 
             //free the data
-            void free()
-            {
-                cudaFree(h);
-                cudaFree(Indices);
-
-                Ready = false;
-            }
+            void free();
         } InterpAccel;
-
-        //interpolation kernel
-#ifdef __CUDACC__
-        __device__ void interp_kernel(float * const data)
-#endif
 
     public:
         //create cuda engine bound to GPU #gpu

@@ -558,19 +558,37 @@ cuFFTEngine::~cuFFTEngine() noexcept
     InterpAccel.free();
 }
 
+__host__ void cuFFTEngine::InterpAccel_t::free()
+{
+    run_api_pack(
+            PackedAPI{cudaFree, "freeing FP accelerators", (void*)h},
+            PackedAPI{cudaFree, "freeing indice array", (void*)Indices}
+            );
+    Ready = false;
+}
+
 //run interpolation over data to remove jitter
-__device__ void cuFFTEngine::interp_kernel(float * const __restrict__ data)
+__device__ void cuFFTEngine::interp_kernel(float * const __restrict__ data,
+                                           float * const __restrict__ workBuffer,
+                                           std::size_t splLen,
+                                           std::size_t batchSize
+                                           float const * const __restrict__ h,
+                                           float const * const __restrict__ mu,
+                                           float const * const __restrict__ l,
+                                           std::size_t const * const __restric__ ind,
+                                           float const * const __restrict__ dt
+                                           )
 {
     const std::size_t index { (blockIdx.y*gridDim.x + blockIdx.x)*blockDim.z*blockDim.y*blockDim.x + 
                               threadIdx.z * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x };
-    __shared__ std::size_t memBlock;
 
     //nothing to do for overflow threads
     if( !index < batchSize )
         return;
 
     //the additional 2*splLen floats dynamic overhead
-    auto a = (float*)cudaBuffer + 2 * splLen * index;
+    //reuse cuFFT buffer
+    auto a = (float*)workBuffer + 2 * splLen * index;
     auto z = a + splLen;
 
     //copy original values into the array 'a'
@@ -587,7 +605,7 @@ __device__ void cuFFTEngine::interp_kernel(float * const __restrict__ data)
     }
 
     //set value of the last point manually, in case splLen < outLen - 1
-    //*(data + (outLen - 1) * batchSize + index) = *(data + splLen * batchSize + index);
+    //data[(outLen - 1) * batchSize + index] = data[ splLen * batchSize + index];
     double cnext = 0.;
     size_t spl_i = 0;//number of spline from the end
     for(size_t i = 0; i < splLen; i++)
@@ -627,9 +645,9 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     //move data into array
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
-    if ( fftLength > 2 && InterpAccel.Ready && !fail)
+    if ( InterpAccel.Ready && !fail)
         interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
-                (float*)data, InterpAccel.BlockBuffer, nBatchSize, fftLength - 1, fftLength,
+                (float*)data, (float*)cudaBuffer, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l,
                 InterpAccel.Indices, InterpAccel.dt);
 
