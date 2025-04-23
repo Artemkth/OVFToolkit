@@ -35,9 +35,10 @@ class FFTEngine
         virtual bool RunTransform( T* data, T norm, std::size_t padding ) = 0;
 
         //initialize interpolation engine to remove jitter from timed data
-        //cnt time points is received through times array,
-        //which is later interpolated into fftLength of interpolated values on target device
+        //array times has cnt time-stamps for the sampling points
         //cnt is expected to be smaller or same as fftLength for data alignment
+        //method sets up accelerators for calculating fftLength points in parallelized fashion
+        //using cubic spline interpolation
         virtual bool InitInterp( const double* times, std::size_t cnt ) = 0;
 };
 

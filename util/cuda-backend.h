@@ -9,6 +9,7 @@ class cuFFTEngine: public FFTEngine<float>
         //initialized later
         cufftHandle plan{};          //handle for plan
         cufftComplex* data{nullptr}; //and pointer to data allocated on GPU
+        void* cudaBuffer{nullptr};   //pointer to shared working area for cuFFT and interpolation
         int gpuID {0};
         bool useExtended {false};
 
@@ -21,28 +22,28 @@ class cuFFTEngine: public FFTEngine<float>
             std::size_t sCnt; //spline count
 
             //GPU buffers with interpolation accelerators
-            double* h {nullptr};
-            double* mu{nullptr};
-            double* l {nullptr};
+            float* h {nullptr};
+            float* mu{nullptr};
+            float* l {nullptr};
 
             //point locators
             std::size_t* Indices{nullptr};
-            double* dt{nullptr};
-
-            //per-thread buffer heap
-            std::size_t blockBufferCnt {0};
-            double* BlockBuffer{nullptr};
+            float* dt{nullptr};
 
             //free the data
             void free()
             {
                 cudaFree(h);
                 cudaFree(Indices);
-                cudaFree(BlockBuffer);
 
                 Ready = false;
             }
         } InterpAccel;
+
+        //interpolation kernel
+#ifdef __CUDACC__
+        __device__ void interp_kernel(float * const data)
+#endif
 
     public:
         //create cuda engine bound to GPU #gpu

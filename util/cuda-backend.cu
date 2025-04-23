@@ -9,58 +9,9 @@
 
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
-//TODO Remove custom memory manager!!
-//mutex for memory management, used on block level
-__device__ int allocBusy = 0;
-//and allocation table
-__device__ std::size_t* allocTable;
-std::size_t* allocTableHandle{nullptr};
-
-//allocate memory for a block, writes in the number of a free block
-__device__ void allocInterpBuffer( std::size_t& buf )
-{
-    //spinlock until allocation table has free memory and aquire the lock,
-    //freeing memory has pririty this way
-    //TODO: look if CUDA has spinlock notification like _mu_pause
-    while(true)
-    {
-        while( allocTable[0] == 0 || atomicCAS(&allocBusy, 0, 1) != 0 );
-        if( allocTable[0] != 0)
-        {
-            buf = allocTable[ allocTable[0] -- ];
-            allocBusy = 0;
-            return;
-        }
-        allocBusy = 0;
-    }
-}
-
-//make memory available for other blocks
-__device__ void freeInterpBuffer( std::size_t buf )
-{
-    while( atomicCAS(&allocBusy, 0, 1) != 0 );
-    allocTable[ ++ allocTable[0] ] = buf;
-    allocBusy = 0;
-}
-
 //I can't believe this is not already provided by api :'(
 __host__ __device__ inline bool operator==(const dim3& ref1, const dim3& ref2)
 { return ref1.x == ref2.x && ref1.y == ref2.y && ref1.z == ref2.z; }
-
-__global__ void InitAllocTable( std::size_t* allocHandle, std::size_t size )
-{
-    //only one thread of a block matters
-    if( threadIdx == dim3(0, 0, 0) )
-    {
-        atomicCAS(&allocBusy, 0, 1);
-        allocTable = allocHandle;
-        allocTable[0] = size;
-        for(std::size_t i = 0; i < size; i++)
-            allocTable[i + 1] = i;
-
-        allocBusy = 0;
-    }
-}
 
 //CUDA APIs error handling wrapper
 //Definition of success result for different sub-APIs
@@ -70,6 +21,7 @@ template<> cudaError_t cudaSuccVal<cudaError_t> = cudaSuccess;
 
 //decode error message to something humanly readable
 template<typename resType> std::string_view decodeCuError(resType);
+//cuFFT specialization
 //https://docs.nvidia.com/cuda/archive/12.0.0/cufft/index.html#return-value-cufftresult
 template<> constexpr std::string_view decodeCuError<cufftResult_t>(cufftResult_t res)
 {
@@ -113,6 +65,7 @@ template<> constexpr std::string_view decodeCuError<cufftResult_t>(cufftResult_t
             return "Unimplemented";
     }
 }
+//cuRand specialization
 //https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__ERROR.html
 template<> std::string_view decodeCuError<cudaError_t>(cudaError_t res) { return cudaGetErrorName(res); }
 
@@ -124,14 +77,14 @@ struct PackedAPI {
     funcType func;
     std::tuple<argsT...> argsTpl;
     std::string_view erMsg;
-    
+
     constexpr PackedAPI(funcType f, std::string_view msg, argsT... args):
         func(f), argsTpl(std::make_tuple(args...)), erMsg(msg) {}
 
     inline bool exec() {
         auto res = std::apply(func, argsTpl);
         if (res != cudaSuccVal<resType>)
-            std::cout << "Running " << erMsg << " got unexpected result "
+            std::cerr << "Running " << erMsg << " got unexpected result "
                 << decodeCuError(res) << "(" << res << "); Aborting!" << std::endl;
         return res == cudaSuccVal<resType>;
     }
@@ -507,46 +460,42 @@ __global__ void normalize( cufftReal* data, std::size_t nSize, float norm )
 }
 
 //init interpolation
-__host__ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
+__host__ bool cuFFTEngine::InitInterp( const double* ts )
 {
-    if( fail || cnt > fftLength || cnt < 2 )
+    if( fail || fftLength < 2 )
+        //2 is acceptable = do nothing, lol
         return false;
-    InterpAccel.free();
-    cudaFree(allocTableHandle);
 
+    //constants for reinterpreter
     InterpAccel.sCnt = cnt - 1;//nunmber of intervals between cnt points
-    InterpAccel.trueStep = (*(ts + cnt - 1) - *ts) / (fftLength - 1);
+    InterpAccel.trueStep = (ts[fftLength - 1] - ts[0]) / (fftLength - 1);
     const auto& sCnt = InterpAccel.sCnt;
     const auto& step = InterpAccel.trueStep;
 
     const std::size_t staticOverhead {
         //shared interp accelerators
-        (3 * sCnt + fftLength - 2) * sizeof(double) + 
-        (fftLength - 2) * sizeof(std::size_t) + 
-        //__shared__ memory segment number for each block
-        (batchSize + threadPerBlock - 1) / threadPerBlock * sizeof(std::size_t)
-        // add calculation of worst case scenario allocation table here as well
-    };
-    const std::size_t activeBlockOverhead {
-        2 * (fftLength - 1) * threadPerBlock * sizeof(double)
+        // 3 (h, mu and l) arrays for spline parameters
+        // and fftLength - 2 dts points
+        (3 * sCnt + fftLength - 2) * sizeof(float) + 
+        // fftLength - 2 spline indices
+        (fftLength - 2) * sizeof(std::size_t)
     };
 
-    //evaluate the memory constraints
+    //evaluate the memory constraints, give up if there is not enough free memory
     std::size_t freeMem, totMem;
     cudaMemGetInfo( &freeMem, &totMem );
-    if( freeMem < (staticOverhead + activeBlockOverhead) )
+    if( freeMem < staticOverhead )
+    {
+        std::cerr << "Not enough free VRAM for interpolation! Giving up on interpolation!" << std::endl;
         return false;
-    const std::size_t targetBCount {
-        //TODO: get max number of active warps/blocks from cuda API instead of 12 LULW
-        std::min<std::size_t>( (freeMem - staticOverhead) / activeBlockOverhead, 24lu )
-    };
+    }
 
     //do some host calculations and upload arithmetic accelerators onto the gpu
-    auto* h  = new double[3 * sCnt + fftLength - 2];
-    auto* mu = h + sCnt;
-    auto* l  = h + 2 * sCnt;
-    auto* dts= h + 3 * sCnt;
-    auto* ind= new std::size_t[fftLength - 2];
+    auto h  = std::unique_ptr{new float[3 * sCnt + fftLength - 2]};
+    auto mu = h.get() + sCnt;
+    auto l  = h.get() + 2 * sCnt;
+    auto dts= h.get() + 3 * sCnt;
+    auto ind= std::unique_ptr{new std::size_t[fftLength - 2]};
 
     //fill in const data
     mu[0] = 0.; l[0] = 1.; h[0] = ts[1] - ts[0];
@@ -557,6 +506,7 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
         mu[i] = h[i] / l[i];
     }
     //calculate access indices and time shifts
+    //skip initial and final points, those don't need reinterpolation
     for( std::size_t i = 1; i < fftLength - 1; i++ )
     {
         std::size_t j{0};
@@ -569,13 +519,16 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     }
 
     //upload results to gpu memory
-    bool failed = cudaMalloc(&InterpAccel.h, sizeof(double) * (3 * sCnt + fftLength - 2)) != cudaSuccess ||
-                  cudaMalloc(&InterpAccel.Indices, sizeof(std::size_t) * (fftLength - 2)) != cudaSuccess ||
-                  cudaMalloc(&InterpAccel.BlockBuffer, activeBlockOverhead * targetBCount) != cudaSuccess ||
-                  cudaMemcpy((void*)InterpAccel.h, (const void*)h, 
-                          (3 * sCnt + fftLength - 2) * sizeof(double), cudaMemcpyHostToDevice) != cudaSuccess ||
-                  cudaMemcpy((void*)InterpAccel.Indices, (const void*)ind,
-                          (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice) != cudaSuccess;
+    bool failed = run_api_pack(
+        PackedAPI{cudaMalloc, "allocating GPU memory for FP constants",
+          (void**)&InterpAccel.h, sizeof(float) * (3 * sCnt + fftLength -2)},
+        PackedAPI{cudaMemcpy, "copying FP constants to GPU",
+          (void*)&InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
+        PackedAPI{cudaMalloc, "allocating spline indexing array",
+          (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)},
+        PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
+          (void*)&InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
+
     if(!failed)
     {
         InterpAccel.mu = InterpAccel.h + sCnt;
@@ -585,21 +538,14 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts, std::size_t cnt )
     }
     //TODO: implement retrying BlockBuffer allocation
 
-    //next initialize the allocation table
-    failed = failed || cudaMalloc(&allocTableHandle, sizeof(std::size_t) * (targetBCount + 1)) != cudaSuccess; 
-    if(!failed) InitAllocTable<<<1,1>>>(allocTableHandle, InterpAccel.blockBufferCnt);
-
     //and cleanup if failed along the way 
     if(failed || cudaDeviceSynchronize() != cudaSuccess)
     {
         InterpAccel.free();
-        cudaFree(allocTableHandle);
         cudaDeviceSynchronize();
     }
     InterpAccel.Ready = !failed;
 
-    //clear host memory
-    delete[] h; delete[] ind;
     return InterpAccel.Ready;
 }
 
@@ -609,53 +555,39 @@ cuFFTEngine::~cuFFTEngine() noexcept
             PackedAPI{cufftDestroy, "destroying the plan", plan},
             PackedAPI{cudaFree, "freeing the data buffer", (void*)data}
             );
-    cudaFree(allocTableHandle);
     InterpAccel.free();
 }
 
 //run interpolation over data to remove jitter
-__global__ void interp(
-        float * const __restrict__ data,
-        double* const __restrict__ buffer,
-        std::size_t batchSize,
-        std::size_t splLen,
-        std::size_t outLen,
-        const double* __restrict__ h,
-        const double* __restrict__ mu,
-        const double* __restrict__ l,
-        const std::size_t* __restrict__ ind,
-        const double* __restrict__ dt )
+__device__ void cuFFTEngine::interp_kernel(float * const __restrict__ data)
 {
-    const std::size_t index { (blockIdx.y * gridDim.x + blockIdx.x) * blockDim.x * blockDim.y + 
-                              threadIdx.y * blockDim.x + threadIdx.x };
+    const std::size_t index { (blockIdx.y*gridDim.x + blockIdx.x)*blockDim.z*blockDim.y*blockDim.x + 
+                              threadIdx.z * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x };
     __shared__ std::size_t memBlock;
 
-    if( index > batchSize )
-        return; //return if thread lands outside of the batch
+    //nothing to do for overflow threads
+    if( !index < batchSize )
+        return;
 
-    if( threadIdx == dim3(0, 0, 0) )
-        allocInterpBuffer( memBlock );
-    __syncthreads();
-
-    double* a = buffer + 2 * splLen *
-        (memBlock * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x);
-    double* z = a + splLen;
+    //the additional 2*splLen floats dynamic overhead
+    auto a = (float*)cudaBuffer + 2 * splLen * index;
+    auto z = a + splLen;
 
     //copy original values into the array 'a'
     for(size_t i = 0; i < splLen; i++)
-        a[i] = *(data + i * batchSize + index);
+        a[i] = data[ i * batchSize + index ];
 
     //forward loop to calculate z_i
     z[0] = 0.;
     for(size_t i = 1; i < splLen; i++)
     {
-        double alpha = 3./h[i] * (*(data + (i + 1) * batchSize + index) - *(data + i * batchSize + index) ) -
-                       3./h[i - 1] * (*(data + i * batchSize + index) - *(data + (i-1) * batchSize + index) );
+        auto alpha = 3./h[i]   *   (data[(i + 1) * batchSize + index] - data[i * batchSize + index]) -
+                     3./h[i - 1] * (data[i * batchSize + index] - data[(i-1) * batchSize + index]);
         z[i] = (alpha - h[i - 1] * z[i - 1])/l[i];
     }
 
     //set value of the last point manually, in case splLen < outLen - 1
-    *(data + (outLen - 1) * batchSize + index) = *(data + splLen * batchSize + index);
+    //*(data + (outLen - 1) * batchSize + index) = *(data + splLen * batchSize + index);
     double cnext = 0.;
     size_t spl_i = 0;//number of spline from the end
     for(size_t i = 0; i < splLen; i++)
@@ -667,11 +599,11 @@ __global__ void interp(
         //range check before result fetch
         for(; spl_i < outLen - 2 && ind[outLen - 3 - spl_i] == j; spl_i++ )
         {
-            const double dtVal = dt[outLen - 3 - spl_i];
+            const auto dtVal = dt[outLen - 3 - spl_i];
 
             //and assign the interpolated value
-            *(data + (outLen - 2 - spl_i) * batchSize + index) = a[j] +
-                ((*(data + (j + 1) * batchSize + index) - *(data + j * batchSize + index))/h[j] -h[j] * (cnext + 2 * c) / 3.) * dtVal +
+            data[(outLen - 2 - spl_i) * batchSize + index] = a[j] +
+                ((data[(j + 1) * batchSize + index] - data[j * batchSize + index])/h[j] -h[j] * (cnext + 2 * c) / 3.) * dtVal +
                 c * dtVal * dtVal +
                 (cnext - c)/(3. * h[j]) * dtVal * dtVal * dtVal;
         }
@@ -681,12 +613,6 @@ __global__ void interp(
         //rotate in the end
         cnext = c;
     }
-    //wait here for all thread to finish before abandoning the allocation
-    //ideally does nothing, TODO: check if this can be removed
-    __syncthreads();
- 
-    if( threadIdx == dim3(0, 0, 0) )
-        freeInterpBuffer( memBlock );
 }
 
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
