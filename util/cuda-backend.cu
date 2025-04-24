@@ -6,6 +6,7 @@
 #include<tuple>
 #include<algorithm>
 #include<string>
+#include<memory>
 
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
@@ -183,21 +184,40 @@ __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
     return optimalGrid;
 }
 
-__host__ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
+//wrap cuda apis into single function name for use later
+//https://docs.nvidia.com/cuda/cufft/#cufftgetsizemany
+template<typename T>
+__host__ cufftResult cufftGetSizeManyWrap(cufftHandle, int, T*, T*, T, T, T*, T, T, cufftType, T, std::size_t);
+template<> __host__ cufftResult cufftGetSizeManyWrap<int> (cufftHandle plan, int rank, int *n, int *inembed, int istride, int idist, int *onembed, int ostride, int odist, cufftType type, int batch, std::size_t *workSize)
+{ return cufftGetSizeMany(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
+template<> __host__ cufftResult cufftGetSizeManyWrap<long long int> (cufftHandle plan, int rank, long long int *n, long long int *inembed, long long int istride, long long int idist, long long int *onembed, long long int ostride, long long int odist, cufftType type, long long int batch, std::size_t *workSize)
+{ return cufftGetSizeMany64(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
+
+template<typename T>
+__host__ std::size_t EstimateBatchSize( cufftHandle plan, std::size_t len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
 {
-    int cPoints = len/2 + 1;
-    int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) * cPoints), maxBatch );
-    int arrSize { batch_size * len };
-    int outArrSize { batch_size * cPoints }; //rounds down
+    //number of complex values in result of R2C transform, len/2 rounds down automatically, desired behaviour
+    auto cPoints = len/2 + 1;
+    //first check if the transformation can fit with the least conservative memory usage 
+    //cuda might require at most 8x the original array size for work area
+    std::size_t tmp { std::min<std::size_t>( std::min(maxMem, std::numeric_limits<T>::max()) / (9 * sizeof(cufftcomplex) * cpoints), maxbatch ) };
+    T batch_size{ tmp > std::numeric_limits<T>::max()? std::numeric_limits<T>::max() : static_cast<T>(tmp) };
+    // next two are guaranteed to fit since maxMem is capped to addressable space only
+    T arrSize { static_cast<T>(batch_size * len) }; 
+    T outArrSize { static_cast<T>(batch_size * cPoints) }; //rounds down
     std::size_t estimate{};
-    auto estimationError = cufftGetSizeMany(
+    auto estimationError = cufftGetSizeManyWrap<T>(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
                 &outArrSize, batch_size, 1,
                 CUFFT_R2C, batch_size, &estimate);
     if( estimationError != CUFFT_SUCCESS )
+    {
+        std::cerr << "Could not run the cufftGetSizeMany, got an error: " << decodeCuError(estimationError) << "("<< estimationError<<")"<< std::endl;
         return 0;
+    }
 
+    //if by chance there is enough memory to do transform in a single batch, return that batch size
     if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
         return batch_size;
 
@@ -208,7 +228,7 @@ __host__ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::
     {
         arrSize = batch_size * len;
         outArrSize = batch_size * cPoints; //rounds down
-        estimationError = cufftGetSizeMany(
+        estimationError = cufftGetSizeManyWrap<T>(
                 plan, 1, &len, 
                 &arrSize, batch_size, 1,
                 &outArrSize, batch_size, 1,
@@ -227,53 +247,6 @@ __host__ int EstimateBatch( cufftHandle plan, int len, std::size_t maxMem, std::
             batch_size++;
         else
             batch_size--;
-    }
-    return batch_size==0? batch_size : maxBatch;
-}
-
-__host__ int EstimateBatch64( cufftHandle plan, long long int len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
-{
-    long long int cPoints = len/2 + 1;
-    long long int batch_size = std::min<int>( maxMem / (9 * sizeof(cufftComplex) *  cPoints), maxBatch );
-    long long int arrSize { batch_size * len };
-    long long int outArrSize { batch_size * cPoints }; //rounds down
-    std::size_t estimate{};
-    auto estimationError = cufftGetSizeMany64(
-                plan, 1, &len, 
-                &arrSize, batch_size, 1,
-                &outArrSize, batch_size, 1,
-                CUFFT_R2C, batch_size, &estimate);
-    if( estimationError != CUFFT_SUCCESS )
-        return 0;
-
-    if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
-        return batch_size;
-
-    //otherwise try to find the size just large enough starting from the linear extrapolation
-    batch_size = std::min<long long int>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
-    bool isFitting = true; std::size_t cnt {0};
-    while(batch_size > 0 && batch_size <= maxBatch)
-    {
-        arrSize = batch_size * len;
-        outArrSize = batch_size * cPoints; //rounds down
-        estimationError = cufftGetSizeMany64(
-                plan, 1, &len, 
-                &arrSize, batch_size, 1,
-                &outArrSize, batch_size, 1,
-                CUFFT_R2C, batch_size, &estimate);
-
-        if( estimationError != CUFFT_SUCCESS || estimationError != CUFFT_ALLOC_FAILED )
-            return 0; //expect those two since might go over allowed GPU memory
-
-        const auto wasFitting = isFitting;
-        isFitting = maxMem >= (estimate + sizeof(cufftComplex) * batch_size * cPoints);
-        if(isFitting != wasFitting && cnt!=0)
-            return isFitting? batch_size : batch_size - 1;
-
-        cnt++;
-        if(isFitting)
-            batch_size++;
-        batch_size--;
     }
     return batch_size==0? batch_size : maxBatch;
 }
@@ -373,12 +346,12 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
         }
 
         //else good to try
-        batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
+        batchSize = EstimateBatchSize<long long int>(plan, fftLength, maxMem, maxBatch);
     }
     else if (useExtended)
-        batchSize = EstimateBatch64(plan, fftLength, maxMem, maxBatch);
+        batchSize = EstimateBatchSize<long long int>(plan, fftLength, maxMem, maxBatch);
     else
-        batchSize = EstimateBatch(plan, fftLength, maxMem, std::min<std::size_t>(maxBatch, std::numeric_limits<int>::max()));
+        batchSize = EstimateBatchSize<int>(plan, fftLength, maxMem, std::min<std::size_t>(maxBatch, std::numeric_limits<int>::max()));
 
     if(batchSize == 0)
     {
@@ -467,7 +440,7 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
         return false;
 
     //constants for reinterpreter
-    InterpAccel.sCnt = cnt - 1;//nunmber of intervals between cnt points
+    InterpAccel.sCnt = fftLength - 1;//nunmber of intervals between cnt points
     InterpAccel.trueStep = (ts[fftLength - 1] - ts[0]) / (fftLength - 1);
     const auto& sCnt = InterpAccel.sCnt;
     const auto& step = InterpAccel.trueStep;
@@ -491,11 +464,11 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
     }
 
     //do some host calculations and upload arithmetic accelerators onto the gpu
-    auto h  = std::unique_ptr{new float[3 * sCnt + fftLength - 2]};
+    std::unique_ptr<float[]> h{new float[3 * sCnt + fftLength - 2]};
     auto mu = h.get() + sCnt;
     auto l  = h.get() + 2 * sCnt;
     auto dts= h.get() + 3 * sCnt;
-    auto ind= std::unique_ptr{new std::size_t[fftLength - 2]};
+    std::unique_ptr<std::size_t[]> ind{new std::size_t[fftLength - 2]};
 
     //fill in const data
     mu[0] = 0.; l[0] = 1.; h[0] = ts[1] - ts[0];
@@ -520,11 +493,11 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
 
     //upload results to gpu memory
     bool failed = run_api_pack(
-        PackedAPI{cudaMalloc, "allocating GPU memory for FP constants",
+        PackedAPI{static_cast<cudaError_t(*)(void**, size_t)>(cudaMalloc), "allocating GPU memory for FP constants",
           (void**)&InterpAccel.h, sizeof(float) * (3 * sCnt + fftLength -2)},
         PackedAPI{cudaMemcpy, "copying FP constants to GPU",
           (void*)&InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
-        PackedAPI{cudaMalloc, "allocating spline indexing array",
+        PackedAPI{static_cast<cudaError_t(*)(void**, size_t)>(cudaMalloc), "allocating spline indexing array",
           (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)},
         PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
           (void*)&InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
@@ -534,7 +507,6 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
         InterpAccel.mu = InterpAccel.h + sCnt;
         InterpAccel.l  = InterpAccel.h + 2 * sCnt;
         InterpAccel.dt = InterpAccel.h + 3 * sCnt;
-        InterpAccel.blockBufferCnt = targetBCount;
     }
     //TODO: implement retrying BlockBuffer allocation
 
@@ -568,19 +540,20 @@ __host__ void cuFFTEngine::InterpAccel_t::free()
 }
 
 //run interpolation over data to remove jitter
-__device__ void cuFFTEngine::interp_kernel(float * const __restrict__ data,
+__global__ void interp_kernel(float * const __restrict__ data,
                                            float * const __restrict__ workBuffer,
                                            std::size_t splLen,
-                                           std::size_t batchSize
+                                           std::size_t batchSize,
+                                           std::size_t outLen,
                                            float const * const __restrict__ h,
                                            float const * const __restrict__ mu,
                                            float const * const __restrict__ l,
-                                           std::size_t const * const __restric__ ind,
+                                           std::size_t const * const __restrict__ ind,
                                            float const * const __restrict__ dt
                                            )
 {
-    const std::size_t index { (blockIdx.y*gridDim.x + blockIdx.x)*blockDim.z*blockDim.y*blockDim.x + 
-                              threadIdx.z * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x };
+    const std::size_t index { (blockIdx.y*gridDim.x + blockIdx.x)*threadPerBlock + 
+                              threadIdx.y * blockDim.x + threadIdx.x };
 
     //nothing to do for overflow threads
     if( !index < batchSize )
@@ -646,9 +619,9 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
     if ( InterpAccel.Ready && !fail)
-        interp<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
-                (float*)data, (float*)cudaBuffer, fftLength,
-                InterpAccel.h, InterpAccel.mu, InterpAccel.l,
+        interp_kernel<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
+                (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, nBatchSize, fftLength,
+                InterpAccel.h, InterpAccel.mu, InterpAccel.l, 
                 InterpAccel.Indices, InterpAccel.dt);
 
     fail = fail || cufftExecR2C( plan, (cufftReal*)data, data ) != CUFFT_SUCCESS;

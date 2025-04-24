@@ -39,6 +39,6 @@ class FFTEngine
         //cnt is expected to be smaller or same as fftLength for data alignment
         //method sets up accelerators for calculating fftLength points in parallelized fashion
         //using cubic spline interpolation
-        virtual bool InitInterp( const double* times, std::size_t cnt ) = 0;
+        virtual bool InitInterp( const double* times ) = 0;
 };
 

@@ -985,7 +985,7 @@ int main(int argc, char** argv)
         return -1;
     }
     //initialize interpolation
-    if( !no_reinterp && !fft_engine -> InitInterp(times.data(), times.size()) )
+    if( !no_reinterp && !fft_engine -> InitInterp(times.data()) )
             std::cerr << "Failed to initialize an interpolation!\n";
 
     //stuff for streaming buffers to gpu

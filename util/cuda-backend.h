@@ -51,6 +51,6 @@ class cuFFTEngine: public FFTEngine<float>
 
         std::string Init( std::size_t, std::size_t maxBatch = 0, std::size_t maxMem = 0 );
         bool RunTransform( float*, float norm = 1.0f, std::size_t padding = 0 );
-        bool InitInterp( const double*, std::size_t );
+        bool InitInterp( const double* );
 };
 
