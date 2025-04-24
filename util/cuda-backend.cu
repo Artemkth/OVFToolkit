@@ -187,10 +187,12 @@ __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
 //wrap cuda apis into single function name for use later
 //https://docs.nvidia.com/cuda/cufft/#cufftgetsizemany
 template<typename T>
-__host__ cufftResult cufftGetSizeManyWrap(cufftHandle, int, T*, T*, T, T, T*, T, T, cufftType, T, std::size_t);
-template<> __host__ cufftResult cufftGetSizeManyWrap<int> (cufftHandle plan, int rank, int *n, int *inembed, int istride, int idist, int *onembed, int ostride, int odist, cufftType type, int batch, std::size_t *workSize)
+__host__ cufftResult cufftGetSizeManyWrap(cufftHandle, int, T*, T*, T, T, T*, T, T, cufftType, T, std::size_t*);
+template<> 
+__host__ cufftResult cufftGetSizeManyWrap<int> (cufftHandle plan, int rank, int *n, int *inembed, int istride, int idist, int *onembed, int ostride, int odist, cufftType type, int batch, std::size_t *workSize)
 { return cufftGetSizeMany(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
-template<> __host__ cufftResult cufftGetSizeManyWrap<long long int> (cufftHandle plan, int rank, long long int *n, long long int *inembed, long long int istride, long long int idist, long long int *onembed, long long int ostride, long long int odist, cufftType type, long long int batch, std::size_t *workSize)
+template<> 
+__host__ cufftResult cufftGetSizeManyWrap<long long int> (cufftHandle plan, int rank, long long int *n, long long int *inembed, long long int istride, long long int idist, long long int *onembed, long long int ostride, long long int odist, cufftType type, long long int batch, std::size_t *workSize)
 { return cufftGetSizeMany64(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
 
 template<typename T>
