@@ -26,7 +26,7 @@ class FFTEngine
         //len tells the length of fft sets
         //maxBatch is the size of the original dataset
         //suggests maximum memory to be used 
-        virtual std::string Init( std::size_t t_len, std::size_t dataSize, std::size_t maxMem ) = 0;
+        virtual bool Init( std::size_t t_len, std::size_t dataSize, std::size_t maxMem ) = 0;
 
         //function to run a transform with given data and padding for it,
         //will pad out the data in gpu memory with reinitializing for new array

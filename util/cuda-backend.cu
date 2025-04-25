@@ -184,6 +184,20 @@ __host__ dim3 to_grid(std::size_t size, dim3 bSize = DefaultBlockSize)
     return optimalGrid;
 }
 
+//cast an integer and clamp it to maximum of a new type, assuming value is positive
+template<typename U, typename T>
+constexpr U clamp_cast(T val)
+{
+  const auto uMax = std::numeric_limits<U>::max();
+  if constexpr (std::numeric_limits<T>::max() <= uMax)
+    return static_cast<U>(val);
+
+  //else clamp
+  if (val > uMax)
+    return uMax;
+  else return static_cast<U>(val);
+}
+
 //wrap cuda apis into single function name for use later
 //https://docs.nvidia.com/cuda/cufft/#cufftgetsizemany
 template<typename T>
@@ -202,8 +216,7 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
     auto cPoints = len/2 + 1;
     //first check if the transformation can fit with the least conservative memory usage 
     //cuda might require at most 8x the original array size for work area
-    std::size_t tmp { std::min<std::size_t>( std::min<std::size_t>(maxMem, std::numeric_limits<T>::max()) / (9 * sizeof(cufftComplex) * cPoints), maxBatch ) };
-    T batch_size{ tmp > std::numeric_limits<T>::max()? std::numeric_limits<T>::max() : static_cast<T>(tmp) };
+    T batch_size{ std::min<T>(clamp_cast<T>(maxMem) / (9 * sizeof(cufftComplex) * cPoints), clamp_cast<T>(maxBatch)) };
     // next two are guaranteed to fit since maxMem is capped to addressable space only
     T arrSize { static_cast<T>(batch_size * len) }; 
     T outArrSize { static_cast<T>(batch_size * cPoints) }; //rounds down
@@ -255,58 +268,73 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
 
 extern std::string printMemSize(std::size_t);
 
-std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
+std::size_t cuFFTEngine::InitGPU()
 {
-    fftLength = t_len;
     //reset internal data if reinitializing
-    if( data != nullptr )
-    {
-        cufftDestroy(plan);
-        cudaFree(data);
-        InterpAccel.free();
-        fail = false;
-    }
+    free();
 
-    int devCount; cudaGetDeviceCount(&devCount);
+    int devCount, curGPU; cudaGetDeviceCount(&devCount);
+    fail = !run_api_pack( PackedAPI{ cudaGetDeviceCount, "getting device count", &devCount },
+                          PackedAPI{ cudaGetDevice, "getting current GPU", &curGPU } );
+
+    //basic checks
     if( devCount == 0 )
     {
         fail = true;
-        return "Found no CUDA-enabled devices!" ;
+        std::cerr << "Found no CUDA-enabled devices!\n" ;
+        return 0;
     }
-    if( gpuID >= devCount )
+    if( gpuID >= devCount || (gpuID < 0 && gpuID != -1) )
     {
         fail = true;
-        return (std::string)"The GPU id" + std::to_string(gpuID) + " received is invalid(larger than number of available GPUs).";
+        std::cerr << "The requested GPU id" << std::to_string(gpuID) << " is invalid(larger than number of available GPUs).\n";
     }
-    int curGPU; cudaGetDevice(&curGPU);
+    
+    //if a specific GPU has been requested 
     if( gpuID != -1 )
     {
         //if gpu is not set already set it to the target
-        if(curGPU != gpuID)
-        {
-            cudaDeviceReset(); data = nullptr;
-            fail = cudaSetDevice(gpuID) != cudaSuccess;
-        }
+        if(curGPU != gpuID && !fail)
+            fail = !run_api_pack( PackedAPI{ cudaDeviceReset, "freeing GPU allocation" }, //most likely excessive, since this process have not allocated anything at this point
+                                  PackedAPI{ cudaSetDevice, "setting a GPU to run transform on", gpuID } );
 
         if(fail)
-            return (std::string)"Failed to get GPU id#" + std::to_string(gpuID) + ".";
+        {
+            std::cerr << "Failed to get GPU id#" << std::to_string(gpuID) << ".\n";
+            return 0;
+        }
     }
+    //WARNING curGPU is not updated because it is supposed to not be used past this point :p
     
-    if(fail = cufftCreate(&plan) != CUFFT_SUCCESS) 
-        return "Failed to create a plan on requested gpu!\n";
-
-    //get device characteristics
     std::string result{};
     std::size_t freeMem, totalMem;
     cudaDeviceProp props{};
-    cudaGetDeviceProperties(&props, curGPU);
-    cudaMemGetInfo(&freeMem, &totalMem);
-    result += (std::string)"Using GPU #" + std::to_string(curGPU) + " \"" + props.name + "\" "
-           +  std::to_string( props.multiProcessorCount ) + "SM" + '@' + std::to_string( props.clockRate / 1000 ) + "MHz, "
-           +  printMemSize( totalMem ) + "s of global memory on device (" + printMemSize(freeMem) + " free)." ;
+    if( !fail )
+        fail = !run_api_pack(
+            PackedAPI{ cudaGetDeviceCount, "getting current GPU properties", &props, gpuID },
+            PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem } 
+            PackedAPI{ cufftCreate, "creating cuFFT plan", &plan },
+            PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }); //sets work area to be manually managed
+
+    //hard cutoff point 1 if one cannot initialize here, before memory allocation
+    if (fail)
+        return "Failed to create a plan on requested gpu!\n";
+
+    //describe the device characteristics
+    std::cout << "Using GPU #" << std::to_string(curGPU) << " \"" << props.name << "\" "
+           <<  std::to_string( props.multiProcessorCount ) << "SM" << '@' << std::to_string( props.clockRate / 1000 ) << "MHz, "
+           <<  printMemSize( totalMem ) << "s of global memory on device (" << printMemSize(freeMem) << " free).\n" ;
+    return freeMem
+}
+
+bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
+{
+    fftLength = t_len;
+
+    auto freeMem = InitGPU();
     if(maxMem > freeMem)
     {
-        result += "\nWarning: Device doesn't have memory requested: " + printMemSize( maxMem ) + ", defaulting to 95% of total GPU memory.";
+        std::cout << "Warning: Device doesn't have memory requested: " << printMemSize( maxMem ) << ", defaulting to 95\% of total GPU memory.\n";
         maxMem = 0.95 * freeMem;
     }
     if(maxMem == 0) maxMem = 0.95 * freeMem; //defaulting to 95% of available VRAM
@@ -315,21 +343,26 @@ std::string cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::siz
     if( fftLength  > std::numeric_limits<long long int>::max() )
     {
         //only possible to trip because currently std::size_t is ull
+        //will not happen for a while
+        //the limit specified is 32 EiB lul
+        std::cerr <<  "Time series lenth overflows supported index range (lli max)!\n";
+
         fail = true;
-        return result + "\nTime series lenth overflows supported index range!";
+        return fail;
     }
 
     //estimate how much size bundle would take
     //first get initial approximation by taking guarantee from documentation that maximum workspace area is 8 times the data
     //note: need at least 2x and at most 9x the data size for FFT transform(depending on length of the fft set)
     //greedy greedy host wants to have ALL the memory :D
-    if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
+    //if (maxBatch == 0) maxBatch = std::numeric_limits<long long int>::max();
+    //abort if there is not enough VRAM to accomodate even a single batch
 
     //decide which backend to use, 64bit one allows *insane* sampling depthes
     //larger data size backend has limitations https://docs.nvidia.com/cuda/cufft/index.html#unique_184649339
     //first check if we *absolutely* have to use 64-bit backend
-    bool needExtended = fftLength + 1 > std::numeric_limits<int>::max();     //if single batch cannot be addressed with 32bit 'int'
-    useExtended = needExtended || maxMem/(sizeof(float) * (fftLength + 2)) > std::numeric_limits<int>::max(); //if we can get any advantage from batching more
+    bool needExtended = fftLength > std::numeric_limits<int>::max();     //if single batch cannot be addressed with 32bit 'int'
+    bool wantExtended = maxMem > 3 ; //if we can get any advantage from batching more
 
     //and then check if backend is actually usable
     if (needExtended)
@@ -518,27 +551,39 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
         InterpAccel.free();
         cudaDeviceSynchronize();
     }
-    InterpAccel.Ready = !failed;
+    InterpAccel.interpReady = !failed;
 
-    return InterpAccel.Ready;
+    return InterpAccel.interpReady;
 }
 
-cuFFTEngine::~cuFFTEngine() noexcept
+void cuFFTEngine::free()
 {
-    run_api_pack( 
-            PackedAPI{cufftDestroy, "destroying the plan", plan},
-            PackedAPI{cudaFree, "freeing the data buffer", (void*)data}
-            );
+    if(cufftReady)
+    {
+        run_api_pack( PackedAPI{cudaFree, "freeing data buffer", (void*)data},
+                      PackedAPI{cudaFree, "freeing work area buffer", (void*)cudaBuffer} );
+        allocBufferSize = 0;
+        cufftReady = false;
+    }
     InterpAccel.free();
 }
 
-__host__ void cuFFTEngine::InterpAccel_t::free()
+
+cuFFTEngine::~cuFFTEngine() noexcept
 {
-    run_api_pack(
-            PackedAPI{cudaFree, "freeing FP accelerators", (void*)h},
-            PackedAPI{cudaFree, "freeing indice array", (void*)Indices}
-            );
-    Ready = false;
+    free();
+    run_api_pack( PackedAPI{cufftDestroy, "destroying the plan", plan} );
+    InterpAccel.free();
+}
+
+void cuFFTEngine::InterpAccel_t::free()
+{
+    if (interpReady)
+    {
+        run_api_pack( PackedAPI{cudaFree, "freeing interp FP accelerators", (void*)h},
+                      PackedAPI{cudaFree, "freeing interp indice array", (void*)Indices} );
+        interpReady = false;
+    }
 }
 
 //run interpolation over data to remove jitter
@@ -620,7 +665,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     //move data into array
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
-    if ( InterpAccel.Ready && !fail)
+    if ( InterpAccel.interpReady && !fail)
         interp_kernel<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
                 (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, nBatchSize, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l, 

@@ -977,7 +977,7 @@ int main(int argc, char** argv)
     }
 
     //wait here for GPU to finish initializing, and buffers being created
-    std::cout << engineInit.get() << "\n";
+    engineInit.get();
     if( !fft_engine -> isReady() )
     {
         //TODO: add logic for initialize on cpu instead once that is finished
