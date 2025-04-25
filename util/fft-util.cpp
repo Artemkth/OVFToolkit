@@ -632,7 +632,7 @@ int main(int argc, char** argv)
     }
     //virtual class so I can use fftw instead if I want to
     std::unique_ptr<FFTEngine<float>> fft_engine(new cuFFTEngine(gpu));
-    std::future<std::string> engineInit{};
+    std::future<bool> engineInit{};
 
     //try to validate file list beforehand
     std::size_t tSeriesLength = fileList.size();

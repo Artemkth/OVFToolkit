@@ -311,20 +311,22 @@ std::size_t cuFFTEngine::InitGPU()
     cudaDeviceProp props{};
     if( !fail )
         fail = !run_api_pack(
-            PackedAPI{ cudaGetDeviceCount, "getting current GPU properties", &props, gpuID },
-            PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem } 
+            PackedAPI{ cudaGetDeviceProperties, "getting current GPU properties", &props, gpuID },
+            PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem },
             PackedAPI{ cufftCreate, "creating cuFFT plan", &plan },
             PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }); //sets work area to be manually managed
 
     //hard cutoff point 1 if one cannot initialize here, before memory allocation
     if (fail)
-        return "Failed to create a plan on requested gpu!\n";
-
+    {
+        std::cerr << "Failed to create a plan on requested gpu!\n";
+        return 0;
+    }
     //describe the device characteristics
     std::cout << "Using GPU #" << std::to_string(curGPU) << " \"" << props.name << "\" "
            <<  std::to_string( props.multiProcessorCount ) << "SM" << '@' << std::to_string( props.clockRate / 1000 ) << "MHz, "
            <<  printMemSize( totalMem ) << "s of global memory on device (" << printMemSize(freeMem) << " free).\n" ;
-    return freeMem
+    return freeMem;
 }
 
 bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
@@ -334,7 +336,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     auto freeMem = InitGPU();
     if(maxMem > freeMem)
     {
-        std::cout << "Warning: Device doesn't have memory requested: " << printMemSize( maxMem ) << ", defaulting to 95\% of total GPU memory.\n";
+        std::cout << "Warning: Device doesn't have memory requested: " << printMemSize( maxMem ) << ", defaulting to 95% of total GPU memory.\n";
         maxMem = 0.95 * freeMem;
     }
     if(maxMem == 0) maxMem = 0.95 * freeMem; //defaulting to 95% of available VRAM
@@ -362,43 +364,38 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     //larger data size backend has limitations https://docs.nvidia.com/cuda/cufft/index.html#unique_184649339
     //first check if we *absolutely* have to use 64-bit backend
     bool needExtended = fftLength > std::numeric_limits<int>::max();     //if single batch cannot be addressed with 32bit 'int'
-    bool wantExtended = maxMem > 3 ; //if we can get any advantage from batching more
+    bool fitIn4GEl { fftLength * maxBatch <= static_cast<std::uint64_t>(std::numerical_limits<std::uint32_t>::max()) + 1 }; //do we even have more than 4G elements?!
+    bool wantExtended = !fitIn4GEl && maxMem >= 3 * sizeof(float) * static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())  && //but we also must have more than enough memory for 4G elements
+                            is4GCompatible(fftLength);                                                                              //at least 48 gigs of free memory!
 
     //and then check if backend is actually usable
-    if (needExtended)
+    if (needExtended || wantExtended)
     {
-        //abort if there is not enough VRAM to accomodate even a single batch
-        if (maxMem < sizeof(float) * (fftLength + 2) * 2)
-        {
-            fail = true;
-            return result + "\n64bit API fail, doesn't have enough VRAM to accomodate a single spatial point batch!";
-        }
-        //abort if fftLength is not 
-        else if ((fftLength % 2 != 0 || !is4GCompatible(fftLength)) && fftLength + 2 > 4ll * 1024 * 1024 * 1024)
-        {
-            fail = true;
-            return result + "\n64bit API fail, to be able to use more than 2^32 time points, number of points should be even and largest prime divisor should be less than 127!";
-        }
-
         //else good to try
+        useExtended = true;
+        //if cannot use 4G+ elements, limit maxBatch
+        if( !fitIn4GEl && !is4GCompatible(fftLength) )
+           maxBatch = (static_cast<std::uint64_t>(std::numeric_limits<uint32_t>::max()) + 1)/fftLength;
         batchSize = EstimateBatchSize<long long int>(plan, fftLength, maxMem, maxBatch);
     }
-    else if (useExtended)
-        batchSize = EstimateBatchSize<long long int>(plan, fftLength, maxMem, maxBatch);
     else
+    {
+        useExtended = false;
         batchSize = EstimateBatchSize<int>(plan, fftLength, maxMem, std::min<std::size_t>(maxBatch, std::numeric_limits<int>::max()));
+    }
 
     if(batchSize == 0)
     {
         fail = true;
-        return result + "\nUnhandled error happending during batch size estimation!";
+        std::cerr << "Unhandled error happending during batch size estimation!\n";
+        return fail;
     }
 
     auto workSize = reallocate(batchSize);
     if( workSize == 0 )
     {
         fail = true;
-        return result + "\nFailed to allcate work assets in VRAM, tried to go with " + printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + " batches.";
+        return result + "\nFailed to allocate work assets in VRAM, tried to go with " + printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + " batches.";
     }
 
     return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + 
@@ -406,7 +403,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
             " together with work area in the gpu).";
 }
 
-std::size_t cuFFTEngine::reallocate(std::size_t newBatch)
+std::size_t cuFFTEngine::reallocate(std::size_t newBatch, bool lazy = True)
 {
     //do not bother with bad inputs
     if(newBatch > batchSize || fftLength == 0 || fail)
