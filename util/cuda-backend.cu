@@ -196,13 +196,13 @@ __host__ cufftResult cufftGetSizeManyWrap<long long int> (cufftHandle plan, int 
 { return cufftGetSizeMany64(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
 
 template<typename T>
-__host__ std::size_t EstimateBatchSize( cufftHandle plan, std::size_t len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
+__host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
 {
     //number of complex values in result of R2C transform, len/2 rounds down automatically, desired behaviour
     auto cPoints = len/2 + 1;
     //first check if the transformation can fit with the least conservative memory usage 
     //cuda might require at most 8x the original array size for work area
-    std::size_t tmp { std::min<std::size_t>( std::min(maxMem, std::numeric_limits<T>::max()) / (9 * sizeof(cufftcomplex) * cpoints), maxbatch ) };
+    std::size_t tmp { std::min<std::size_t>( std::min<std::size_t>(maxMem, std::numeric_limits<T>::max()) / (9 * sizeof(cufftComplex) * cPoints), maxBatch ) };
     T batch_size{ tmp > std::numeric_limits<T>::max()? std::numeric_limits<T>::max() : static_cast<T>(tmp) };
     // next two are guaranteed to fit since maxMem is capped to addressable space only
     T arrSize { static_cast<T>(batch_size * len) }; 
