@@ -364,7 +364,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     //larger data size backend has limitations https://docs.nvidia.com/cuda/cufft/index.html#unique_184649339
     //first check if we *absolutely* have to use 64-bit backend
     bool needExtended = fftLength > std::numeric_limits<int>::max();     //if single batch cannot be addressed with 32bit 'int'
-    bool fitIn4GEl { fftLength * maxBatch <= static_cast<std::uint64_t>(std::numerical_limits<std::uint32_t>::max()) + 1 }; //do we even have more than 4G elements?!
+    bool fitIn4GEl { fftLength * maxBatch <= static_cast<std::uint64_t>(std::numericlimits<std::uint32_t>::max()) + 1 }; //do we even have more than 4G elements?!
     bool wantExtended = !fitIn4GEl && maxMem >= 3 * sizeof(float) * static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())  && //but we also must have more than enough memory for 4G elements
                             is4GCompatible(fftLength);                                                                              //at least 48 gigs of free memory!
 
@@ -403,7 +403,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
             " together with work area in the gpu).";
 }
 
-std::size_t cuFFTEngine::reallocate(std::size_t newBatch, bool lazy = True)
+std::size_t cuFFTEngine::reallocate(std::size_t newBatch, bool lazy = true)
 {
     //do not bother with bad inputs
     if(newBatch > batchSize || fftLength == 0 || fail)
