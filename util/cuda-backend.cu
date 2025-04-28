@@ -7,6 +7,7 @@
 #include<algorithm>
 #include<string>
 #include<memory>
+#include<utility>
 
 static_assert(2 * sizeof(float) == sizeof(cufftComplex), "Incompatible float!");
 
@@ -210,15 +211,19 @@ __host__ cufftResult cufftGetSizeManyWrap<long long int> (cufftHandle plan, int 
 { return cufftGetSizeMany64(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
 
 template<typename T>
-__host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t maxMem, std::size_t maxBatch = std::numeric_limits<std::size_t>::max() )
+__host__ std::pair<std::size_t, std::size_t> EstimateBatchSize( cufftHandle plan, T len, std::size_t maxMem, std::size_t maxBatch )
 {
+    //clamp batch size to underlying type
+    constexpr T tMax = std::numeric_limits<T>::max();
+    if (maxBatch > tMax)
+        maxBatch = tMax;
     //number of complex values in result of R2C transform, len/2 rounds down automatically, desired behaviour
     auto cPoints = len/2 + 1;
     //first check if the transformation can fit with the least conservative memory usage 
     //cuda might require at most 8x the original array size for work area
     T batch_size{ std::min<T>(clamp_cast<T>(maxMem) / (9 * sizeof(cufftComplex) * cPoints), clamp_cast<T>(maxBatch)) };
     // next two are guaranteed to fit since maxMem is capped to addressable space only
-    T arrSize { static_cast<T>(batch_size * len) }; 
+    T arrSize { static_cast<T>(batch_size * len) };
     T outArrSize { static_cast<T>(batch_size * cPoints) }; //rounds down
     std::size_t estimate{};
     auto estimationError = cufftGetSizeManyWrap<T>(
@@ -234,10 +239,11 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
 
     //if by chance there is enough memory to do transform in a single batch, return that batch size
     if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
-        return batch_size;
+        return {batch_size, estimate};
 
     //otherwise try to find the size just large enough starting from the linear extrapolation
-    batch_size = std::min<int>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
+    //first guess is extrapolation, and I guess it is also the one before last :)
+    batch_size = std::min<T>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
     bool isFitting = true; std::size_t cnt {0};
     while(batch_size > 0 && batch_size <= maxBatch)
     {

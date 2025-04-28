@@ -15,7 +15,7 @@ class cuFFTEngine: public FFTEngine<float>
         bool useExtended {false};
         bool cufftReady {false};
 
-        std::size_t reallocate(std::size_t);
+        std::size_t reallocate(std::size_t, bool lazy);
 
         //hold interpolation's global constants
         struct InterpAccel_t {
