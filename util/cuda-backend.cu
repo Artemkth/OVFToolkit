@@ -86,7 +86,7 @@ struct PackedAPI {
     inline bool exec() {
         auto res = std::apply(func, argsTpl);
         if (res != cudaSuccVal<resType>)
-            std::cerr << "Running " << erMsg << " got unexpected result "
+            std::cerr << erMsg << " got unexpected result: "
                 << decodeCuError(res) << "(" << res << "); Aborting!" << std::endl;
         return res == cudaSuccVal<resType>;
     }
@@ -214,7 +214,7 @@ __host__ cufftResult cufftGetSizeManyWrap(cufftHandle plan, T* fftLen, T batchSi
     T cPoints { *fftLen/2 + 1 };
     T inArrSize{ *fftLen * batchSize };
     T outArrSize{ cPoints * batchSize };
-    return cuSizeEstFunc<T>(plan, 1, fftLen, inArrSize, batchSize, 1, outArrSize, batchSize, 1, CUFFT_R2C, batchSize, estimate);
+    return cuSizeEstFunc<T>(plan, 1, fftLen, &inArrSize, batchSize, 1, &outArrSize, batchSize, 1, CUFFT_R2C, batchSize, estimate);
 }
 
 //ofc cudaMalloc is a macro, fml
@@ -251,7 +251,7 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
 
         const auto perBatch { sizeof(cufftComplex) * cPoints + estimate/batch_size };
         //using signed type could be buggy if we get gpu memory bigger than 2^32 bytes lol
-        const long long int excessMem { maxMem - (estimate + sizeof(cufftComplex)*batch_size*cPoints) };
+        const long long int excessMem { static_cast<long long int>(maxMem - (estimate + sizeof(cufftComplex)*batch_size*cPoints)) };
         const bool isFitting { excessMem >= 0 };
         //stop if you cannot fit another spatial point in a batch 
         if ( isFitting && (batch_size == maxBatch || excessMem < perBatch) )
@@ -307,6 +307,7 @@ std::size_t cuFFTEngine::InitGPU()
             return 0;
         }
     }
+    else fail = !run_api_pack( PackedAPI{ cudaGetDevice, "getting a gpuID", &gpuID } );
     //WARNING curGPU is not updated because it is supposed to not be used past this point :p
     
     std::string result{};
@@ -318,6 +319,7 @@ std::size_t cuFFTEngine::InitGPU()
             PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem },
             PackedAPI{ cufftCreate, "creating cuFFT plan", &plan },
             PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }); //sets work area to be manually managed
+    std::cout << props.name << std::endl;
 
     //hard cutoff point 1 if one cannot initialize here, before memory allocation
     if (fail)
@@ -340,6 +342,11 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     fftLength = t_len;
 
     auto freeMem = InitGPU();
+    if( fail ) 
+    {
+        std::cerr << "Could not initialize a GPU, quitting!\n";
+        return !fail;
+    }
     if(maxMem > freeMem)
     {
         std::cout << "Warning: Device doesn't have memory requested: " << printMemSize( maxMem ) << ", defaulting to 95% of total GPU memory.\n";
@@ -356,7 +363,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
         std::cerr <<  "Time series lenth overflows supported index range (lli max)!\n";
 
         fail = true;
-        return fail;
+        return !fail;
     }
 
     //estimate how much size bundle would take
@@ -394,7 +401,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     {
         fail = true;
         std::cerr << "An error happened during batch size estimation! Please check the previous log messages.\n";
-        return fail;
+        return !fail;
     }
 
     const auto workSize = reallocate(batchSize);
@@ -402,12 +409,12 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     {
         fail = true;
         std::cerr << "Failed to allocate work assets in VRAM, tried to go with " << printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) << " batches.\n";
-        return fail;
+        return !fail;
     }
 
     std::cout << "Chosen to do transforms in " << batchSize << " point batches (" << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float)) <<
         " each, " << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float) + workSize) << " together with work area in the gpu).\n";
-    return fail;
+    return !fail;
 }
 
 template<typename T>
@@ -428,6 +435,9 @@ cufftResult cufftMakePlanWrap(cufftHandle plan, T fftLength, T batch_size, std::
             CUFFT_R2C, batch_size, workAreaSize);
 }
 
+template<typename T>
+using cufftMakePlanFunc_t = cufftResult (*) (cufftHandle, T, T, std::size_t*);
+
 std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
 {
     //fall through if the state is fucked already
@@ -447,8 +457,8 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
 
     std::size_t workSize {};
     fail = fail || !(useExtended? 
-            run_api_pack(PackedAPI{ cufftMakePlanWrap<long long int>, plan,  fftLength, batch_size, &workSize }) :
-            run_api_pack(PackedAPI{ cufftMakePlanWrap<int>, plan, fftLength, batch_size, &workSize }) );
+            run_api_pack(PackedAPI{ static_cast<cufftMakePlanFunc_t<long long int>>(cufftMakePlanWrap<long long int>), "making a 64bit API cuFFT plan", plan, static_cast<long long int>(fftLength), static_cast<long long int>(batch_size), &workSize }) :
+            run_api_pack(PackedAPI{ static_cast<cufftMakePlanFunc_t<int>>(cufftMakePlanWrap<int>), "making a cuFFT plan", plan, static_cast<int>(fftLength), static_cast<int>(batch_size), &workSize }) );
 
     if( !fail && allocDataSize == 0 )
     {
