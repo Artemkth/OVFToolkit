@@ -92,7 +92,7 @@ IF(BUILD_FFUTIL)
     set_property(TARGET ovf-batchfft PROPERTY CUDA_ARCHITECTURES all)
 
     target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
-        $<$<BOOL:${FFTW_FOUND}>:FFTW::FloatThreads>
+        $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:tbb>
         "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
 
     target_include_directories(ovf-batchfft PRIVATE 
