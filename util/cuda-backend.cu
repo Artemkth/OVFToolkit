@@ -202,74 +202,71 @@ constexpr U clamp_cast(T val)
 //wrap cuda apis into single function name for use later
 //https://docs.nvidia.com/cuda/cufft/#cufftgetsizemany
 template<typename T>
-__host__ cufftResult cufftGetSizeManyWrap(cufftHandle, int, T*, T*, T, T, T*, T, T, cufftType, T, std::size_t*);
-template<> 
-__host__ cufftResult cufftGetSizeManyWrap<int> (cufftHandle plan, int rank, int *n, int *inembed, int istride, int idist, int *onembed, int ostride, int odist, cufftType type, int batch, std::size_t *workSize)
-{ return cufftGetSizeMany(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
-template<> 
-__host__ cufftResult cufftGetSizeManyWrap<long long int> (cufftHandle plan, int rank, long long int *n, long long int *inembed, long long int istride, long long int idist, long long int *onembed, long long int ostride, long long int odist, cufftType type, long long int batch, std::size_t *workSize)
-{ return cufftGetSizeMany64(plan, rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch, workSize); }
+using cufftPlanFnc_t = cufftResult (*) (cufftHandle, int, T*, T*, T, T, T*, T, T, cufftType, T, size_t);
+template<typename T>
+inline constexpr cufftPlanFnc_t<T> cuSizeEstFunc {nullptr} ;
+template<> inline constexpr auto cuSizeEstFunc<int> = cufftGetSizeMany;
+template<> inline constexpr auto cuSizeEstFunc<long long int> = cufftGetSizeMany64;
 
 template<typename T>
-__host__ std::pair<std::size_t, std::size_t> EstimateBatchSize( cufftHandle plan, T len, std::size_t maxMem, std::size_t maxBatch )
+__host__ cufftResult cufftGetSizeManyWrap(cufftHandle plan, T* fftLen, T batchSize, std::size_t *estimate)
+{
+    T cPoints { *fftLen/2 + 1 };
+    T inArrSize{ *fftLen * batchSize };
+    T outArrSize{ cPoints * batchSize };
+    return cuSizeEstFunc<T>(plan, 1, fftLen, inArrSize, batchSize, 1, outArrSize, batchSize, 1, CUFFT_R2C, batchSize, estimate);
+}
+
+//ofc cudaMalloc is a macro, fml
+cudaError_t(*cudaMallocFunc)(void**, size_t) = cudaMalloc;
+
+template<typename T>
+__host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t maxMem, std::size_t maxBatch )
 {
     //clamp batch size to underlying type
     constexpr T tMax = std::numeric_limits<T>::max();
-    if (maxBatch > tMax)
-        maxBatch = tMax;
+    if (maxBatch > tMax) maxBatch = tMax;
     //number of complex values in result of R2C transform, len/2 rounds down automatically, desired behaviour
     auto cPoints = len/2 + 1;
     //first check if the transformation can fit with the least conservative memory usage 
     //cuda might require at most 8x the original array size for work area
+    //https://docs.nvidia.com/cuda/cufft/#fourier-transform-setup
     T batch_size{ std::min<T>(clamp_cast<T>(maxMem) / (9 * sizeof(cufftComplex) * cPoints), clamp_cast<T>(maxBatch)) };
-    // next two are guaranteed to fit since maxMem is capped to addressable space only
-    T arrSize { static_cast<T>(batch_size * len) };
-    T outArrSize { static_cast<T>(batch_size * cPoints) }; //rounds down
     std::size_t estimate{};
-    auto estimationError = cufftGetSizeManyWrap<T>(
-                plan, 1, &len, 
-                &arrSize, batch_size, 1,
-                &outArrSize, batch_size, 1,
-                CUFFT_R2C, batch_size, &estimate);
-    if( estimationError != CUFFT_SUCCESS )
-    {
-        std::cerr << "Could not run the cufftGetSizeMany, got an error: " << decodeCuError(estimationError) << "("<< estimationError<<")"<< std::endl;
+
+    if ( !run_api_pack(PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}) )
         return 0;
-    }
 
     //if by chance there is enough memory to do transform in a single batch, return that batch size
     if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
-        return {batch_size, estimate};
+        return batch_size;
 
     //otherwise try to find the size just large enough starting from the linear extrapolation
     //first guess is extrapolation, and I guess it is also the one before last :)
     batch_size = std::min<T>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
-    bool isFitting = true; std::size_t cnt {0};
     while(batch_size > 0 && batch_size <= maxBatch)
     {
-        arrSize = batch_size * len;
-        outArrSize = batch_size * cPoints; //rounds down
-        estimationError = cufftGetSizeManyWrap<T>(
-                plan, 1, &len, 
-                &arrSize, batch_size, 1,
-                &outArrSize, batch_size, 1,
-                CUFFT_R2C, batch_size, &estimate);
+        if ( !run_api_pack(PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}) )
+            return 0;
 
-        if( estimationError != CUFFT_SUCCESS && estimationError != CUFFT_ALLOC_FAILED )
-            return 0; //expect those two since might go over allowed GPU memory
+        const auto perBatch { sizeof(cufftComplex) * cPoints + estimate/batch_size };
+        //using signed type could be buggy if we get gpu memory bigger than 2^32 bytes lol
+        const long long int excessMem { maxMem - (estimate + sizeof(cufftComplex)*batch_size*cPoints) };
+        const bool isFitting { excessMem >= 0 };
+        //stop if you cannot fit another spatial point in a batch 
+        if ( isFitting && (batch_size == maxBatch || excessMem < perBatch) )
+            return batch_size;
 
-        const auto wasFitting = isFitting;
-        isFitting = maxMem >= (estimate + sizeof(cufftComplex) * batch_size * cPoints);
-        if(isFitting != wasFitting && cnt != 0)
-            return isFitting? batch_size : batch_size - 1;
+        if ( isFitting )
+        {
+            if ( batch_size == maxBatch || excessMem < perBatch )
+                return batch_size;
 
-        cnt++;
-        if(isFitting)
-            batch_size++;
-        else
-            batch_size--;
+            batch_size += std::min<std::size_t>(excessMem/perBatch, 1);
+        }
+        else batch_size--;
     }
-    return batch_size==0? batch_size : maxBatch;
+    return 0;
 }
 
 extern std::string printMemSize(std::size_t);
@@ -337,6 +334,9 @@ std::size_t cuFFTEngine::InitGPU()
 
 bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
 {
+    //start by resetting fail flag
+    fail = false;
+
     fftLength = t_len;
 
     auto freeMem = InitGPU();
@@ -370,8 +370,8 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     //larger data size backend has limitations https://docs.nvidia.com/cuda/cufft/index.html#unique_184649339
     //first check if we *absolutely* have to use 64-bit backend
     bool needExtended = fftLength > std::numeric_limits<int>::max();     //if single batch cannot be addressed with 32bit 'int'
-    bool fitIn4GEl { fftLength * maxBatch <= static_cast<std::uint64_t>(std::numericlimits<std::uint32_t>::max()) + 1 }; //do we even have more than 4G elements?!
-    bool wantExtended = !fitIn4GEl && maxMem >= 3 * sizeof(float) * static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())  && //but we also must have more than enough memory for 4G elements
+    bool fitIn4GEl { fftLength * maxBatch <= static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()) + 1 }; //do we even have more than 4G elements?!
+    bool wantExtended = !fitIn4GEl && maxMem >= 2 * sizeof(float) * static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())  && //but we also must have more than enough memory for 4G elements
                             is4GCompatible(fftLength);                                                                              //at least 48 gigs of free memory!
 
     //and then check if backend is actually usable
@@ -393,70 +393,79 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     if(batchSize == 0)
     {
         fail = true;
-        std::cerr << "Unhandled error happending during batch size estimation!\n";
+        std::cerr << "An error happened during batch size estimation! Please check the previous log messages.\n";
         return fail;
     }
 
-    auto workSize = reallocate(batchSize);
+    const auto workSize = reallocate(batchSize);
     if( workSize == 0 )
     {
         fail = true;
-        return result + "\nFailed to allocate work assets in VRAM, tried to go with " + printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + " batches.";
+        std::cerr << "Failed to allocate work assets in VRAM, tried to go with " << printMemSize( 2 * batchSize * (fftLength/2 + 1) * sizeof(float)) << " batches.\n";
+        return fail;
     }
 
-    return result + "\nChosen to do transforms in " + std::to_string(batchSize) + " point batches (" + 
-            printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float)) + " each, " + printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float) + workSize) +
-            " together with work area in the gpu).";
+    std::cout << "Chosen to do transforms in " << batchSize << " point batches (" << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float)) <<
+        " each, " << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float) + workSize) << " together with work area in the gpu).\n";
+    return fail;
 }
 
-std::size_t cuFFTEngine::reallocate(std::size_t newBatch, bool lazy = true)
-{
-    //do not bother with bad inputs
-    if(newBatch > batchSize || fftLength == 0 || fail)
-        return 0;
+template<typename T>
+inline constexpr cufftPlanFnc_t<T> cufftMakePlanFnc {nullptr};
+template<> inline constexpr auto cufftMakePlanFnc<int> = cufftMakePlanMany;
+template<> inline constexpr auto cufftMakePlanFnc<long long int> = cufftMakePlanMany64;
 
-    cudaFree( data ); data = nullptr;
-    cufftDestroy(plan); cufftCreate(&plan);
+template<typename T>
+cufftResult cufftMakePlanWrap(cufftHandle plan, T fftLength, T batch_size, std::size_t* workAreaSize)
+{
+    T cPoints { fftLength/2 + 1 };
+    T arrSize { batch_size * fftLength };
+    T outArrSize { batch_size * cPoints };
+
+    return cufftMakePlanFnc<T>(plan, 1, &fftLength,
+            &arrSize, batch_size, 1,
+            &outArrSize, batch_size, 1,
+            CUFFT_R2C, batch_size, workAreaSize);
+}
+
+std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
+{
+    //fall through if the state is fucked already
+    if (fail) return 0;
+
+    std::size_t cPoints { fftLength/2 + 1 };
+
+    //clear the old work areas if needed
+    if (!lazy && allocDataSize != 0 || allocDataSize < batch_size)
+    {
+        fail = !run_api_pack( 
+                PackedAPI{ cudaFree, "freeing data buffer", (void*)data },
+                PackedAPI{ cudaFree, "freeing work buffer", cudaBuffer } );
+        allocDataSize = 0;
+        allocBufferSize = 0;
+    }
 
     std::size_t workSize {};
-    cufftResult allocationError{};
-    if(useExtended)
-    {
-        long long int len = fftLength;
-        long long int cPoints = fftLength/2 + 1;
-        long long int arrSize = newBatch * fftLength;
-        long long int outArrSize = newBatch * cPoints ;
+    fail = fail || !(useExtended? 
+            run_api_pack(PackedAPI{ cufftMakePlanWrap<long long int>, plan,  fftLength, batch_size, &workSize }) :
+            run_api_pack(PackedAPI{ cufftMakePlanWrap<int>, plan, fftLength, batch_size, &workSize }) );
 
-        allocationError = cufftMakePlanMany64(
-                plan, 1, &len, 
-                &arrSize, newBatch, 1,
-                &outArrSize, newBatch, 1,
-                CUFFT_R2C, newBatch, &workSize);
+    if( !fail && allocDataSize == 0 )
+    {
+        fail = !run_api_pack(
+                PackedAPI{ cudaMallocFunc, "allocating data buffer", (void**)&data, sizeof(cufftComplex)*batch_size*cPoints },
+                PackedAPI{ cudaMallocFunc, "allocating work buffer", (void**)&cudaBuffer, workSize } );
+        if( !fail )
+        {
+            allocDataSize = batch_size;
+            allocBufferSize = workSize;
+
+        }
     }
-    else
-    {
-        int len = fftLength;
-        int cPoints = fftLength/2 + 1;
-        int arrSize =  newBatch * fftLength;
-        int outArrSize =  newBatch * cPoints;
 
-        allocationError = cufftMakePlanMany(
-                plan, 1, &len, 
-                &arrSize, newBatch, 1,
-                &outArrSize, newBatch, 1,
-                CUFFT_R2C, newBatch, &workSize);
-    }
-    if(allocationError != CUFFT_SUCCESS)
-        return 0;
-
-    //and allocate work data area
-    if(cudaMalloc((void**)&data, sizeof(cufftComplex) * (fftLength/2 + 1) * batchSize) != cudaSuccess)
-    {
-        cufftDestroy(plan); cufftCreate(&plan);
-        return 0;
-    } 
-
-    return workSize;
+    if( !fail )
+        fail = !run_api_pack( PackedAPI{cufftSetWorkArea, "setting work buffer location", plan, cudaBuffer} );
+    return fail? 0 : workSize;
 }
 
 //actually excited to do some computation on videocard on my own :D
@@ -530,12 +539,12 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
     }
 
     //upload results to gpu memory
-    bool failed = run_api_pack(
-        PackedAPI{static_cast<cudaError_t(*)(void**, size_t)>(cudaMalloc), "allocating GPU memory for FP constants",
+    bool failed = !run_api_pack(
+        PackedAPI{cudaMallocFunc, "allocating GPU memory for FP constants",
           (void**)&InterpAccel.h, sizeof(float) * (3 * sCnt + fftLength -2)},
         PackedAPI{cudaMemcpy, "copying FP constants to GPU",
           (void*)&InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
-        PackedAPI{static_cast<cudaError_t(*)(void**, size_t)>(cudaMalloc), "allocating spline indexing array",
+        PackedAPI{cudaMallocFunc, "allocating spline indexing array",
           (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)},
         PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
           (void*)&InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
@@ -565,6 +574,7 @@ void cuFFTEngine::free()
     {
         run_api_pack( PackedAPI{cudaFree, "freeing data buffer", (void*)data},
                       PackedAPI{cudaFree, "freeing work area buffer", (void*)cudaBuffer} );
+        allocDataSize = 0;
         allocBufferSize = 0;
         cufftReady = false;
     }

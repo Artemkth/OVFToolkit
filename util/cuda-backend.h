@@ -2,6 +2,7 @@
 #include<fft-backend.h>
 #include<cuda_runtime.h>
 #include<cufft.h>
+#include<utility>
 
 class cuFFTEngine: public FFTEngine<float>
 {
@@ -11,11 +12,12 @@ class cuFFTEngine: public FFTEngine<float>
         cufftComplex* data{nullptr}; //and pointer to data allocated on GPU
         void* cudaBuffer{nullptr};   //pointer to shared working area for cuFFT and interpolation
         std::size_t allocBufferSize{0};
+        std::size_t allocDataSize  {0};
         int gpuID {0};
         bool useExtended {false};
         bool cufftReady {false};
 
-        std::size_t reallocate(std::size_t, bool lazy);
+        std::size_t reallocate(std::size_t, bool lazy=true);
 
         //hold interpolation's global constants
         struct InterpAccel_t {
