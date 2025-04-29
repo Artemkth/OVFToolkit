@@ -317,8 +317,9 @@ std::size_t cuFFTEngine::InitGPU()
         fail = !run_api_pack(
             PackedAPI{ cudaGetDeviceProperties, "getting current GPU properties", &props, gpuID },
             PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem },
-            PackedAPI{ cufftCreate, "creating cuFFT plan", &plan },
-            PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }); //sets work area to be manually managed
+            PackedAPI{ cufftCreate, "creating cuFFT plan", &plan }) &&
+            //need to run it separately since values are passed by copy
+            !run_api_pack(PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }); //sets work area to be manually managed
     std::cout << props.name << std::endl;
 
     //hard cutoff point 1 if one cannot initialize here, before memory allocation
@@ -455,6 +456,12 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
         allocBufferSize = 0;
     }
 
+    //recreate a plan
+    fail = fail || !run_api_pack( 
+            PackedAPI{ cufftDestroy, "destroying old plan", plan },
+            PackedAPI{ cufftCreate, "creating a new plan", &plan } ) ||
+        !run_api_pack( PackedAPI{ cufftSetAutoAllocation, "setting auto allocation off", plan, 0 } );
+
     std::size_t workSize {};
     fail = fail || !(useExtended? 
             run_api_pack(PackedAPI{ static_cast<cufftMakePlanFunc_t<long long int>>(cufftMakePlanWrap<long long int>), "making a 64bit API cuFFT plan", plan, static_cast<long long int>(fftLength), static_cast<long long int>(batch_size), &workSize }) :
@@ -516,7 +523,7 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
     cudaMemGetInfo( &freeMem, &totMem );
     if( freeMem < staticOverhead )
     {
-        std::cerr << "Not enough free VRAM for interpolation! Giving up on interpolation!" << std::endl;
+        std::cerr << "Not enough free VRAM for interpolation! Giving up on interpolation! Consider limiting vram usage by the main subroutine with --max-vram" << std::endl;
         return false;
     }
 
@@ -552,10 +559,11 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
     bool failed = !run_api_pack(
         PackedAPI{cudaMallocFunc, "allocating GPU memory for FP constants",
           (void**)&InterpAccel.h, sizeof(float) * (3 * sCnt + fftLength -2)},
+        PackedAPI{cudaMallocFunc, "allocating spline indexing array",
+          (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)}) &&
+        !run_api_pack(
         PackedAPI{cudaMemcpy, "copying FP constants to GPU",
           (void*)&InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
-        PackedAPI{cudaMallocFunc, "allocating spline indexing array",
-          (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)},
         PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
           (void*)&InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
 
@@ -678,32 +686,31 @@ __global__ void interp_kernel(float * const __restrict__ data,
 
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 {
-    if( fail || input == nullptr || padding >= batchSize )
+    if( fail || input == nullptr || padding > batchSize )
         return false;
 
-    std::size_t nBatchSize { batchSize - padding };
-
-    if( padding != 0 )
-        fail = reallocate(nBatchSize) == 0;
+    std::size_t realSize = batchSize - padding;
+    //if( padding != 0 )
+    //    fail = reallocate(nBatchSize) == 0;
     //move data into array
-    fail = fail || cudaMemcpy( (void*)data, (const void*)input, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyHostToDevice ) != cudaSuccess;
+    fail = fail || cudaMemcpy( (void*)data, (const void*)input, realSize * fftLength * sizeof(cufftReal), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
     if ( InterpAccel.interpReady && !fail)
-        interp_kernel<<<to_grid(nBatchSize, DefaultBlockSize), DefaultBlockSize>>>(
-                (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, nBatchSize, fftLength,
+        interp_kernel<<<to_grid(realSize, DefaultBlockSize), DefaultBlockSize>>>(
+                (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, realSize, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l, 
                 InterpAccel.Indices, InterpAccel.dt);
 
     fail = fail || cufftExecR2C( plan, (cufftReal*)data, data ) != CUFFT_SUCCESS;
     //if there is a norm to use, normalize the data
     if( norm != 1.0f && !fail )
-        normalize<<<to_grid(2 * nBatchSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>> ( (cufftReal*)data, 2 * nBatchSize * (fftLength/2 + 1), norm );
+        normalize<<<to_grid(2 * realSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>> ( (cufftReal*)data, 2 * realSize * (fftLength/2 + 1), norm );
 
-    fail = fail || cudaMemcpy( (void*)input, (const void*)data, nBatchSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
+    fail = fail || cudaMemcpy( (void*)input, (const void*)data, realSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
     fail = fail || cudaDeviceSynchronize() != cudaSuccess;
 
-    if( !fail && padding != 0 )
-        fail = reallocate(batchSize) == 0;
+    //if( !fail && padding != 0 )
+    //    fail = reallocate(batchSize) == 0;
 
     return !fail;
 }
