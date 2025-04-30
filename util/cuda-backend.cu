@@ -681,17 +681,12 @@ __global__ void interp_kernel(float * const __restrict__ data,
     }
 }
 
-#include<boost/crc.hpp>
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 {
     if( fail || input == nullptr || padding > batchSize )
         return false;
 
     std::size_t realSize = batchSize - padding;
-    //spit out crcs for diagnostics
-    boost::crc_32_type result;
-    result.process_bytes(input, sizeof(float)*realSize * fftLength);
-    std::cout << "Data CRC32 checksum is: " << std::hex << result.checksum() << std::endl;
 
     if( padding != 0 )
         fail = reallocate(realSize) == 0;
@@ -711,11 +706,6 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 
     fail = fail || cudaMemcpy( (void*)input, (const void*)data, realSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
     fail = fail || cudaDeviceSynchronize() != cudaSuccess;
-
-    //and then print out result crc
-    result.reset();
-    result.process_bytes(input, sizeof(cufftComplex) * realSize * (fftLength/2 + 1) );
-    std::cout << "Result CRC32 is: " << std::hex << result.checksum() << std::endl;
 
     if( !fail && padding != 0 )
         fail = reallocate(batchSize) == 0;
