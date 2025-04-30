@@ -690,8 +690,8 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
         return false;
 
     std::size_t realSize = batchSize - padding;
-    //if( padding != 0 )
-    //    fail = reallocate(nBatchSize) == 0;
+    if( padding != 0 )
+        fail = reallocate(realSize) == 0;
     //move data into array
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, realSize * fftLength * sizeof(cufftReal), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
@@ -709,8 +709,8 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     fail = fail || cudaMemcpy( (void*)input, (const void*)data, realSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
     fail = fail || cudaDeviceSynchronize() != cudaSuccess;
 
-    //if( !fail && padding != 0 )
-    //    fail = reallocate(batchSize) == 0;
+    if( !fail && padding != 0 )
+        fail = reallocate(batchSize) == 0;
 
     return !fail;
 }
