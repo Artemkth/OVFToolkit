@@ -681,12 +681,18 @@ __global__ void interp_kernel(float * const __restrict__ data,
     }
 }
 
+#include<boost/crc.hpp>
 bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 {
     if( fail || input == nullptr || padding > batchSize )
         return false;
 
     std::size_t realSize = batchSize - padding;
+    //spit out crcs for diagnostics
+    boost::crc_32_type result;
+    result.process_bytes(input, sizeof(float)*realSize * fftLength);
+    std::cout << "Data CRC32 checksum is: " << std::hex << result.checksum() << std::endl;
+
     if( padding != 0 )
         fail = reallocate(realSize) == 0;
     //move data into array
