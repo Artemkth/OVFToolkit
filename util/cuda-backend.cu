@@ -712,6 +712,11 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     fail = fail || cudaMemcpy( (void*)input, (const void*)data, realSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
     fail = fail || cudaDeviceSynchronize() != cudaSuccess;
 
+    //and then print out result crc
+    result.reset();
+    result.process_bytes(input, sizeof(cufftComplex) * realSize * (fftLength/2 + 1) );
+    std::cout << "Result CRC32 is: " << std::hex << result.checksum() << std::endl;
+
     if( !fail && padding != 0 )
         fail = reallocate(batchSize) == 0;
 
