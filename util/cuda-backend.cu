@@ -212,9 +212,8 @@ template<typename T>
 __host__ cufftResult cufftGetSizeManyWrap(cufftHandle plan, T* fftLen, T batchSize, std::size_t *estimate)
 {
     T cPoints { *fftLen/2 + 1 };
-    T inArrSize{ *fftLen * batchSize };
-    T outArrSize{ cPoints * batchSize };
-    return cuSizeEstFunc<T>(plan, 1, fftLen, &inArrSize, batchSize, 1, &outArrSize, batchSize, 1, CUFFT_R2C, batchSize, estimate);
+
+    return cuSizeEstFunc<T>(plan, 1, fftLen, fftLen, batchSize, 1, &cPoints, batchSize, 1, CUFFT_R2C, batchSize, estimate);
 }
 
 //ofc cudaMalloc is a macro, fml
@@ -234,7 +233,7 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
     T batch_size{ std::min<T>(clamp_cast<T>(maxMem) / (9 * sizeof(cufftComplex) * cPoints), clamp_cast<T>(maxBatch)) };
     std::size_t estimate{};
 
-    if ( !run_api_pack(PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}) )
+    if ( !PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}.exec() )
         return 0;
 
     //if by chance there is enough memory to do transform in a single batch, return that batch size
@@ -246,7 +245,7 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
     batch_size = std::min<T>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
     while(batch_size > 0 && batch_size <= maxBatch)
     {
-        if ( !run_api_pack(PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}) )
+        if ( !PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}.exec() )
             return 0;
 
         const auto perBatch { sizeof(cufftComplex) * cPoints + estimate/batch_size };
@@ -307,7 +306,7 @@ std::size_t cuFFTEngine::InitGPU()
             return 0;
         }
     }
-    else fail = !run_api_pack( PackedAPI{ cudaGetDevice, "getting a gpuID", &gpuID } );
+    else fail = !PackedAPI{ cudaGetDevice, "getting a gpuID", &gpuID }.exec();
     //WARNING curGPU is not updated because it is supposed to not be used past this point :p
     
     std::string result{};
@@ -319,7 +318,7 @@ std::size_t cuFFTEngine::InitGPU()
             PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem },
             PackedAPI{ cufftCreate, "creating cuFFT plan", &plan }) &&
             //need to run it separately since values are passed by copy
-            !run_api_pack(PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }); //sets work area to be manually managed
+            !PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }.exec(); //sets work area to be manually managed
     std::cout << props.name << std::endl;
 
     //hard cutoff point 1 if one cannot initialize here, before memory allocation
@@ -427,12 +426,10 @@ template<typename T>
 cufftResult cufftMakePlanWrap(cufftHandle plan, T fftLength, T batch_size, std::size_t* workAreaSize)
 {
     T cPoints { fftLength/2 + 1 };
-    T arrSize { batch_size * fftLength };
-    T outArrSize { batch_size * cPoints };
 
     return cufftMakePlanFnc<T>(plan, 1, &fftLength,
-            &arrSize, batch_size, 1,
-            &outArrSize, batch_size, 1,
+            &fftLength, batch_size, 1,
+            &cPoints, batch_size, 1,
             CUFFT_R2C, batch_size, workAreaSize);
 }
 
@@ -460,12 +457,12 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
     fail = fail || !run_api_pack( 
             PackedAPI{ cufftDestroy, "destroying old plan", plan },
             PackedAPI{ cufftCreate, "creating a new plan", &plan } ) ||
-        !run_api_pack( PackedAPI{ cufftSetAutoAllocation, "setting auto allocation off", plan, 0 } );
+        !PackedAPI{ cufftSetAutoAllocation, "setting auto allocation off", plan, 0 }.exec();
 
     std::size_t workSize {};
     fail = fail || !(useExtended? 
-            run_api_pack(PackedAPI{ static_cast<cufftMakePlanFunc_t<long long int>>(cufftMakePlanWrap<long long int>), "making a 64bit API cuFFT plan", plan, static_cast<long long int>(fftLength), static_cast<long long int>(batch_size), &workSize }) :
-            run_api_pack(PackedAPI{ static_cast<cufftMakePlanFunc_t<int>>(cufftMakePlanWrap<int>), "making a cuFFT plan", plan, static_cast<int>(fftLength), static_cast<int>(batch_size), &workSize }) );
+            PackedAPI{ static_cast<cufftMakePlanFunc_t<long long int>>(cufftMakePlanWrap<long long int>), "making a 64bit API cuFFT plan", plan, static_cast<long long int>(fftLength), static_cast<long long int>(batch_size), &workSize }.exec() :
+            PackedAPI{ static_cast<cufftMakePlanFunc_t<int>>(cufftMakePlanWrap<int>), "making a cuFFT plan", plan, static_cast<int>(fftLength), static_cast<int>(batch_size), &workSize }.exec() );
 
     if( !fail && allocDataSize == 0 )
     {
@@ -481,7 +478,7 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
     }
 
     if( !fail )
-        fail = !run_api_pack( PackedAPI{cufftSetWorkArea, "setting work buffer location", plan, cudaBuffer} );
+        fail = !PackedAPI{cufftSetWorkArea, "setting work buffer location", plan, cudaBuffer}.exec();
     return fail? 0 : workSize;
 }
 
@@ -603,7 +600,7 @@ void cuFFTEngine::free()
 cuFFTEngine::~cuFFTEngine() noexcept
 {
     free();
-    run_api_pack( PackedAPI{cufftDestroy, "destroying the plan", plan} );
+    PackedAPI{cufftDestroy, "destroying the plan", plan}.exec();
     InterpAccel.free();
 }
 
@@ -695,7 +692,7 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     //move data into array
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, realSize * fftLength * sizeof(cufftReal), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
-    if ( InterpAccel.interpReady && !fail)
+    if ( InterpAccel.interpReady && !fail )
         interp_kernel<<<to_grid(realSize, DefaultBlockSize), DefaultBlockSize>>>(
                 (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, realSize, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l, 
