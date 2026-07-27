@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.30)
 
 #versioning
 project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 # also need some parallelization libs
 find_package(Threads REQUIRED)
 # using boost for endianess, need to check if it is available!
+cmake_policy(SET CMP0167 NEW)
 find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
 
 #library build file

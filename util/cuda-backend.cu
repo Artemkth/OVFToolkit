@@ -1,4 +1,6 @@
+#include"cuda.h"
 #include"cuda-backend.h"
+#include<cstdint>
 #include<iostream>
 #include<limits>
 #include<array>
@@ -17,9 +19,9 @@ __host__ __device__ inline bool operator==(const dim3& ref1, const dim3& ref2)
 
 //CUDA APIs error handling wrapper
 //Definition of success result for different sub-APIs
-template<typename resType> resType cudaSuccVal = 0;
-template<> cufftResult_t cudaSuccVal<cufftResult_t> = CUFFT_SUCCESS;
-template<> cudaError_t cudaSuccVal<cudaError_t> = cudaSuccess;
+template<typename resType> inline constexpr resType cudaSuccVal = 0;
+template<> inline constexpr cufftResult_t cudaSuccVal<cufftResult_t> = CUFFT_SUCCESS;
+template<> inline constexpr cudaError_t cudaSuccVal<cudaError_t> = cudaSuccess;
 
 //decode error message to something humanly readable
 template<typename resType> std::string_view decodeCuError(resType);
@@ -49,20 +51,22 @@ template<> constexpr std::string_view decodeCuError<cufftResult_t>(cufftResult_t
             return "CUFFT_INVALID_SIZE";
         case CUFFT_UNALIGNED_DATA:
             return "CUFFT_UNALIGNED_DATA";
-        case CUFFT_INCOMPLETE_PARAMETER_LIST:
-            return "CUFFT_INCOMPLETE_PARAMETER_LIST";
         case CUFFT_INVALID_DEVICE:
             return "CUFFT_INVALID_DEVICE";
-        case CUFFT_PARSE_ERROR:
-            return "CUFFT_PARSE_ERROR";
         case CUFFT_NO_WORKSPACE:
             return "CUFFT_NO_WORKSPACE";
         case CUFFT_NOT_IMPLEMENTED:
             return "CUFFT_NOT_IMPLEMENTED";
-        case CUFFT_LICENSE_ERROR:
-            return "CUFFT_LICENSE_ERROR";
         case CUFFT_NOT_SUPPORTED:
             return "CUFFT_NOT_SUPPORTED";
+#if CUDA_VERSION < 13000
+        case CUFFT_INCOMPLETE_PARAMETER_LIST:
+            return "CUFFT_INCOMPLETE_PARAMETER_LIST";
+        case CUFFT_PARSE_ERROR:
+            return "CUFFT_PARSE_ERROR";
+        case CUFFT_LICENSE_ERROR:
+            return "CUFFT_LICENSE_ERROR";
+#endif
         default:
             return "Unimplemented";
     }
@@ -312,13 +316,20 @@ std::size_t cuFFTEngine::InitGPU()
     std::string result{};
     std::size_t freeMem, totalMem;
     cudaDeviceProp props{};
+    int clockRate {};
     if( !fail )
         fail = !run_api_pack(
             PackedAPI{ cudaGetDeviceProperties, "getting current GPU properties", &props, gpuID },
+#if CUDA_VERSION >= 13000
+            PackedAPI{ cudaDeviceGetAttribute, "getting clock rate (CUDA 13.0 specific)", &clockRate, cudaDevAttrClockRate, gpuID },
+#endif
             PackedAPI{ cudaMemGetInfo, "getting GPU VRAM info", &freeMem, &totalMem },
             PackedAPI{ cufftCreate, "creating cuFFT plan", &plan }) &&
             //need to run it separately since values are passed by copy
             !PackedAPI{ cufftSetAutoAllocation, "setting auto allocation OFF", plan, 0 }.exec(); //sets work area to be manually managed
+#if CUDA_VERSION < 13000
+    clockRate = props.clockRate;
+#endif
     std::cout << props.name << std::endl;
 
     //hard cutoff point 1 if one cannot initialize here, before memory allocation
@@ -327,9 +338,10 @@ std::size_t cuFFTEngine::InitGPU()
         std::cerr << "Failed to create a plan on requested gpu!\n";
         return 0;
     }
+
     //describe the device characteristics
     std::cout << "Using GPU #" << std::to_string(curGPU) << " \"" << props.name << "\" "
-           <<  std::to_string( props.multiProcessorCount ) << "SM" << '@' << std::to_string( props.clockRate / 1000 ) << "MHz, "
+           <<  std::to_string( props.multiProcessorCount ) << "SM" << '@' << std::to_string( clockRate / 1000 ) << "MHz, "
            <<  printMemSize( totalMem ) << "s of global memory on device (" << printMemSize(freeMem) << " free).\n" ;
     return freeMem;
 }
@@ -388,7 +400,7 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
         useExtended = true;
         //if cannot use 4G+ elements, limit maxBatch
         if( !fitIn4GEl && !is4GCompatible(fftLength) )
-           maxBatch = (static_cast<std::uint64_t>(std::numeric_limits<uint32_t>::max()) + 1)/fftLength;
+           maxBatch = (static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()) + 1)/fftLength;
         batchSize = EstimateBatchSize<long long int>(plan, fftLength, maxMem, maxBatch);
     }
     else
