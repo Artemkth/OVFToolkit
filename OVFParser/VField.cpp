@@ -132,7 +132,7 @@ namespace VField{
             return *this;
         }
         //and comparison for data
-        bool operator==(const StorageArray& ref)
+        bool operator==(const StorageArray& ref) const
         {
             //first check if either of containers are empty, 
             //return true if both are empty

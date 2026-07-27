@@ -5,7 +5,7 @@ project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library
 
 #TODO: add some more checks
 # C++ standard
-set(CMAKE_CXX_STANDARD 17)              #a lot of c++17 features used in core
+set(CMAKE_CXX_STANDARD 20)              #a lot of c++17 features used in core
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 # also need some parallelization libs
 find_package(Threads REQUIRED)
