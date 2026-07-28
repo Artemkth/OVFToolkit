@@ -504,7 +504,7 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
         desc = std::regex_replace( desc, tStampLineDel, "" );     //and delete the rest of the line types
 
         if( desc.empty() )
-            head.reset(VField::OVFParameter::Desc);
+            head.clear(VField::OVFParameter::Desc);
     }
 
     //generate new value labels and units if old ones were present and compliant with standard

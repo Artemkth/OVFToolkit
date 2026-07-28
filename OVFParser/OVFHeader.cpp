@@ -1,4 +1,5 @@
 //file for implementing interfaces of 'OVFHeader.h'
+#include "OVFHeader.h"
 #include"OVFDictionary.h"
 #include"OVFVersion.h"
 #include<map>
@@ -53,9 +54,6 @@ namespace VField{
         bool isValid{false};
         std::string ValidationReport{};
 
-        //does nothing, but just to insure that there is c-tor
-        HeaderData() = default;
-        HeaderData(const HeaderData&) = default;
         //method to reset all fields
         void reset()
         {
@@ -82,6 +80,10 @@ namespace VField{
         std::optional<OVFVersion> version {std::nullopt};
 
     public:
+        HeaderData() = default;
+        ~HeaderData() = default;
+        HeaderData(const HeaderData&) = default; 
+
         void resetVersion() noexcept
         { version = std::nullopt; }
         OVFVersion getVersion() noexcept
@@ -131,26 +133,21 @@ namespace VField{
     }
 
     //Header storage default c-tor
-    OVFHeader::OVFHeader()
-    {
-        data = new HeaderData();
-    }
+    OVFHeader::OVFHeader(): data( std::make_unique<OVFHeader::HeaderData>() ) {}
     //d-tor
-    OVFHeader::~OVFHeader() noexcept
-    {
-        delete data;
-    }
+    OVFHeader::~OVFHeader() noexcept = default;
+    //
+    OVFHeader::OVFHeader(OVFHeader&& ) noexcept = default;
+    OVFHeader& OVFHeader::operator=(OVFHeader&& ) noexcept = default;
     //copy c-tor
     OVFHeader::OVFHeader(const OVFHeader& ref)
     {
-        data = new HeaderData();
-        *data = *(ref.data);
+      data = std::make_unique<OVFHeader::HeaderData>() ;
+      *data = *(ref.data);
     }
     OVFHeader& OVFHeader::operator= (const OVFHeader& ref)
     {
-        auto data_copy = new HeaderData(*ref.data);
-        std::swap(data, data_copy);
-        delete data_copy;
+        *data = *ref.data;
 
         return *this;
     }
@@ -226,7 +223,7 @@ namespace VField{
     {data->reset();data->isChecked = false;}
 
     //unset a parameter
-    void OVFHeader::reset(OVFParameter p) noexcept
+    void OVFHeader::clear(OVFParameter p) noexcept
     {
         switch(paramType(p))
         {

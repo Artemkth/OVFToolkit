@@ -3,6 +3,7 @@
 #include<iterator>
 #include"OVFHeader.h"
 #include"ovfparser_export.h"
+#include<memory>
 
 namespace VField{
     class OVFPARSER_EXPORT VField
@@ -20,7 +21,7 @@ namespace VField{
             //details of data storage thingie defined outside
             //data is stored internally as a single array of homogenious-type values
             struct StorageArray;
-            StorageArray *data{nullptr};
+            std::unique_ptr<StorageArray> data{};
 
             //common defines to be used by iterators to be compatible with algorithm library
             //T is supposed to be a floating point arithmetic type
@@ -73,16 +74,12 @@ namespace VField{
             VField(const VField&);
             VField& operator=(const VField&);
             //I would like to move it move it lol
-            VField(VField&& ref)
-            {std::swap(Header, ref.Header), std::swap(data, ref.data);}
-            VField& operator=(VField&& ref)
-            {std::swap(Header, ref.Header), std::swap(data, ref.data); return *this;}
+            VField(VField&& ref) noexcept;
+            VField& operator=(VField&& ref) noexcept;
 
             //comparison operations
             bool isSameDataAs(const VField&) const noexcept;
             bool operator==(const VField&) const noexcept;
-            bool operator!=(const VField& ref) const noexcept
-            { return !(*this == ref); }
             
             //Header storing all the metadata
             OVFHeader Header{};

@@ -72,9 +72,9 @@ int main()
     }
 
     //test resetting fields
-    testHeader.reset(VField::OVFParameter::Desc);
-    testHeader.reset(VField::OVFParameter::Xnodes);
-    testHeader.reset(VField::OVFParameter::Xstep);
+    testHeader.clear(VField::OVFParameter::Desc);
+    testHeader.clear(VField::OVFParameter::Xnodes);
+    testHeader.clear(VField::OVFParameter::Xstep);
     if( testHeader.isSet(VField::OVFParameter::Desc) ||
         testHeader.isSet(VField::OVFParameter::Xnodes) ||
         testHeader.isSet(VField::OVFParameter::Xstep) ||
@@ -122,7 +122,7 @@ int main()
         std::cerr << "Error setting mesh type!\n";
         return 8;
     }
-    testHeader.reset(VField::OVFParameter::Mtype);
+    testHeader.clear(VField::OVFParameter::Mtype);
     if(testHeader.isSet(VField::OVFParameter::Mtype))
     {
         std::cerr << "Error resetting mesh type!\n";

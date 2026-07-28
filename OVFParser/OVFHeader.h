@@ -7,6 +7,7 @@
 //only standard header cluttering output will be string, with exceptions included inside, which is everywhere anyway and has good integration
 #pragma once
 #include<string>
+#include<memory>
 #include<stdexcept>
 #include"ovfparser_export.h" //generated with cmake, shared lib export macros
 
@@ -69,7 +70,7 @@ namespace VField{
     private:
         //class data in pimpl
         struct HeaderData;
-        HeaderData * data{nullptr};
+        std::unique_ptr<HeaderData> data{};
         
     public:
         //enum class with Mesh type
@@ -85,14 +86,10 @@ namespace VField{
         OVFHeader(const OVFHeader&);
         OVFHeader& operator=(const OVFHeader&);
         //move stuff
-        OVFHeader(OVFHeader&& ref)
-        { std::swap(data, ref.data); } //TODO: investigate why '=default' causes exceptions, just of curiosity
-        OVFHeader& operator=(OVFHeader&& ref)
-        { std::swap(data, ref.data); return *this; }
+        OVFHeader(OVFHeader&& ref) noexcept;
+        OVFHeader& operator=(OVFHeader&& ref) noexcept;
         //comparison operators
         bool operator==(const OVFHeader& ref) const noexcept;
-        bool operator!=(const OVFHeader& ref) const noexcept
-        { return !(*this == ref); }
         
         //Public interfaces of the header
         //first common utils
@@ -113,7 +110,7 @@ namespace VField{
         void set(OVFParameter, const associatedType_t<pType::Float>& );
         
         //unset a value
-        void reset(OVFParameter) noexcept;
+        void clear(OVFParameter) noexcept;
         
         //mesh type
         MeshType getMeshType() const noexcept;

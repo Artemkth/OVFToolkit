@@ -1,7 +1,9 @@
 #include<algorithm>
+#include <memory>
 #include<type_traits>
 #include<limits>
 #include<cmath>
+#include<utility>
 #if defined(_MSC_VER)
 #include<stdexcept> //workaround for missing logic_error
 #endif
@@ -65,6 +67,8 @@ namespace VField{
             farray = nullptr;
             delete[] darray;
             darray = nullptr;
+
+            storSize = 0;
         }
         //is there some data?
         inline bool isEmpty() const
@@ -79,9 +83,21 @@ namespace VField{
             //farray and darray are set to nullptr by default constructor
             //weekly exception safe, if needed add unique_ptr code later
             if( ref.farray != nullptr)
-                emplace_copy(&farray, ref.farray, storSize);
+                emplace_copy(&farray, ref.farray, ref.storSize);
             if( ref.darray != nullptr)
-                emplace_copy(&darray, ref.darray, storSize);
+                emplace_copy(&darray, ref.darray, ref.storSize);
+        }
+        StorageArray& operator=(const StorageArray& ref)
+        {
+            this->clear();
+
+            if( ref.farray != nullptr)
+                emplace_copy(&farray, ref.farray, ref.storSize);
+            if( ref.darray != nullptr)
+                emplace_copy(&darray, ref.darray, ref.storSize);
+            storSize = ref.storSize;
+
+            return *this;
         }
         //conversion constructors, eat up the pointer
         template<typename T>
@@ -107,30 +123,27 @@ namespace VField{
                 }
             }
         }
-        
-        StorageArray& operator= (const StorageArray& ref)
+
+        StorageArray(StorageArray&& ref) noexcept
+          : storSize{std::exchange(ref.storSize, 0)},
+          farray{std::exchange(ref.farray, nullptr)},
+          darray{std::exchange(ref.darray, nullptr)}
+        {}
+
+        StorageArray& operator=(StorageArray&& ref) noexcept
         {
-            if( ref.farray != nullptr)
-                emplace_copy(&farray, ref.farray, ref.storSize);
-            if( ref.darray != nullptr)
-                emplace_copy(&darray, ref.darray, ref.storSize);
-            //only copies new size if emplacing a copy was succesfull
-            storSize = ref.storSize;
+          if (this == &ref)
             return *this;
+
+          clear();
+
+          storSize = std::exchange(ref.storSize, 0);
+          farray   = std::exchange(ref.farray, nullptr);
+          darray   = std::exchange(ref.darray, nullptr);
+
+          return *this;
         }
-        StorageArray(StorageArray&& ref)
-        {
-            std::swap(storSize, ref.storSize);
-            std::swap(farray, ref.farray);
-            std::swap(darray, ref.darray);
-        }
-        StorageArray& operator= (StorageArray&& ref)
-        {
-            std::swap(storSize, ref.storSize);
-            std::swap(farray, ref.farray);
-            std::swap(darray, ref.darray);
-            return *this;
-        }
+
         //and comparison for data
         bool operator==(const StorageArray& ref) const
         {
@@ -222,14 +235,11 @@ namespace VField{
     }
 
     //ctors
-    VField::VField()
-    {
-        data = new StorageArray();
-    }
-    VField::~VField()
-    {
-        delete data;
-    }
+    VField::VField(): data( std::make_unique<StorageArray>() ) {}
+    VField::~VField() = default;
+
+    VField::VField(VField&&) noexcept = default;
+    VField& VField::operator=(VField&&) noexcept = default;
     
     void VField::clearData() noexcept
     {
@@ -342,21 +352,14 @@ namespace VField{
         return true;
     }
     //constructors and such again
-    VField::VField(const VField& ref): Header(ref.Header)
-    {
-        auto buffer = new StorageArray(*ref.data);
-        std::swap(data, buffer);
-        
-        delete buffer;
-    }
+    VField::VField(const VField& ref): data( std::make_unique<StorageArray>() ), Header(ref.Header)
+    { *data = *ref.data; }
     VField& VField::operator= (const VField& ref)
     {
-        auto buffer = new StorageArray(*ref.data);
-        std::swap(data, buffer);
-        
-        delete buffer;
-        Header = ref.Header;
-        return *this;
+      Header = ref.Header;
+      *data = *ref.data;
+
+      return *this;
     }
 
     //comparison operations
