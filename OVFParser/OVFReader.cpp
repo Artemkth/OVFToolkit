@@ -426,13 +426,13 @@ namespace VField{
     std::string readHeader(std::istream& file, std::size_t& line_cnt, OVFHeader& head)
     {
         constexpr auto ValidParams = DictionaryHelpers::removeValue( DictionaryHelpers::makeUnion(UINTParamList, FPParamList, StringParamList), OVFParameter::VersionString );
-        constexpr auto AllowedOtherParams = DictionaryHelpers::make_array(
+        constexpr auto AllowedOtherParams = std::array{
                     OVFParameter::Open,
                     OVFParameter::Close,
                     OVFParameter::Mtype,
                     OVFParameter::Empty,
                     OVFParameter::Comment
-                );
+        };
 
         std::string log{""};
         std::string buffer{""};
@@ -464,7 +464,7 @@ namespace VField{
                 if(head.isSet(*it) && *it != OVFParameter::Desc)
                 {
                     if(log != "") log+= "\n";
-                    log += (std::string)"readHeader: found a duplicate value of type: " + ParameterName(*it) +
+                    log += (std::string)"readHeader: found a duplicate value of type: " + std::string(ParameterName(*it)) +
                         "at line #" + std::to_string(line_cnt) + ", ignoring!";
                     continue;
                 }
@@ -478,7 +478,7 @@ namespace VField{
                         {
                             if(log != "") log+= "\n";
                             log+= (std::string)"readHeader: Error occured while parsing the unsigned integer token: \"" +
-                                ParameterName(*it) + "\" at line #" + std::to_string(line_cnt)+ ", line content:\n" + buffer;
+                                std::string(ParameterName(*it)) + "\" at line #" + std::to_string(line_cnt)+ ", line content:\n" + buffer;
                             break;
                         }
                         head.set(*it, pval.value());
@@ -491,7 +491,7 @@ namespace VField{
                         {
                             if(log != "") log+= "\n";
                             log+= (std::string)"readHeader: Error occured while parsing the floating point token: \"" +
-                                ParameterName(*it) + "\" at line #" + std::to_string(line_cnt)+ ", line content:\n" + buffer;
+                                std::string(ParameterName(*it)) + "\" at line #" + std::to_string(line_cnt)+ ", line content:\n" + buffer;
                             break;
                         }
                         head.set(*it, pval.value());

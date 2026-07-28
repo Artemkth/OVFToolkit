@@ -53,7 +53,7 @@ namespace VField{
         }
         
         //next check is for regular mesh parameters only
-        const auto rectGridParameters = DictionaryHelpers::make_array(
+        const auto rectGridParameters = std::array{
             OVFParameter::Xbase,
             OVFParameter::Ybase,
             OVFParameter::Zbase,
@@ -63,7 +63,7 @@ namespace VField{
             OVFParameter::Xnodes,
             OVFParameter::Ynodes,
             OVFParameter::Znodes
-        );
+        };
         
         for(const auto& x: rectGridParameters)
         {
@@ -141,7 +141,7 @@ namespace VField{
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + ParameterName(x) + "' = " +
+                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(ParameterName(x)) + "' = " +
                         std::to_string(val) + "\n");
                     }
                 }
@@ -156,7 +156,7 @@ namespace VField{
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + ParameterName(x) + "' = " +
+                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(ParameterName(x)) + "' = " +
                         std::to_string(val) + "\n");
                     }
                 }
@@ -170,14 +170,15 @@ namespace VField{
         }
         else 
         {
-            constexpr auto posDefined = DictionaryHelpers::make_array(
+            constexpr auto posDefined = std::array{
                 OVFParameter::Xnodes,
                 OVFParameter::Ynodes,
                 OVFParameter::Znodes,
                 OVFParameter::Xstep,
                 OVFParameter::Ystep,
-                OVFParameter::Zstep);
-            static_assert(!DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::makeUnion(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
+                OVFParameter::Zstep
+            };
+            static_assert(DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::makeUnion(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
             //check if required params are positively defined
             for(const auto& x: posDefined)
             {
@@ -186,7 +187,7 @@ namespace VField{
                     auto val = ref.getUint(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + ParameterName(x) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::string("The value '") + std::string(ParameterName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
                         problemParams.push_back(x);
                     }
                 }
@@ -195,7 +196,7 @@ namespace VField{
                     auto val = ref.getFloat(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + ParameterName(x) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::string("The value '") + std::string(ParameterName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
                         problemParams.push_back(x);
                     }
                 }
@@ -224,7 +225,7 @@ namespace VField{
             const std::string prefix = "Checking if all required fields were filled: ";
             std::vector<OVFParameter> problemParams{};
             //check if all required field are present
-            const auto RequiredParameters = DictionaryHelpers::make_array(
+            const auto RequiredParameters = std::array {
                 OVFParameter::Title,
                 OVFParameter::Munit,
                 OVFParameter::Vunit,
@@ -235,7 +236,7 @@ namespace VField{
                 OVFParameter::Ymax,
                 OVFParameter::Zmin,
                 OVFParameter::Zmax
-            );
+            };
             for(const auto& x: RequiredParameters)
                 if(!ref.isSet(x))
                     problemParams.push_back(x);
@@ -284,7 +285,7 @@ namespace VField{
         {
             const std::string prefix = "Checking if all required fields were filled: ";
             //check if all required field are present
-            const auto RequiredParameters = DictionaryHelpers::make_array(
+            const auto RequiredParameters = std::array{
                 OVFParameter::Title,
                 OVFParameter::Munit,
                 OVFParameter::Vdim,
@@ -296,7 +297,7 @@ namespace VField{
                 OVFParameter::Ymax,
                 OVFParameter::Zmin,
                 OVFParameter::Zmax
-            );
+            };
             std::vector<OVFParameter> missingList{};
             for(const auto& x: RequiredParameters)
                 if(!ref.isSet(x))
@@ -939,12 +940,12 @@ namespace VField{
 
     //strip list
     constexpr auto OVFOptional = 
-        DictionaryHelpers::make_array(
+       std::array{
             OVFParameter::Vmin,
             OVFParameter::Vmax,
             OVFParameter::Bound,
             OVFParameter::Desc
-        );
+       };
 
     //strip optional parameters
     void VField::Strip() noexcept

@@ -1,389 +1,331 @@
-//File with 'constexpr' utilities for implementing compile-time parts of interfaces
-//a self-checking dictionary of sorts for names of fields inside a file
-//requires recent version of compilers for good implementation of function signature macros
-//also requires c++17 support for lambdas being useful for constexpr initialization and such
-//TODO: look into upgrading for c++20 constexpr algorithms
-//and constexpr string/vector
 #pragma once
-#include<array>
-//file with definitions for the interfaces
-#include"OVFHeader.h"
-//headers for the hack
-#include<type_traits>
-#include<limits>
+// C++23 rewrite of OVFDictionary.h.
+//
+// Design:
+//   * ParamTable is the single source of truth.
+//   * Category arrays, names, and lookup functions are derived from ParamTable.
+//   * Compile-time checks guarantee uniqueness and complete enum coverage.
+//   * The compiler-signature enum probe is isolated in one helper and can later
+//     be replaced by C++26 reflection without changing the public interface.
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <iterator>
+#include <ranges>
+#include <span>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+#include "OVFHeader.h"
 
 //namespace with utilities for pre-compile computation
 namespace DictionaryHelpers{
-    //some hacky comparison, searches for first occurance
-    //would be easier with regex or C strstr, but alas there is no constexpr way around it
-    constexpr bool isValid(const char* const c_str)
-    {
-        const char* it = c_str;
-        const char* init = "OVFParameter::";
-        auto ref = init;
-        const char* fhit = nullptr;
-        while(*it != '\0' && *ref != '\0')
-        {
-            if(*it++ == *ref)
-            {
-                ref++;
-                if(fhit == nullptr) fhit = it;      
-            }
-            else if(fhit != nullptr)    //otherwise reset search
-            {
-                ref = init;
-                it = fhit;
-                fhit = nullptr;
-            }
-        }
-        return *ref == '\0' && *it != '\0';
-    }
-    
+  using Parameter      = VField::OVFParameter;
+  using ParameterType  = VField::pType;
+  using UnderlyingType = std::underlying_type_t<Parameter>;
 
-    //checks if a parameter p is inside
-    template<VField::OVFParameter p>
-    constexpr bool IsDefined()
+  // -----------------------------------------------------------------------------
+  // Pre-C++26 enum reflection backend
+  // -----------------------------------------------------------------------------
+
+  //some hacky comparison, finds compiler trying to cast instead of writing Enum type explicitly
+  template <Parameter P>
+    consteval bool IsDefined()
     {
-        //what is a good hack without a bit of preprocessor mess
-        //checked to work with GCC versions of 6+ with godbolt
 #if defined(__clang__) || defined(__GNUC__)
-        return isValid(__PRETTY_FUNCTION__);
+      return !std::string_view{__PRETTY_FUNCTION__}.contains("(VField::OVFParameter)");
 #elif defined(_MSC_VER)
-        return isValid(__FUNCSIG__);
+      return !std::string_view{__FUNCSIG__}.contains("(enum VField::OVFParameter)");
 #else
-        static_assert(false, "Trying to go round with an unsupported compiler do you?");
-        return false;
+      []<bool supported = false>() {
+        static_assert(supported,
+            "OVF enum probing is unsupported by this compiler");
+      }();
+      return false;
 #endif
     }
 
-    //a define for laters
-    using intType = typename std::underlying_type<VField::OVFParameter>::type;
-    
-    static_assert(IsDefined<VField::OVFParameter::Invalid>(), "The OVFParameter::Invalid was not defined!");
-    //helper fold counter classm, by the power of (GRAYSKULL) C++17!
-    template<
-        template<intType> typename pred,//predicate which is checked when folding
-        template<intType> typename fold,//fold operation
-        intType n                       //counter
-    > 
-    struct fold_counter
+  template <Parameter First, std::size_t... I>
+    consteval auto enumValuesImpl(std::index_sequence<I...>)
     {
-        static constexpr intType depth 
-        { [](){
-            if constexpr(pred<fold<n>::value()>::value())
-                return fold_counter<pred, fold, fold<n>::value()>::depth ;
-            else
-                return n;
-        }()
-        };
-    };
-    
-    
-    template <intType n>
-    struct SearchPred
+      constexpr auto first = static_cast<UnderlyingType>(First);
+
+      static_assert(
+          (IsDefined<static_cast<Parameter>(
+                                            first + static_cast<UnderlyingType>(I))>() && ...),
+          "OVFParameter must be dense between the configured first and last values");
+
+      return std::array{
+        static_cast<Parameter>(first + static_cast<UnderlyingType>(I))...
+      };
+    }
+
+  template <Parameter First, Parameter Last>
+    consteval auto enumValues()
     {
-        static constexpr bool value()
-        {
-            if(n == std::numeric_limits<intType>::min() || n == std::numeric_limits<intType>::max())
-                return false;
-            return IsDefined<static_cast<VField::OVFParameter>(n)>();
+      constexpr auto first = static_cast<UnderlyingType>(First);
+      constexpr auto last  = static_cast<UnderlyingType>(Last);
+
+      static_assert(first <= last,
+          "The first OVFParameter must not follow the last one");
+
+      constexpr auto count = static_cast<std::size_t>(last - first + 1);
+      return enumValuesImpl<First>(std::make_index_sequence<count>{});
+    }
+
+  // -----------------------------------------------------------------------------
+  // Generic constexpr range helpers
+  // -----------------------------------------------------------------------------
+
+  template <std::ranges::input_range R, class T>
+    constexpr bool isElem(const T& value, const R& range)
+    {
+      return std::ranges::contains(range, value);
+    }
+
+  template <std::ranges::input_range R1, std::ranges::forward_range R2>
+    constexpr bool isIntersecting(const R1& lhs, const R2& rhs)
+    {
+      return std::ranges::any_of(lhs, [&](const auto& value) {
+          return std::ranges::contains(rhs, value);
+          });
+    }
+
+  template <std::ranges::input_range Subset, std::ranges::forward_range Superset>
+    constexpr bool isSubset(const Subset& subset, const Superset& superset)
+    {
+      return std::ranges::all_of(subset, [&](const auto& value) {
+          return std::ranges::contains(superset, value);
+          });
+    }
+
+  template <std::ranges::forward_range R>
+    constexpr bool hasDuplicates(const R& range)
+    {
+      for (auto it = std::ranges::begin(range); it != std::ranges::end(range); ++it) {
+        if (std::ranges::find(std::next(it), std::ranges::end(range), *it)
+            != std::ranges::end(range)) {
+          return true;
         }
-    };
-    
-    template <intType n>
-    struct Increment
-    {
-        static constexpr intType value () { return std::numeric_limits<intType>::max() != n? n+1 : n; }
-    };
-    
-    template <intType n>
-    struct Decrement
-    {
-        static constexpr intType value () { return std::numeric_limits<intType>::min() != n? n-1 : n; }
-    };
-    
-    //main darkvoodoo structure
-    template< intType n>
-    struct Helper
-    {
-        static_assert(IsDefined<static_cast<VField::OVFParameter>(n)>() , "The intial value was for search is invalid!!");
-        //meat of teh dish
-        static constexpr intType minVal { fold_counter<SearchPred, Decrement, n>::depth };
-        static constexpr intType maxVal { fold_counter<SearchPred, Increment, n>::depth };
-        //size of the enum
-        static constexpr auto count { static_cast<std::size_t>(maxVal - minVal + 1) };
-        //casts of parameters
-        static constexpr auto firstParam { static_cast<VField::OVFParameter>(minVal)};
-        static constexpr auto lastParam { static_cast<VField::OVFParameter>(maxVal)};
-        //iterator for counting
-        class OVFParamIterator
-        {
-        private:
-            intType val{};
-        public:
-            constexpr explicit OVFParamIterator(const intType& vval = minVal): val(vval) {}
-            constexpr VField::OVFParameter operator*() const
-            {return static_cast<VField::OVFParameter>(val);}
-            constexpr OVFParamIterator& operator++()
-            {val++; return *this;}
-            constexpr OVFParamIterator operator++(int)
-            {auto old = *this; ++(*this); return old;} 
-        };
-        static constexpr OVFParamIterator begin()
-        {return OVFParamIterator(minVal);}
-        static constexpr OVFParamIterator end()
-        {return OVFParamIterator(maxVal + 1u);}
-    };
-    
-    //test instantiation
-    template struct Helper<static_cast<intType>(VField::OVFParameter::Invalid)>; 
-    //大成功！
-    
-    // helper make_array template function
-    // -> is no longer required in recent standard
-    // implementation inspired by gist.github.com/klmr/2775736#file-make_array-hpp
-    // somebody actually wrote paper on it, expect it to be there by default, proposal N3824
-    template <typename... T>
-    constexpr auto make_array(T&& ...vals)
-    {
-        return std::array<
-            typename std::decay<typename std::common_type<T...>::type>::type, sizeof...(T)> {std::forward<T>(vals)...};
+      }
+      return false;
     }
-    
-    //predicate to check if object is element in some container
-    //searches if element 'value' is in the 'array'
-    template<std::size_t n>
-    constexpr bool isElem(const VField::OVFParameter& value, const std::array<VField::OVFParameter, n>& array)
+
+  template <std::ranges::input_range R1, std::ranges::forward_range R2>
+    constexpr std::size_t countIntersect(const R1& lhs, const R2& rhs)
     {
-        for(const auto& x: array )
-            if(x == value)
-                return true;
-        //return false if true hasn't been tripped
-        return false;
+      return static_cast<std::size_t>(std::ranges::count_if(lhs, [&](const auto& value) {
+            return std::ranges::contains(rhs, value);
+            }));
     }
-    //predicate to check if two arrays intersect
-    template<std::size_t n, std::size_t m>
-    constexpr bool isIntersecting( const std::array<VField::OVFParameter, n>& arr1,
-                                   const std::array<VField::OVFParameter, m>& arr2 )
+
+  template <class... Arrays>
+    constexpr auto makeUnion(const Arrays&... arrays)
     {
-        //properly it would have been better to chose smaller one first, to decrease number of function calls
-        //but constexpr should be inlined anyway resulting in same number of comparisons
-        for(const auto& x: arr1)
-            if(isElem(x, arr2))
-                return true;
-        //default return 'false'
-        return false;
+      constexpr std::size_t totalSize = (std::tuple_size_v<Arrays> + ... + 0U);
+      std::array<Parameter, totalSize> result{};
+
+      auto out = result.begin();
+      ([&] {
+       out = std::ranges::copy(arrays, out).out;
+       }(), ...);
+
+      return result;
     }
-    //check if subset
-    template<std::size_t n, std::size_t m>
-    constexpr bool isSubset( const std::array<VField::OVFParameter, n>& arr1,
-                                   const std::array<VField::OVFParameter, m>& arr2 )
+
+  template <std::size_t N>
+    constexpr auto removeValue(const std::array<Parameter, N>& values,
+        Parameter value)
     {
-        if(m > n)
-            return isSubset(arr2, arr1);
-        
-        for(const auto& x: arr1)
-            if(!isElem(x, arr2))
-                return false;
-        
-        return true;
-    }
-    //predicate to check for duplicates
-    template<std::size_t n>
-    constexpr bool hasDuplicates(const std::array<VField::OVFParameter, n>& arr)
-    {
-        for(auto it = arr.begin(); it != arr.end(); ++it)
-        {
-            for(auto it2 = it + 1; it2 != arr.end(); ++it2)
-                if(*it2 == *it)
-                    return true;
+      static_assert(N > 0);
+
+      std::array<Parameter, N - 1> result{};
+      auto out = result.begin();
+      bool removed = false;
+
+      for (Parameter item : values) {
+        if (!removed && item == value) {
+          removed = true;
+          continue;
         }
-        return false;
-    }
-    template<std::size_t n, std::size_t m>
-    constexpr std::size_t countIntersect( const std::array<VField::OVFParameter, n>& arr1,
-                                   const std::array<VField::OVFParameter, m>& arr2 )
-    {
-        std::size_t intersect{ 0};
-        for(const auto& x: arr1)
-            if(isElem(x, arr2))
-                intersect++;
-        return intersect;
+
+        if (out != result.end()) {
+          *out++ = item;
+        }
+      }
+
+      return result;
     }
 
-    //collect constexpr containers into a single one
-    template<typename... T>
-    constexpr auto makeUnion(const T ...params)
-    {
-        //static_assert((!hasDuplicates(params) && ...), "One of the arguments had a duplicate");
-        constexpr std::size_t totCount {(params.size() + ... + 0)}; //unary form not would exclude the case with empty pack!
+  // -----------------------------------------------------------------------------
+  // Parameter metadata
+  // -----------------------------------------------------------------------------
 
-        std::array<VField::OVFParameter, totCount> ret {};
-        auto it = ret.begin();
-        ([&]()->void{for(const auto& x: params) *it++ = x;}(), ...);  
-        return ret;
-    }
+  struct ParamDescriptor {
+    Parameter parameter;
+    ParameterType type;
+    std::string_view description;
 
-    template<std::size_t n>
-    constexpr auto removeValue(std::array<VField::OVFParameter, n> set, VField::OVFParameter p)
-    {
-        std::array<VField::OVFParameter, n - 1> ret{};
-        auto it = ret.begin();
-        for(const auto& x: set)
-            if(x != p)
-                *it++ = x;
-        return ret;
-    }
-    
-    //Human-readable names of parameters
-    constexpr auto ParamNames = DictionaryHelpers::make_array
-    (
-     std::make_pair(VField::OVFParameter::Title, "Data title"),
-     std::make_pair(VField::OVFParameter::Mtype, "Mesh type"),
-     std::make_pair(VField::OVFParameter::VersionString, "Version string"),
-     std::make_pair(VField::OVFParameter::Desc, "Description string"),
-     std::make_pair(VField::OVFParameter::Munit, "Grid mesh units"),
-     std::make_pair(VField::OVFParameter::Vunit, "Vector field value units"),
-     std::make_pair(VField::OVFParameter::Vmult, "Vector field value multiplier"),
-     std::make_pair(VField::OVFParameter::Vlabels, "Vector field value labels"),
-     std::make_pair(VField::OVFParameter::Vdim, "Vector field dimension"),
-     std::make_pair(VField::OVFParameter::Bound, "Bounding frame vertices"),
-     std::make_pair(VField::OVFParameter::Xmin, "Minimal mesh 'x' value"),
-     std::make_pair(VField::OVFParameter::Ymin, "Minimal mesh 'y' value"),
-     std::make_pair(VField::OVFParameter::Zmin, "Minimal mesh 'z' value"),
-     std::make_pair(VField::OVFParameter::Xmax, "Maximal mesh 'x' value"),
-     std::make_pair(VField::OVFParameter::Ymax, "Maximal mesh 'y' value"),
-     std::make_pair(VField::OVFParameter::Zmax, "Maximal mesh 'z' value"),
-     std::make_pair(VField::OVFParameter::Vmin, "Minimal vector field absolute value"),
-     std::make_pair(VField::OVFParameter::Vmax, "Maximal vector field absolute value"),
-     std::make_pair(VField::OVFParameter::Pcount, "File point count"),
-     std::make_pair(VField::OVFParameter::Xbase, "Mesh initial 'x' value"),
-     std::make_pair(VField::OVFParameter::Ybase, "Mesh initial 'y' value"),
-     std::make_pair(VField::OVFParameter::Zbase, "Mesh initial 'z' value"),
-     std::make_pair(VField::OVFParameter::Xstep, "Mesh 'x' step"),
-     std::make_pair(VField::OVFParameter::Ystep, "Mesh 'y' step"),
-     std::make_pair(VField::OVFParameter::Zstep, "Mesh 'z' step"),
-     std::make_pair(VField::OVFParameter::Xnodes, "Mesh 'x' nodes"),
-     std::make_pair(VField::OVFParameter::Ynodes, "Mesh 'y' nodes"),
-     std::make_pair(VField::OVFParameter::Znodes, "Mesh 'z' nodes")
-    );
+    friend constexpr bool operator==(const ParamDescriptor&, const ParamDescriptor&) = default;
+  };
+
 }
 
-namespace VField{
-    //main info structure
-    using ParamInfo = 
-        typename DictionaryHelpers::Helper<static_cast<DictionaryHelpers::intType>(OVFParameter::Invalid)>;
-    
-    // define the parameter 'universe'
-    // in c++20 can switch to constexpr vector which also uses iterator initializing
-    constexpr std::array<OVFParameter, ParamInfo::count> ParamUniverse{
-        //lambda to fill the array out
-        //WARNING: only works with c++17!
-        //can be made to work with c++14 with definign a function to fill manually 
-        []() -> auto {
-            std::array<OVFParameter, ParamInfo::count> accumulator {};
-            auto param = ParamInfo::begin();
-            for(auto it = accumulator.begin(); it != accumulator.end(); ++it)
-                *it = *(param++);
-            return accumulator;
-        } ()
-    };
-    static_assert(ParamUniverse[0] == ParamInfo::firstParam, "Checking for error by 1");
-    
-    //Warning: user defined syntaxis lists:
-    //first floating point ones
-    constexpr auto FPParamList = DictionaryHelpers::make_array (
-            OVFParameter::Vmult,
-            OVFParameter::Vmin,
-            OVFParameter::Vmax,
-            OVFParameter::Xmin,
-            OVFParameter::Xmax,
-            OVFParameter::Ymin,
-            OVFParameter::Ymax,
-            OVFParameter::Zmin,
-            OVFParameter::Zmax,
-            OVFParameter::Xbase,
-            OVFParameter::Ybase,
-            OVFParameter::Zbase,
-            OVFParameter::Xstep,
-            OVFParameter::Ystep,
-            OVFParameter::Zstep
-            );
-    //unsigned integral fields
-    constexpr auto UINTParamList = DictionaryHelpers::make_array (
-            OVFParameter::Pcount,
-            OVFParameter::Vdim,
-            OVFParameter::Xnodes,
-            OVFParameter::Ynodes,
-            OVFParameter::Znodes
-            );
-    //string fields
-    constexpr auto StringParamList = DictionaryHelpers::make_array (
-            OVFParameter::VersionString,
-            OVFParameter::Title,
-            OVFParameter::Desc,
-            OVFParameter::Munit,
-            OVFParameter::Vunit,
-            OVFParameter::Vlabels,
-            OVFParameter::Bound
-            );
-    //other fields
-    constexpr auto OtherParamList = DictionaryHelpers::make_array (
-            OVFParameter::Open,
-            OVFParameter::Close,
-            OVFParameter::Segcnt,
-            OVFParameter::Mtype,
-            OVFParameter::Empty,
-            OVFParameter::Comment,
-            OVFParameter::Unknown,
-            OVFParameter::Invalid
-            );
+namespace VField {
 
-    //validate the syntaxis provided in this file
-    //check if any of the arrays have duplicates
-    static_assert( !DictionaryHelpers::hasDuplicates(FPParamList) &&
-                   !DictionaryHelpers::hasDuplicates(UINTParamList) &&
-                   !DictionaryHelpers::hasDuplicates(StringParamList) &&
-                   !DictionaryHelpers::hasDuplicates(OtherParamList),
-                   "One of the arrays has a duplicate!"
-    );
-    //check if any of the arrays intersect, in square with diagonals fashion, since intersection is non-transmissive
-    //total number is C(2,4) = 6, ohboi :'(
-    static_assert( !DictionaryHelpers::isIntersecting(FPParamList, UINTParamList) && 
-                   !DictionaryHelpers::isIntersecting(FPParamList, StringParamList) &&
-                   !DictionaryHelpers::isIntersecting(FPParamList, OtherParamList) && 
-                   !DictionaryHelpers::isIntersecting(UINTParamList, StringParamList) &&
-                   !DictionaryHelpers::isIntersecting(UINTParamList, OtherParamList) &&
-                   !DictionaryHelpers::isIntersecting(StringParamList, OtherParamList),
-                 "Some of the OVFParameter were found in more than one list!");
-    //and then check if the number of arguments is correct
-    static_assert( FPParamList.size() + UINTParamList.size() +
-                   StringParamList.size() + OtherParamList.size() <= ParamUniverse.size(), 
-                   "If you didn't define elements by normal casts, you probably have error with giving enum elements some value");
-    static_assert( FPParamList.size() + UINTParamList.size() +
-                   StringParamList.size() + OtherParamList.size() == ParamUniverse.size(),
-                 "You have some new enum value not categorized yet" );
-    //end of validation!
-    
-    //Definition of interfaces
-    //can skip last check since there is no elements outside of the four arrays, guaranteed by assert above
-    constexpr pType paramIndex(const OVFParameter& pname)
-    {
-        if(DictionaryHelpers::isElem(pname, FPParamList))
-            return pType::Float;
-        else if(DictionaryHelpers::isElem(pname, UINTParamList))
-            return pType::Uint;
-        else if(DictionaryHelpers::isElem(pname, StringParamList))
-            return pType::String;
-        return pType::Other;
-    }
-    
-    constexpr auto ParameterName(const OVFParameter& p)
-    {
-        for(const auto& x: DictionaryHelpers::ParamNames)
-            if(x.first == p)
-                return x.second;
-        return "Undefined token";
-    }
+  using DictionaryHelpers::ParamDescriptor;
+
+  // Keep the range declaration explicit for the C++23 implementation.
+  // C++26 reflection can replace DictionaryHelpers::enumValues() later.
+  inline constexpr OVFParameter FirstParameter = OVFParameter::VersionString;
+  inline constexpr OVFParameter LastParameter  = OVFParameter::Invalid;
+
+  inline constexpr auto ParamUniverse { DictionaryHelpers::enumValues<FirstParameter, LastParameter>() };
+
+  // Single source of truth for parameter classification and human-readable names.
+  inline constexpr std::array ParamTable{
+    ParamDescriptor{OVFParameter::Open,          pType::Other,  "Opening marker"},
+      ParamDescriptor{OVFParameter::Close,         pType::Other,  "Closing marker"},
+      ParamDescriptor{OVFParameter::Segcnt,        pType::Other,  "Segment count marker"},
+      ParamDescriptor{OVFParameter::Mtype,         pType::Other,  "Mesh type"},
+      ParamDescriptor{OVFParameter::Empty,         pType::Other,  "Empty line"},
+      ParamDescriptor{OVFParameter::Comment,       pType::Other,  "Comment"},
+      ParamDescriptor{OVFParameter::Unknown,       pType::Other,  "Unknown token"},
+      ParamDescriptor{OVFParameter::Invalid,       pType::Other,  "Invalid token"},
+
+      ParamDescriptor{OVFParameter::VersionString, pType::String, "Version string"},
+      ParamDescriptor{OVFParameter::Title,         pType::String, "Data title"},
+      ParamDescriptor{OVFParameter::Desc,          pType::String, "Description string"},
+      ParamDescriptor{OVFParameter::Munit,         pType::String, "Grid mesh units"},
+      ParamDescriptor{OVFParameter::Vunit,         pType::String, "Vector field value units"},
+      ParamDescriptor{OVFParameter::Vlabels,       pType::String, "Vector field value labels"},
+      ParamDescriptor{OVFParameter::Bound,         pType::String, "Bounding frame vertices"},
+
+      ParamDescriptor{OVFParameter::Pcount,        pType::Uint,   "File point count"},
+      ParamDescriptor{OVFParameter::Vdim,          pType::Uint,   "Vector field dimension"},
+      ParamDescriptor{OVFParameter::Xnodes,        pType::Uint,   "Mesh x nodes"},
+      ParamDescriptor{OVFParameter::Ynodes,        pType::Uint,   "Mesh y nodes"},
+      ParamDescriptor{OVFParameter::Znodes,        pType::Uint,   "Mesh z nodes"},
+
+      ParamDescriptor{OVFParameter::Vmult,         pType::Float,  "Vector field value multiplier"},
+      ParamDescriptor{OVFParameter::Vmin,          pType::Float,  "Minimal vector field absolute value"},
+      ParamDescriptor{OVFParameter::Vmax,          pType::Float,  "Maximal vector field absolute value"},
+      ParamDescriptor{OVFParameter::Xmin,          pType::Float,  "Minimal mesh x value"},
+      ParamDescriptor{OVFParameter::Xmax,          pType::Float,  "Maximal mesh x value"},
+      ParamDescriptor{OVFParameter::Ymin,          pType::Float,  "Minimal mesh y value"},
+      ParamDescriptor{OVFParameter::Ymax,          pType::Float,  "Maximal mesh y value"},
+      ParamDescriptor{OVFParameter::Zmin,          pType::Float,  "Minimal mesh z value"},
+      ParamDescriptor{OVFParameter::Zmax,          pType::Float,  "Maximal mesh z value"},
+      ParamDescriptor{OVFParameter::Xbase,         pType::Float,  "Mesh initial x value"},
+      ParamDescriptor{OVFParameter::Ybase,         pType::Float,  "Mesh initial y value"},
+      ParamDescriptor{OVFParameter::Zbase,         pType::Float,  "Mesh initial z value"},
+      ParamDescriptor{OVFParameter::Xstep,         pType::Float,  "Mesh x step"},
+      ParamDescriptor{OVFParameter::Ystep,         pType::Float,  "Mesh y step"},
+      ParamDescriptor{OVFParameter::Zstep,         pType::Float,  "Mesh z step"},
+  };
 }
 
+namespace DictionaryHelpers {
+
+  template <VField::pType Type>
+    consteval auto parametersOfType()
+    {
+      constexpr auto count = static_cast<std::size_t>(
+          std::ranges::count(VField::ParamTable, Type, &ParamDescriptor::type));
+
+      std::array<VField::OVFParameter, count> result{};
+      auto out = result.begin();
+
+      for (const auto& descriptor : VField::ParamTable) {
+        if (descriptor.type == Type) {
+          *out++ = descriptor.parameter;
+        }
+      }
+
+      return result;
+    }
+
+  consteval bool tableParametersAreUnique()
+  {
+    for (auto it = VField::ParamTable.begin(); it != VField::ParamTable.end(); ++it) {
+      if (std::ranges::find(std::next(it), VField::ParamTable.end(),
+            it->parameter, &ParamDescriptor::parameter)
+          != VField::ParamTable.end()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  consteval bool tableCoversUniverse()
+  {
+    return VField::ParamTable.size() == VField::ParamUniverse.size()
+      && std::ranges::all_of(VField::ParamUniverse, [](VField::OVFParameter parameter) {
+          return std::ranges::contains(
+              VField::ParamTable, parameter, &ParamDescriptor::parameter);
+          });
+  }
+
+} // namespace DictionaryHelpers
+
+
+namespace VField {
+
+  inline constexpr auto FPParamList     = DictionaryHelpers::parametersOfType<pType::Float>();
+  inline constexpr auto UINTParamList   = DictionaryHelpers::parametersOfType<pType::Uint>();
+  inline constexpr auto StringParamList = DictionaryHelpers::parametersOfType<pType::String>();
+  inline constexpr auto OtherParamList  = DictionaryHelpers::parametersOfType<pType::Other>();
+
+  static_assert(DictionaryHelpers::tableParametersAreUnique(),
+      "ParamTable contains a duplicate OVFParameter");
+  static_assert(DictionaryHelpers::tableCoversUniverse(),
+      "ParamTable must describe every OVFParameter exactly once");
+
+  // Compatibility information formerly supplied by DictionaryHelpers::Helper.
+  struct ParamInfo {
+    static constexpr auto firstParam = FirstParameter;
+    static constexpr auto lastParam  = LastParameter;
+    static constexpr auto count      = ParamUniverse.size();
+
+    static constexpr auto begin() noexcept { return ParamUniverse.begin(); }
+    static constexpr auto end() noexcept { return ParamUniverse.end(); }
+  };
+
+  constexpr pType paramIndex(OVFParameter parameter)
+  {
+    const auto descriptor = std::ranges::find(
+        ParamTable, parameter, &ParamDescriptor::parameter);
+
+    return descriptor != ParamTable.end()
+      ? descriptor->type
+      : pType::Other;
+  }
+
+  constexpr std::string_view ParameterName(OVFParameter parameter)
+  {
+    const auto descriptor = std::ranges::find(
+        ParamTable, parameter, &ParamDescriptor::parameter);
+
+    return descriptor != ParamTable.end()
+      ? descriptor->description
+      : std::string_view{"Undefined token"};
+  }
+
+  constexpr std::span<const OVFParameter> parametersOfType(pType type)
+  {
+    switch (type) {
+      case pType::Float:
+        return FPParamList;
+      case pType::Uint:
+        return UINTParamList;
+      case pType::String:
+        return StringParamList;
+      case pType::Other:
+        return OtherParamList;
+    }
+
+    std::unreachable();
+  }
+
+} // namespace VField
