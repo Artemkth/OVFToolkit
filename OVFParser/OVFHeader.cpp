@@ -22,7 +22,7 @@ namespace VField{
             constexpr auto valParamList = DictionaryHelpers::makeUnion(FPParamList, UINTParamList, StringParamList);
             for(const auto& x: valParamList)
             {
-                switch(paramIndex(x))
+                switch(paramType(x))
                 {
                     case(pType::Uint):
                         pmap.emplace(x, std::optional<associatedType_t<pType::Uint>>{});
@@ -61,7 +61,7 @@ namespace VField{
         {
             meshType.reset();
             for(auto& x: ParameterFields)
-                switch(paramIndex(x.first))
+                switch(paramType(x.first))
                 {
                     case(pType::Uint):
                         std::get<std::optional<associatedType_t<pType::Uint>>>(x.second).reset();
@@ -156,7 +156,7 @@ namespace VField{
     }
     //parameter type checker, courtesy of constexpr magic in the dictionary
     pType OVFHeader::paramType ( OVFParameter p) noexcept
-    { return paramIndex(p); }
+    { return VField::paramType(p); }
     //setters
     void OVFHeader::set(OVFParameter param, const associatedType_t<pType::String>& val)
     {
@@ -167,7 +167,7 @@ namespace VField{
     }
     void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Uint>& val)
     {
-        if(paramIndex(param) == pType::Float)
+        if(paramType(param) == pType::Float)
             set(param, static_cast<associatedType_t<pType::Float>>(val));
         std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[param]) = val;
         data->isChecked = false;
@@ -180,7 +180,7 @@ namespace VField{
     //check if a given field is set
     bool OVFHeader::isSet(OVFParameter refP) const noexcept
     {
-        switch(paramIndex(refP))
+        switch(paramType(refP))
         {
             case(pType::String):
                 return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[refP]) != std::nullopt;
@@ -228,7 +228,7 @@ namespace VField{
     //unset a parameter
     void OVFHeader::reset(OVFParameter p) noexcept
     {
-        switch(paramIndex(p))
+        switch(paramType(p))
         {
             case(pType::Float):
                 std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).reset();

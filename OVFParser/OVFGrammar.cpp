@@ -87,7 +87,7 @@ namespace VField{
         for(const auto& x: problemParams)
         {
             errMessage += "\n\t";
-            errMessage += ParameterName(x);
+            errMessage += paramName(x);
         }
         return {false, errMessage, problemParams};
     }
@@ -113,7 +113,7 @@ namespace VField{
         for(const auto& x: faultyStrings)
         {
             log += "\n";
-            log += ParameterName(x);
+            log += paramName(x);
         }
         return { false, log, faultyStrings };
     }
@@ -141,7 +141,7 @@ namespace VField{
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(ParameterName(x)) + "' = " +
+                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(paramName(x)) + "' = " +
                         std::to_string(val) + "\n");
                     }
                 }
@@ -156,7 +156,7 @@ namespace VField{
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(ParameterName(x)) + "' = " +
+                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(paramName(x)) + "' = " +
                         std::to_string(val) + "\n");
                     }
                 }
@@ -182,21 +182,21 @@ namespace VField{
             //check if required params are positively defined
             for(const auto& x: posDefined)
             {
-                if(paramIndex(x) == pType::Uint)
+                if(paramType(x) == pType::Uint)
                 {
                     auto val = ref.getUint(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + std::string(ParameterName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::string("The value '") + std::string(paramName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
                         problemParams.push_back(x);
                     }
                 }
-                else if(paramIndex(x) == pType::Float)
+                else if(paramType(x) == pType::Float)
                 {
                     auto val = ref.getFloat(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + std::string(ParameterName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::string("The value '") + std::string(paramName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
                         problemParams.push_back(x);
                     }
                 }
@@ -249,7 +249,7 @@ namespace VField{
             for(const auto& x: problemParams)
             {
                 errMessage += "\n\t";
-                errMessage += ParameterName(x) ;
+                errMessage += paramName(x) ;
             }
             return {false, errMessage, problemParams};
         },
@@ -311,7 +311,7 @@ namespace VField{
             for(const auto& x: missingList)
             {
                 errMessage += "\n\t";
-                errMessage += ParameterName(x) ;
+                errMessage += paramName(x) ;
             }
             return {false, errMessage, missingList};
         },
@@ -788,7 +788,7 @@ namespace VField{
         
     bool VField::DeduceField(const OVFParameter& p, bool UseDefault)
     {        
-        switch(paramIndex(p))
+        switch(paramType(p))
         {
             case(pType::Float):
             {
@@ -902,7 +902,7 @@ namespace VField{
         {
             if (!acc.empty())
                 acc+=", ";
-            acc += ParameterName(x);
+            acc += paramName(x);
         }
         return acc;
     }

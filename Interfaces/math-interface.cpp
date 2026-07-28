@@ -312,11 +312,11 @@ constexpr bool putVal(const VField::OVFHeader& head)
     bool result{WSPutFunction(stdlink, "Rule", 2) != 0};
     result = result && PutValue(ParamKeys.at(p));
 
-    if constexpr(paramIndex(p) == VField::pType::Uint)
+    if constexpr(paramType(p) == VField::pType::Uint)
         return result && PutValue(head.getUint(p));
-    else if constexpr(paramIndex(p) == VField::pType::Float)
+    else if constexpr(paramType(p) == VField::pType::Float)
         return result && PutValue(head.getFloat(p));
-    else if constexpr(paramIndex(p) == VField::pType::String)
+    else if constexpr(paramType(p) == VField::pType::String)
         return result && PutValue(head.getString(p));
     //if everything else fails
     static_assert(true, "Wrong, unhandled type of parameter!");
@@ -994,7 +994,7 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
 //set a field p with a math_atom
 void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& atom)
 {
-    switch(paramIndex(p))
+    switch(paramType(p))
     {
         case VField::pType::String:
             if(atom.index() != 2)

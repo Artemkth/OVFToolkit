@@ -1,23 +1,33 @@
 #pragma once
-// C++23 rewrite of OVFDictionary.h.
+// C++23 metaprogramming utilities for OVF parameter metadata.
+//
+// Provides compile-time access to the parameter sets defined by the OVF
+// standard, together with helpers for classifying and organising them.
 //
 // Design:
-//   * ParamTable is the single source of truth.
-//   * Category arrays, names, and lookup functions are derived from ParamTable.
+//   * SourceParamTable is the single human-maintained source of truth.
+//   * ParamTable is generated in OVFParameter ordinal order for O(1) lookup.
+//   * Category arrays, names, tokens, and lookup functions are derived from
+//     ParamTable.
 //   * Compile-time checks guarantee uniqueness and complete enum coverage.
 //   * The compiler-signature enum probe is isolated in one helper and can later
-//     be replaced by C++26 reflection without changing the public interface.
+//     be replaced by standard reflection without changing the public interface.
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <iterator>
+#include <limits>
 #include <ranges>
-#include <span>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <cassert>
+#include <variant>
+#include <optional>
 
 #include "OVFHeader.h"
+#include "OVFVersion.h"
 
 //namespace with utilities for pre-compile computation
 namespace DictionaryHelpers{
@@ -162,14 +172,126 @@ namespace DictionaryHelpers{
   // Parameter metadata
   // -----------------------------------------------------------------------------
 
+  using TokenResolver_t = std::string_view (*)(VField::OVFVersion);
+  /**
+    * @brief Description of one recognised OVF header parameter.
+    *
+    * A token is either absent, fixed for every OVF version, or resolved from
+    * the requested OVF version by a constexpr function.
+    */
   struct ParamDescriptor {
+    using Token_t = std::variant<std::monostate, std::string_view, TokenResolver_t>;
+
     Parameter parameter;
     ParameterType type;
     std::string_view description;
+    Token_t token{};
 
     friend constexpr bool operator==(const ParamDescriptor&, const ParamDescriptor&) = default;
   };
 
+  //special resolved token for value units renamed between ovf1 and ovf2
+  //ovf0 doesn't require anything, and all metadata is options, so might as well be OVF1 syntax
+  constexpr auto valueUnitToken(VField::OVFVersion version) noexcept -> std::string_view 
+  { return version == VField::OVFVersion::OVF2 ? "valueunits" : "valueunit"; }
+
+  inline constexpr std::array SourceParamTable{
+      ParamDescriptor{Parameter::Open,          ParameterType::Other,  "Opening marker"},
+      ParamDescriptor{Parameter::Close,         ParameterType::Other,  "Closing marker"},
+      ParamDescriptor{Parameter::Segcnt,        ParameterType::Other,  "Segment count marker", "Segment count"},
+      ParamDescriptor{Parameter::Mtype,         ParameterType::Other,  "Mesh type", "Meshtype"},
+      ParamDescriptor{Parameter::Empty,         ParameterType::Other,  "Empty line"},
+      ParamDescriptor{Parameter::Comment,       ParameterType::Other,  "Comment"},
+      ParamDescriptor{Parameter::Unknown,       ParameterType::Other,  "Unknown token"},
+      ParamDescriptor{Parameter::Invalid,       ParameterType::Other,  "Invalid token"},
+
+      ParamDescriptor{Parameter::VersionString, ParameterType::String, "Version string"},
+      ParamDescriptor{Parameter::Title,         ParameterType::String, "Data title", "Title"},
+      ParamDescriptor{Parameter::Desc,          ParameterType::String, "Description string", "Desc"},
+      ParamDescriptor{Parameter::Munit,         ParameterType::String, "Grid mesh units", "meshunit"},
+      ParamDescriptor{Parameter::Vunit,         ParameterType::String, "Vector field value units", valueUnitToken},
+      ParamDescriptor{Parameter::Vlabels,       ParameterType::String, "Vector field value labels", "valuelabels"},
+      ParamDescriptor{Parameter::Bound,         ParameterType::String, "Bounding frame vertices", "boundary"},
+
+      ParamDescriptor{Parameter::Pcount,        ParameterType::Uint,   "File point count", "pointcount"},
+      ParamDescriptor{Parameter::Vdim,          ParameterType::Uint,   "Vector field dimension", "valuedim"},
+      ParamDescriptor{Parameter::Xnodes,        ParameterType::Uint,   "Mesh x nodes", "xnodes"},
+      ParamDescriptor{Parameter::Ynodes,        ParameterType::Uint,   "Mesh y nodes", "ynodes"},
+      ParamDescriptor{Parameter::Znodes,        ParameterType::Uint,   "Mesh z nodes", "znodes"},
+
+      ParamDescriptor{Parameter::Vmult,         ParameterType::Float,  "Vector field value multiplier", "valuemultiplier"},
+      ParamDescriptor{Parameter::Vmin,          ParameterType::Float,  "Minimal vector field absolute value", "ValueRangeMinMax"},
+      ParamDescriptor{Parameter::Vmax,          ParameterType::Float,  "Maximal vector field absolute value", "ValueRangeMaxMag"},
+      ParamDescriptor{Parameter::Xmin,          ParameterType::Float,  "Minimal mesh x value", "xmin"},
+      ParamDescriptor{Parameter::Xmax,          ParameterType::Float,  "Maximal mesh x value", "xmax"},
+      ParamDescriptor{Parameter::Ymin,          ParameterType::Float,  "Minimal mesh y value", "ymin"},
+      ParamDescriptor{Parameter::Ymax,          ParameterType::Float,  "Maximal mesh y value", "ymax"},
+      ParamDescriptor{Parameter::Zmin,          ParameterType::Float,  "Minimal mesh z value", "zmin"},
+      ParamDescriptor{Parameter::Zmax,          ParameterType::Float,  "Maximal mesh z value", "zmax"},
+      ParamDescriptor{Parameter::Xbase,         ParameterType::Float,  "Mesh initial x value", "xbase"},
+      ParamDescriptor{Parameter::Ybase,         ParameterType::Float,  "Mesh initial y value", "ybase"},
+      ParamDescriptor{Parameter::Zbase,         ParameterType::Float,  "Mesh initial z value", "zbase"},
+      ParamDescriptor{Parameter::Xstep,         ParameterType::Float,  "Mesh x step", "xstepsize"},
+      ParamDescriptor{Parameter::Ystep,         ParameterType::Float,  "Mesh y step", "ystepsize"},
+      ParamDescriptor{Parameter::Zstep,         ParameterType::Float,  "Mesh z step", "zstepsize"},
+   };
+
+  consteval bool sourceParametersAreUnique()
+   {
+      for (auto it{SourceParamTable.begin()}; it != SourceParamTable.end(); ++it) 
+      {
+         if (std::ranges::find(
+                std::next(it),
+                SourceParamTable.end(),
+                it->parameter,
+                &ParamDescriptor::parameter
+             ) != SourceParamTable.end()) 
+            return false;
+      }
+      return true;
+   }
+
+   template <std::size_t N>
+   consteval auto orderTable( const std::array<Parameter, N>& universe )
+   {
+      std::array<ParamDescriptor, N> result{};
+
+      for (std::size_t i{}; i < N; ++i) 
+      {
+         const auto source{std::ranges::find(
+            SourceParamTable,
+            universe[i],
+            &ParamDescriptor::parameter
+         )};
+
+         if (source != SourceParamTable.end()) {
+            result[i] = *source;
+         }
+      }
+
+      return result;
+   }
+
+   template <ParameterType Type, const auto& Table>
+   consteval auto parametersOfType()
+   {
+      constexpr auto count{static_cast<std::size_t>(std::ranges::count(
+         Table,
+         Type,
+         &ParamDescriptor::type
+      ))};
+
+      std::array<VField::OVFParameter, count> result{};
+      auto out{result.begin()};
+
+      for (const auto& descriptor : Table) {
+         if (descriptor.type == Type) {
+            *out++ = descriptor.parameter;
+         }
+      }
+
+      return result;
+   }
 }
 
 namespace VField {
@@ -178,154 +300,150 @@ namespace VField {
 
   // Keep the range declaration explicit for the C++23 implementation.
   // C++26 reflection can replace DictionaryHelpers::enumValues() later.
-  inline constexpr OVFParameter FirstParameter = OVFParameter::VersionString;
-  inline constexpr OVFParameter LastParameter  = OVFParameter::Invalid;
+  inline constexpr auto FirstParameter { OVFParameter::VersionString };
+  inline constexpr auto LastParameter  { OVFParameter::Invalid };
+  //these values are validated already by the fact that they addressed through the enum namespace
+  //test the compiler compatibility for static checks anyway
+  inline constexpr bool _LastIsMax { 
+    static_cast<DictionaryHelpers::UnderlyingType>(LastParameter) == std::numeric_limits<DictionaryHelpers::UnderlyingType>::max()};
+  inline constexpr bool _FirstIsMin { 
+    static_cast<DictionaryHelpers::UnderlyingType>(FirstParameter) == std::numeric_limits<DictionaryHelpers::UnderlyingType>::min()};
+
+  template<bool atMin = _FirstIsMin>
+  consteval bool _noParamBeforeFirst()
+  {
+    if constexpr(atMin)
+    {
+      return true;
+    }
+    else
+    {
+      constexpr auto before { static_cast<OVFParameter>(static_cast<DictionaryHelpers::UnderlyingType>(FirstParameter)-1) };
+      return !DictionaryHelpers::IsDefined<before>();
+    }
+  }
+  template<bool atMax = _LastIsMax>
+  consteval bool _noParamAfterLast()
+  {
+    if constexpr(atMax)
+    {
+      return true;
+    }
+    else
+    {
+      constexpr auto after { static_cast<OVFParameter>(static_cast<DictionaryHelpers::UnderlyingType>(LastParameter)+1) };
+      return !DictionaryHelpers::IsDefined<after>();
+    }
+  }
+
+  static_assert( 
+      DictionaryHelpers::IsDefined<FirstParameter>() &&
+      DictionaryHelpers::IsDefined<LastParameter>() &&
+      _noParamAfterLast()&&_noParamBeforeFirst(),
+      "The Compiler didn't appreciate the hack, please fix, or wait for reflection!");
 
   inline constexpr auto ParamUniverse { DictionaryHelpers::enumValues<FirstParameter, LastParameter>() };
 
-  // Single source of truth for parameter classification and human-readable names.
-  inline constexpr std::array ParamTable{
-    ParamDescriptor{OVFParameter::Open,          pType::Other,  "Opening marker"},
-      ParamDescriptor{OVFParameter::Close,         pType::Other,  "Closing marker"},
-      ParamDescriptor{OVFParameter::Segcnt,        pType::Other,  "Segment count marker"},
-      ParamDescriptor{OVFParameter::Mtype,         pType::Other,  "Mesh type"},
-      ParamDescriptor{OVFParameter::Empty,         pType::Other,  "Empty line"},
-      ParamDescriptor{OVFParameter::Comment,       pType::Other,  "Comment"},
-      ParamDescriptor{OVFParameter::Unknown,       pType::Other,  "Unknown token"},
-      ParamDescriptor{OVFParameter::Invalid,       pType::Other,  "Invalid token"},
+  /**
+   * @brief OVF parameter metadata ordered exactly like ParamUniverse.
+   *
+   * The ordinal ordering permits O(1) descriptor lookup by subtracting
+   * FirstParameter from the parameter's underlying integer value.
+   */
+  inline constexpr auto ParamTable{ DictionaryHelpers::orderTable(ParamUniverse) };
 
-      ParamDescriptor{OVFParameter::VersionString, pType::String, "Version string"},
-      ParamDescriptor{OVFParameter::Title,         pType::String, "Data title"},
-      ParamDescriptor{OVFParameter::Desc,          pType::String, "Description string"},
-      ParamDescriptor{OVFParameter::Munit,         pType::String, "Grid mesh units"},
-      ParamDescriptor{OVFParameter::Vunit,         pType::String, "Vector field value units"},
-      ParamDescriptor{OVFParameter::Vlabels,       pType::String, "Vector field value labels"},
-      ParamDescriptor{OVFParameter::Bound,         pType::String, "Bounding frame vertices"},
+  static_assert(
+      DictionaryHelpers::sourceParametersAreUnique(),
+      "SourceParamTable contains a duplicate OVFParameter");
 
-      ParamDescriptor{OVFParameter::Pcount,        pType::Uint,   "File point count"},
-      ParamDescriptor{OVFParameter::Vdim,          pType::Uint,   "Vector field dimension"},
-      ParamDescriptor{OVFParameter::Xnodes,        pType::Uint,   "Mesh x nodes"},
-      ParamDescriptor{OVFParameter::Ynodes,        pType::Uint,   "Mesh y nodes"},
-      ParamDescriptor{OVFParameter::Znodes,        pType::Uint,   "Mesh z nodes"},
+  static_assert(
+      DictionaryHelpers::SourceParamTable.size() == ParamUniverse.size()&&
+      std::ranges::equal(
+        ParamTable,
+        ParamUniverse,
+        {},
+        &ParamDescriptor::parameter,
+        std::identity{}),
+      "ParamTable must repeat ParamUniverse in the same order");
 
-      ParamDescriptor{OVFParameter::Vmult,         pType::Float,  "Vector field value multiplier"},
-      ParamDescriptor{OVFParameter::Vmin,          pType::Float,  "Minimal vector field absolute value"},
-      ParamDescriptor{OVFParameter::Vmax,          pType::Float,  "Maximal vector field absolute value"},
-      ParamDescriptor{OVFParameter::Xmin,          pType::Float,  "Minimal mesh x value"},
-      ParamDescriptor{OVFParameter::Xmax,          pType::Float,  "Maximal mesh x value"},
-      ParamDescriptor{OVFParameter::Ymin,          pType::Float,  "Minimal mesh y value"},
-      ParamDescriptor{OVFParameter::Ymax,          pType::Float,  "Maximal mesh y value"},
-      ParamDescriptor{OVFParameter::Zmin,          pType::Float,  "Minimal mesh z value"},
-      ParamDescriptor{OVFParameter::Zmax,          pType::Float,  "Maximal mesh z value"},
-      ParamDescriptor{OVFParameter::Xbase,         pType::Float,  "Mesh initial x value"},
-      ParamDescriptor{OVFParameter::Ybase,         pType::Float,  "Mesh initial y value"},
-      ParamDescriptor{OVFParameter::Zbase,         pType::Float,  "Mesh initial z value"},
-      ParamDescriptor{OVFParameter::Xstep,         pType::Float,  "Mesh x step"},
-      ParamDescriptor{OVFParameter::Ystep,         pType::Float,  "Mesh y step"},
-      ParamDescriptor{OVFParameter::Zstep,         pType::Float,  "Mesh z step"},
-  };
-}
-
-namespace DictionaryHelpers {
-
-  template <VField::pType Type>
-    consteval auto parametersOfType()
+  /**
+   * @brief Return the metadata descriptor for an OVF parameter.
+   *
+   * @pre parameter is a declared OVFParameter enumerator.
+   * @param parameter Parameter to look up.
+   * @return Constant reference to its descriptor.
+   *
+   * @terminate If parameter is not a declared enumerator.
+   */
+  [[nodiscard]]
+    constexpr const auto& parameterDescriptor(OVFParameter parameter) noexcept
     {
-      constexpr auto count = static_cast<std::size_t>(
-          std::ranges::count(VField::ParamTable, Type, &ParamDescriptor::type));
+      const auto beg { static_cast<DictionaryHelpers::UnderlyingType> (FirstParameter) };
+      const auto end { static_cast<DictionaryHelpers::UnderlyingType> (LastParameter) };
+      const auto parmRep { static_cast<DictionaryHelpers::UnderlyingType> (parameter) };
 
-      std::array<VField::OVFParameter, count> result{};
-      auto out = result.begin();
-
-      for (const auto& descriptor : VField::ParamTable) {
-        if (descriptor.type == Type) {
-          *out++ = descriptor.parameter;
-        }
-      }
-
-      return result;
+      //OOB check for poor programming, would need to static cast to OVFParameter enum dangerously to trigger
+      //earlier static assert insures that every named enum member is in the table
+      assert( end >= parmRep && parmRep >= beg );
+      //in release this will throw and terminate immediately instead
+      return ParamTable.at( static_cast<std::size_t>(parmRep - beg) );
     }
 
-  consteval bool tableParametersAreUnique()
-  {
-    for (auto it = VField::ParamTable.begin(); it != VField::ParamTable.end(); ++it) {
-      if (std::ranges::find(std::next(it), VField::ParamTable.end(),
-            it->parameter, &ParamDescriptor::parameter)
-          != VField::ParamTable.end()) {
-        return false;
-      }
+  /**
+   * @brief Return the storage category of an OVF parameter.
+   *
+   * @param parameter Parameter to classify.
+   * @return Parameter storage category
+   */
+  [[nodiscard]]
+    constexpr auto paramType(OVFParameter parameter) noexcept
+    { return parameterDescriptor(parameter).type; }
+
+  /**
+   * @brief Return a human-readable description of an OVF parameter.
+   *
+   * @param parameter Parameter to describe.
+   * @return Static human-readable description
+   */
+  [[nodiscard]]
+    constexpr auto paramName(OVFParameter parameter) noexcept
+    { return parameterDescriptor(parameter).description; }
+
+  /**
+   * @brief Return the serialized header token for a parameter and OVF version.
+   *
+   * Fixed tokens are returned directly. Version-dependent tokens are resolved
+   * using the supplied OVF version. Service parameters without a serialized
+   * token return std::nullopt.
+   *
+   * @param parameter Parameter whose file token is requested.
+   * @param version OVF version for resolving version-dependent spellings.
+   * @return Token view, or std::nullopt when the parameter has no file token.
+   */
+  [[nodiscard]]
+    constexpr auto paramToken(OVFParameter parameter, OVFVersion version) noexcept -> std::optional<std::string_view> 
+    {
+      return std::visit(
+          [version](const auto& token) -> std::optional<std::string_view> {
+          using TokenType = std::remove_cvref_t<decltype(token)>;
+          if constexpr (std::is_same_v<TokenType, std::monostate>) {
+          return std::nullopt;
+          }
+          else if constexpr (std::is_same_v<TokenType, std::string_view>) {
+          return token;
+          }
+          else
+          return token(version);
+          },
+          parameterDescriptor(parameter).token
+          );
     }
-    return true;
-  }
+  template<pType Type>
+    inline constexpr auto PTypeList{ DictionaryHelpers::parametersOfType<Type, ParamTable>() };
 
-  consteval bool tableCoversUniverse()
-  {
-    return VField::ParamTable.size() == VField::ParamUniverse.size()
-      && std::ranges::all_of(VField::ParamUniverse, [](VField::OVFParameter parameter) {
-          return std::ranges::contains(
-              VField::ParamTable, parameter, &ParamDescriptor::parameter);
-          });
-  }
-
-} // namespace DictionaryHelpers
-
-
-namespace VField {
-
-  inline constexpr auto FPParamList     = DictionaryHelpers::parametersOfType<pType::Float>();
-  inline constexpr auto UINTParamList   = DictionaryHelpers::parametersOfType<pType::Uint>();
-  inline constexpr auto StringParamList = DictionaryHelpers::parametersOfType<pType::String>();
-  inline constexpr auto OtherParamList  = DictionaryHelpers::parametersOfType<pType::Other>();
-
-  static_assert(DictionaryHelpers::tableParametersAreUnique(),
-      "ParamTable contains a duplicate OVFParameter");
-  static_assert(DictionaryHelpers::tableCoversUniverse(),
-      "ParamTable must describe every OVFParameter exactly once");
-
-  // Compatibility information formerly supplied by DictionaryHelpers::Helper.
-  struct ParamInfo {
-    static constexpr auto firstParam = FirstParameter;
-    static constexpr auto lastParam  = LastParameter;
-    static constexpr auto count      = ParamUniverse.size();
-
-    static constexpr auto begin() noexcept { return ParamUniverse.begin(); }
-    static constexpr auto end() noexcept { return ParamUniverse.end(); }
-  };
-
-  constexpr pType paramIndex(OVFParameter parameter)
-  {
-    const auto descriptor = std::ranges::find(
-        ParamTable, parameter, &ParamDescriptor::parameter);
-
-    return descriptor != ParamTable.end()
-      ? descriptor->type
-      : pType::Other;
-  }
-
-  constexpr std::string_view ParameterName(OVFParameter parameter)
-  {
-    const auto descriptor = std::ranges::find(
-        ParamTable, parameter, &ParamDescriptor::parameter);
-
-    return descriptor != ParamTable.end()
-      ? descriptor->description
-      : std::string_view{"Undefined token"};
-  }
-
-  constexpr std::span<const OVFParameter> parametersOfType(pType type)
-  {
-    switch (type) {
-      case pType::Float:
-        return FPParamList;
-      case pType::Uint:
-        return UINTParamList;
-      case pType::String:
-        return StringParamList;
-      case pType::Other:
-        return OtherParamList;
-    }
-
-    std::unreachable();
-  }
+  inline constexpr auto& FPParamList{ PTypeList<pType::Float> };
+  inline constexpr auto& UINTParamList{ PTypeList<pType::Uint> };
+  inline constexpr auto& StringParamList{ PTypeList<pType::String> };
+  inline constexpr auto& OtherParamList{ PTypeList<pType::Other> };
 
 } // namespace VField

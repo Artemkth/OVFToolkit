@@ -165,7 +165,7 @@ namespace VField
         }
         //else
         out << "# " << getName(ver, p) << ": ";
-        switch(paramIndex(p))
+        switch(paramType(p))
         {
             case(pType::Uint):
                 out << header.getUint(p);
@@ -213,7 +213,7 @@ namespace VField
                             {
                                 if(!log.empty())
                                     log += "\n";
-                                log += (std::string)"WriteHeader: required field \"" + std::string(ParameterName(p)) + "\n was not found!";
+                                log += (std::string)"WriteHeader: required field \"" + std::string(paramName(p)) + "\n was not found!";
                                 continue;
                             }
                             if(optional && !header.isSet(p)) //falling through if it is just an option
