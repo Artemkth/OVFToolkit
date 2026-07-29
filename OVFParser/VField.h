@@ -100,15 +100,15 @@ namespace VField{
             
             //data access methods
             //setting data to whatever, clears previous data 
-            void insertData(float*, std::size_t) noexcept;
-            void insertData(double*, std::size_t) noexcept;
+            template<typename T>
+            void insertData(T*, std::size_t) noexcept;
             //same but with a copy, indicated by pointer being constant
             //throw when out of memory
-            void setData(const float*, std::size_t);
-            void setData(const double*, std::size_t);
+            template<typename T>
+            void setData(const T*, std::size_t);
             //setting specific elements, bool indicates success
-            bool setPoint(std::size_t, const float&);
-            bool setPoint(std::size_t, const double&);
+            template<typename T>
+            bool setPoint(std::size_t, const T&);
             //get data, throw if trying to get wrong type
             template <typename T>
             const T* getData() const;
@@ -272,5 +272,8 @@ namespace VField{
     //instantiation of conversions
     template<> OVFPARSER_EXPORT void VField::convert<float>();
     template<> OVFPARSER_EXPORT void VField::convert<double>();
+    //instantiation of data setters
+    template<> OVFPARSER_EXPORT void VField::insertData<float>(float*, std::size_t) noexcept;
+    template<> OVFPARSER_EXPORT void VField::insertData<double>(double*, std::size_t) noexcept;
 }
 

@@ -2,13 +2,13 @@
 #include <memory>
 #include<type_traits>
 #include<limits>
+#include<cassert>
 #include<cmath>
 #include<utility>
 #if defined(_MSC_VER)
 #include<stdexcept> //workaround for missing logic_error
 #endif
 #include"VField.h"
-#include<optional>
 #include<variant>
 
 namespace VField{
@@ -22,7 +22,6 @@ namespace VField{
         //if copy size is 0 cleanup destination and set pointer to nullptr
         if(size == 0)
         {
-            delete[] *dest;
             *dest = nullptr;
             return;
         }
@@ -30,9 +29,7 @@ namespace VField{
         T* buffer = new T[size];
         std::copy_n(data, size, buffer);
 
-        std::swap(*dest, buffer);
-        //delete old data now stored in buffer
-        delete[] buffer;
+        *dest = buffer;
     }
 
     template<typename T, typename U>
@@ -58,44 +55,50 @@ namespace VField{
         //data size
         std::size_t storSize {0};
         //data storage
-        float* farray {nullptr};
-        double* darray {nullptr};
+        std::variant<
+          std::monostate,
+          std::unique_ptr<float[]>, 
+          std::unique_ptr<double[]> > array{};
         //purgin the data
         inline void clear()
         {
-            delete[] farray;
-            farray = nullptr;
-            delete[] darray;
-            darray = nullptr;
-
-            storSize = 0;
+          //check that we free when storSize tracks the array, if it isn't it needs investigation
+          assert(std::holds_alternative<std::monostate>(array) == (storSize == 0) );
+          array.emplace<std::monostate>();
+          storSize = 0;
         }
         //is there some data?
-        inline bool isEmpty() const
-        {
-            return farray == nullptr && darray == nullptr;
-        }
+        [[nodiscard]]
+          bool isEmpty() const noexcept
+          { return std::holds_alternative<std::monostate>(array); }
         //c-tors
-        constexpr StorageArray() = default; //fine with initializing everything to nullptr
+        constexpr StorageArray() = default; //should work fine with monostate :)
         StorageArray(const StorageArray& ref):StorageArray()
         {
             storSize = ref.storSize;
-            //farray and darray are set to nullptr by default constructor
-            //weekly exception safe, if needed add unique_ptr code later
-            if( ref.farray != nullptr)
-                emplace_copy(&farray, ref.farray, ref.storSize);
-            if( ref.darray != nullptr)
-                emplace_copy(&darray, ref.darray, ref.storSize);
+            std::visit(
+                [this,&ref](const auto& token)
+                {
+                  using TokenType = std::remove_cvref_t<decltype(token)>;
+                  if constexpr(!std::is_same_v<TokenType, std::monostate>)
+                    this->array.emplace<TokenType> ( ref.makeCopy<typename TokenType::element_type>() );
+                }, ref.array);
         }
         StorageArray& operator=(const StorageArray& ref)
         {
-            this->clear();
+            //for smartasses assigning class to itself
+            if (&ref == this)
+              return *this;
 
-            if( ref.farray != nullptr)
-                emplace_copy(&farray, ref.farray, ref.storSize);
-            if( ref.darray != nullptr)
-                emplace_copy(&darray, ref.darray, ref.storSize);
+            this->clear();
             storSize = ref.storSize;
+            std::visit(
+                [this,&ref](const auto& token)
+                {
+                  using TokenType = std::remove_cvref_t<decltype(token)>;
+                  if constexpr(!std::is_same_v<TokenType, std::monostate>)
+                    this->array.emplace<TokenType> ( ref.makeCopy<typename TokenType::element_type>() );
+                }, ref.array);
 
             return *this;
         }
@@ -103,136 +106,137 @@ namespace VField{
         template<typename T>
         explicit StorageArray(T* data, const std::size_t& length): StorageArray()
         {
-            storSize = length;
             static_assert(std::is_floating_point<T>::value, "StorageArray: constructed from a non-floating point argument!");
             if (data == nullptr)
                 return;
+            //no trolling
+            storSize = length;
             
             //default assume it is 'double' value, casting to double
             if ( storSize != 0 )
             {
-                if constexpr (std::is_same<double, T>::value)
-                    darray = data;
-                else if constexpr (std::is_same<float, T>::value)
-                    farray = data;
+                if constexpr (std::is_same_v<double, T> || std::is_same_v<float, T>)
+                  array.emplace<std::unique_ptr<T[]>>( data );
                 else
                 {
                     //else convert data to 'double' and nuke it!
-                    emplace_copy(&darray, data, length);
+                    double *buffer {nullptr};
+                    emplace_copy(&buffer, data, length);
+                    array.emplace<std::unique_ptr<double[]>>(buffer);
                     delete[] data;
                 }
-            }
+            } else delete[] data; //omnomnom
         }
 
-        StorageArray(StorageArray&& ref) noexcept
-          : storSize{std::exchange(ref.storSize, 0)},
-          farray{std::exchange(ref.farray, nullptr)},
-          darray{std::exchange(ref.darray, nullptr)}
-        {}
+        StorageArray(StorageArray&& ref) noexcept = default;
 
-        StorageArray& operator=(StorageArray&& ref) noexcept
-        {
-          if (this == &ref)
-            return *this;
-
-          clear();
-
-          storSize = std::exchange(ref.storSize, 0);
-          farray   = std::exchange(ref.farray, nullptr);
-          darray   = std::exchange(ref.darray, nullptr);
-
-          return *this;
-        }
-
+        StorageArray& operator=(StorageArray&& ref) noexcept = default;
         //and comparison for data
         bool operator==(const StorageArray& ref) const
         {
-            //first check if either of containers are empty, 
-            //return true if both are empty
-            if(isEmpty() || ref.isEmpty())
-                return isEmpty() && ref.isEmpty();
-            if(storSize != ref.storSize)
-                return false;
+            //begin with trivial checks
+            if (storSize != ref.storSize )
+              return false;
+            //if the same data array is stored, no need for expensive check
+            //same if both are empty
+            if (array == ref.array || storSize == 0)
+            {
+              assert( isEmpty() && ref.isEmpty() );
+              return true;
+            }
+            
             //else by-value comparison needs to be done
             //TODO: try to template following out
-            if(farray != nullptr)
-            {
-                if(ref.farray != nullptr)
-                    return cmpFloatArr(farray, ref.farray, storSize);
-                else
-                    return cmpFloatArr(farray, ref.darray, storSize);
-            }
-            else
-            {
-                if(ref.farray != nullptr)
-                    return cmpFloatArr(darray, ref.farray, storSize);
-                else
-                    return cmpFloatArr(darray, ref.darray, storSize);
-            }
+            return std::visit(
+                [this, &ref](const auto& arr1, const auto& arr2) -> bool
+                {
+                  using TArr1 = std::remove_cvref_t<decltype(arr1)>;
+                  using TArr2 = std::remove_cvref_t<decltype(arr2)>;
+                  if constexpr (std::is_same_v<TArr1,std::monostate> || std::is_same_v<TArr2, std::monostate>)
+                  {
+                    //only way one ends up here is if storSize is unsynchronized from array state
+                    assert(ref.storSize == 0 && this->storSize ==0);
+                    return false;
+                  }
+                  else
+                  {
+                    return cmpFloatArr(arr1.get(), arr2.get(), this->storSize);
+                  }
+                } , array, ref.array );
         }
 
-        ~StorageArray()
-        {
-            clear();
-        }
+        ~StorageArray() = default;
         //also a convert method to swap between representations
-        inline void convert();
+        inline void convert()
+        {
+          std::visit(
+              [this](const auto& token)->void
+              {
+                using TokenType = std::remove_cvref_t<decltype(token)>;
+                if constexpr(!std::is_same_v<TokenType, std::monostate>) 
+                {
+                  if constexpr(std::is_same_v<typename TokenType::element_type, float>)
+                    this->array.emplace<std::unique_ptr<double[]>>( this->makeCopy<double>() );
+                  else if constexpr(std::is_same_v<typename TokenType::element_type, double>)
+                    this->array.emplace<std::unique_ptr<float[]>>( this->makeCopy<float>() );
+                  else
+                    std::unreachable();
+                }
+              }, array );
+        }
 
+        //data copy template
         template<typename T>
-        inline T* makeCopy() const;
+        T* makeCopy() const
+          {
+            static_assert(std::is_floating_point<T>::value, "StorageArray::makeCopy is only compatible with floating point type");
+            if(isEmpty())
+              return nullptr;
+            T* buffer = new T[storSize];
+
+            std::visit(
+                [buffer, this](const auto& token)
+                {
+                  using TokenType = std::remove_cvref_t<decltype(token)>;
+                  if constexpr( !std::is_same_v<TokenType, std::monostate> )
+                    std::copy_n( token.get(), this->storSize, buffer );
+                }, array );
+
+            return buffer;
+          }
     };
 
-    void VField::StorageArray::convert()
-    {
-        //hurray if empty, nothing to do
-        if(isEmpty())
-            return;
-        //else start doing work
-        if(farray != nullptr)
-        {
-            auto buffer = makeCopy<double>();
-
-            *this = std::move(StorageArray(buffer, storSize));    
-        }
-        if(darray != nullptr)
-        {
-            auto buffer = makeCopy<float>();
-
-            *this = std::move(StorageArray(buffer, storSize));
-        }
-    }
     
     //outside conversion
-    template<> void VField::convert<float>()
-    {
-        if(!isDataPresent() || data->farray != nullptr)
-            return;
+    template<typename T>
+      void VField::convert()
+      {
+        static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
+            "instantiation is only supported for float or double!");
+        if( data->isEmpty() || std::holds_alternative<std::unique_ptr<T[]>> (data -> array) )
+          return;
         data->convert();
-    }
-    template<> void VField::convert<double>()
-    {
-        if(!isDataPresent() || data->darray != nullptr)
-            return;
-        data->convert();
-    }
+      }
 
     std::size_t VField::curDataInternalSize() const noexcept
     {
-        if( data -> farray != nullptr)
-            return sizeof(float);
-        if( data -> darray != nullptr)
-            return sizeof(double);
-        return 0;
+      return std::visit(
+          [](const auto& token) ->std::size_t {
+            using TokenType = std::remove_cvref_t<decltype(token)>;
+            if constexpr( std::is_same_v<TokenType, std::monostate> )
+              return 0;
+            else
+              return sizeof(typename TokenType::element_type);
+          }, data->array );
     }
     std::size_t VField::curDataPoints() const noexcept
-    {
-        return data -> storSize;
+    { 
+      assert( (data ->storSize == 0) == data->isEmpty() );
+      return data -> storSize; 
     }
 
     bool VField::isDataPresent() const noexcept
-    {
-        return !( data -> isEmpty() );
-    }
+    { return !( data -> isEmpty() ); }
 
     //ctors
     VField::VField(): data( std::make_unique<StorageArray>() ) {}
@@ -242,82 +246,36 @@ namespace VField{
     VField& VField::operator=(VField&&) noexcept = default;
     
     void VField::clearData() noexcept
-    {
-        data -> clear();
-    }
-    
-    //data copy template
-    template<typename T>
-    T* VField::StorageArray::makeCopy() const
-    {
-        static_assert(std::is_floating_point<T>::value, "StorageArray::makeCopy is only compatible with floating point type");
-        if(isEmpty())
-            return nullptr;
-        T* buffer = new T[storSize];
-        if(farray != nullptr)
-            std::copy_n( farray, storSize, buffer);
-        else if(darray != nullptr)
-            std::copy_n( darray, storSize, buffer);
-        
-        return buffer;
-    }
+    { data -> clear(); }
     
     //data access methods
-    template<>
-    float* VField::getDataCopy<float>() const
-    {
-        if(data -> isEmpty())
-            throw std::logic_error("VField::getData<float>: trying to get data from empty VField");
-        return data -> makeCopy<float>();
-    }
-    template<>
-    double* VField::getDataCopy<double>() const
-    {
-        if(data -> isEmpty())
-            throw std::logic_error("VField::getData<float>: trying to get data from empty VField");
-        return data -> makeCopy<double>();
-    }
+    template<typename T>
+      T* VField::getDataCopy() const
+      {
+        static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
+            "instantiation is only supported for float or double!");
+        return data -> makeCopy<T>(); 
+      }
     
     //and then getting the internal fields
-    template<>
-    const float* VField::getData<float>() const
-    {
-        if(data -> isEmpty())
-            throw std::logic_error("VField::getData<float>: trying to get data from empty VField");
-        if(data -> farray == nullptr)
-            throw std::logic_error("VField::getData<float>: trying to read the data in wrong type");
-        return data -> farray;
-    }
-    template<>
-    const double* VField::getData<double>() const
-    {   
-        if(data -> isEmpty())
-            throw std::logic_error("VField::getData<double>: trying to get data from empty VField");
-        if(data -> darray == nullptr)
-            throw std::logic_error("VField::getData<double>: trying to read the data in wrong type");
-        return data -> darray;
-    }
+    template<typename T>
+      const T* VField::getData() const
+      { 
+        static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
+            "instantiation is only supported for float or double!");
+        return std::get<std::unique_ptr<T[]>>(data->array).get();
+      }
     
     //setters
-    void VField::insertData(float* arr, std::size_t size) noexcept
+    template <typename T>
+    void VField::insertData(T* arr, std::size_t size) noexcept
+    { data.reset(new StorageArray(arr, size) ); }
+    template <typename T>
+    void VField::setData(const T* arr, std::size_t size)
     {
-        *data = std::move(StorageArray(arr, size));
-    }
-    void VField::insertData(double* arr, std::size_t size) noexcept
-    {
-        *data = std::move(StorageArray(arr, size));
-    }
-    void VField::setData(const float* arr, std::size_t size)
-    {
-        auto buffer = new float[size];
+        auto buffer = new T[size];
         std::copy_n( arr, size, buffer);
-        *data = std::move(StorageArray(buffer, size));
-    }
-    void VField::setData(const double* arr, std::size_t size)
-    {
-        auto buffer = new double[size];
-        std::copy_n( arr, size, buffer);
-        *data = std::move(StorageArray(buffer, size));
+        data.reset( new StorageArray(arr, size) );
     }
     
     //point set methods
@@ -329,28 +287,24 @@ namespace VField{
     }
     //here we go
     //look into templating this stuff
-    bool VField::setPoint(std::size_t pos, const float& val)
+    template<typename T>
+    bool VField::setPoint(std::size_t pos, const T& val)
     {
         if( data -> isEmpty() || pos >= data -> storSize )
             return false;
         
-        if( data -> farray != nullptr)
-            conv_assign(data -> farray, pos, val);
-        else if( data -> darray != nullptr)
-            conv_assign(data -> darray, pos, val);
-        return true;
+        std::visit( 
+            [pos, &val](auto& token) -> void
+            {
+              if constexpr( !std::is_same_v<std::remove_reference_t<decltype(token)>, std::monostate> )
+              {
+                static_assert(std::is_convertible_v<T, typename std::remove_reference_t<decltype(token)>::element_type>,
+                    "setter must provide values convertible to float");
+                token.get()[pos] = val;
+              }
+            }, data->array );
     }
-    bool VField::setPoint(std::size_t pos, const double& val)
-    {
-        if( data -> isEmpty() || pos >= data -> storSize )
-            return false;
-        
-        if( data -> farray != nullptr)
-            conv_assign(data -> farray, pos, val);
-        else if( data -> darray != nullptr)
-            conv_assign(data -> darray, pos, val);
-        return true;
-    }
+
     //constructors and such again
     VField::VField(const VField& ref): data( std::make_unique<StorageArray>() ), Header(ref.Header)
     { *data = *ref.data; }
