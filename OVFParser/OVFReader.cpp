@@ -19,10 +19,11 @@ namespace VField{
     //first internal data of OVFReader
     struct VFieldFile::FileData
     {
-        //segment storage
-        //                      field             data begin pos                data size
-        std::vector<std::tuple<VField, std::optional<std::ifstream::pos_type>, std::size_t>>
-            segments{};
+        using PrefetchData = std::pair<std::optional<std::ifstream::pos_type>, std::size_t>;
+
+        //Fields are kept separately so the public interface can expose a contiguous span.
+        std::vector<VField> fields{};
+        std::vector<PrefetchData> prefetch{};
         //and the log storage
         std::string log{""};
 
@@ -42,53 +43,55 @@ namespace VField{
     { return data -> log; }
 
     //housekeeping
-    VFieldFile::VFieldFile() noexcept
-    {data = new FileData();}
-    VFieldFile::~VFieldFile() noexcept
-    {delete data;}
-    VFieldFile::VFieldFile(const VFieldFile& ref) noexcept
+    VFieldFile::VFieldFile(): data(std::make_unique<FileData>()) {}
+    VFieldFile::~VFieldFile() = default;
+    VFieldFile::VFieldFile(const VFieldFile& ref):
+        fPath(ref.fPath), data(std::make_unique<FileData>(*ref.data)) {}
+    VFieldFile& VFieldFile::operator= (const VFieldFile& ref)
     {
-        try{
-            data = new FileData(*ref.data);
-        } catch (const std::exception& e){
-            logMessage((std::string)"Error occured while copying data: " + e.what());
-            return;
-        }
-        fPath = ref.fPath;
-    }
-    VFieldFile& VFieldFile::operator= (const VFieldFile& ref) noexcept
-    {
-        try{
-            auto buf = new FileData(*ref.data);
-            std::swap(data, buf);
-            delete buf;
-        } catch (const std::exception& e){
-            logMessage((std::string)"Error occured while copying data: " + e.what());
+        if (this == &ref)
             return *this;
-        }
-        fPath = ref.fPath;
+
+        auto copy = ref;
+        *this = std::move(copy);
         return *this;
     }
+    VFieldFile::VFieldFile(VFieldFile&&) noexcept = default;
+    VFieldFile& VFieldFile::operator= (VFieldFile&&) noexcept = default;
 
     //access stuff
     std::size_t VFieldFile::cntSegments() const noexcept
-    { return data->segments.size();}
+    { return data->fields.size();}
     //check if some data exists
     bool VFieldFile::isFetched(std::size_t index) const noexcept
     {
-        if(index >= data->segments.size())
+        if(index >= data->fields.size())
             return false;
-        return std::get<0>(data->segments[index]).isDataPresent();
+        return data->fields[index].isDataPresent();
     }
     bool VFieldFile::hasData(std::size_t index) const noexcept
     {
-        if(index >= data->segments.size())
+        if(index >= data->fields.size())
             return false;
-        if( std::get<0>(data->segments[index]).isDataPresent() )
+        if( data->fields[index].isDataPresent() )
             return true;
         //otherwise return if the data was found during prefetch
-        return std::get<1>(data->segments[index]).has_value() &&
-               std::get<2>(data->segments[index]) != 0;
+        return data->prefetch[index].first.has_value() &&
+               data->prefetch[index].second != 0;
+    }
+
+    std::span<VField> VFieldFile::fieldView()
+    {
+        for (std::size_t index = 0; index < cntSegments(); ++index)
+            fetch(index);
+        return data->fields;
+    }
+
+    std::span<const VField> VFieldFile::fieldView() const
+    {
+        for (std::size_t index = 0; index < cntSegments(); ++index)
+            fetch(index);
+        return data->fields;
     }
 
     //translate slice into range specifier
@@ -204,7 +207,8 @@ namespace VField{
             return false;
         }
         //there is hope if we were able to open file, so erase old data
-        data -> segments.clear();
+        data -> fields.clear();
+        data -> prefetch.clear();
         
         //else continue
         associatedType_t<pType::String> version{""};
@@ -317,14 +321,12 @@ namespace VField{
                         logMessage((std::string)"VFieldFile::read: Duplicate segment header on line #" + 
                                 std::to_string(line_cnt));
                     //in either case read and start waiting for data
-                    data -> 
-                        segments.push_back({ VField{version},
-                                             {},
-                                             0u });
+                    data->fields.emplace_back(version);
+                    data->prefetch.emplace_back(std::nullopt, 0u);
                     //rewind back 1 line
                     file.seekg(pos);
                     //and read the header
-                    auto log = readHeader(file, line_cnt, std::get<0>(data -> segments.back()).Header);
+                    auto log = readHeader(file, line_cnt, data->fields.back().Header);
                     if(log != "")
                         logMessage("VFieldFile::read: Errors encountered while reading a Header ending at line #" +
                                 std::to_string(line_cnt) + ":\n" + log);
@@ -338,29 +340,25 @@ namespace VField{
                                 std::to_string(line_cnt) + ", opening a new segment with empty header.");
                         SegmentOpened = true;
                         //open a new segment with empty header
-                        data -> 
-                            segments.push_back({ VField{version},
-                                                 {},
-                                                 0u });
+                        data->fields.emplace_back(version);
+                        data->prefetch.emplace_back(std::nullopt, 0u);
                     }
                     else if(!WaitingForData) // == !WaitingForData && SegmentOpened, missed header, or a duplicate data segment
                     {
                         logMessage((std::string)"VFieldFile::read: Unexpected segment data on line #" + 
                                 std::to_string(line_cnt));
                         //now need to distinguish from having read a header and having a duplicated data
-                        data -> 
-                            segments.push_back({ VField{version},
-                                                 std::nullopt,
-                                                 0u });
+                        data->fields.emplace_back(version);
+                        data->prefetch.emplace_back(std::nullopt, 0u);
                     }
                     //rewind back 1 line
                     file.seekg(pos); 
-                    std::get<1>(data -> segments.back()) = pos;
+                    data->prefetch.back().first = pos;
                     auto log = readData(
                             file,
-                            std::get<0>(data -> segments.back()),
+                            data->fields.back(),
                             VFieldFile::slice_type(),
-                            std::get<2>(data -> segments.back()),
+                            data->prefetch.back().second,
                             prefetch
                         );
                     if(log != "")
@@ -414,9 +412,9 @@ namespace VField{
         //bad bit error is handled inside the loop, reaching here necesarily means that EOF occured
         if( SegmentOpened || WaitingForData )
             logMessage("VFieldFile::read: File ended unexpectedly");
-        if( data -> segments.size() != seg_cnt )
+        if( data -> fields.size() != seg_cnt )
             logMessage((std::string)"VFieldFile::read: Got an unexpected number of segments from file: " +
-                    std::to_string(data -> segments.size()) + " instead of expected: " +
+                    std::to_string(data -> fields.size()) + " instead of expected: " +
                     (SegCntDefined? std::to_string(seg_cnt) : "undefined"));
 
         return data -> log == "";
@@ -878,9 +876,10 @@ namespace VField{
     }
 
     //and now more high-level interfaces
-    VField& VFieldFile::operator[] (std::size_t index) &
+    VField& VFieldFile::fetch(std::size_t index) const
     {
-        auto& [field, pos, size] = data->segments.at(index);
+        auto& field = data->fields.at(index);
+        auto& [pos, size] = data->prefetch.at(index);
         if(pos == std::nullopt && size == 0)
         {
             logMessage("VFieldFile::operator[]:  during prefetch phase no data was found!");
@@ -905,16 +904,19 @@ namespace VField{
         }
         return field;
     }
+    VField& VFieldFile::operator[] (std::size_t index) &
+    { return fetch(index); }
     VField VFieldFile::operator[] (std::size_t index) const & noexcept
     {
         //first, check if index is OOB
-        if(index >= data->segments.size())
+        if(index >= data->fields.size())
         {
             logMessage("VFieldFile::operator[]: index out of range!");
             return {};
         }
         //then check the element
-        auto [field, pos, size] = data->segments[index];
+        auto field = data->fields[index];
+        auto [pos, size] = data->prefetch[index];
         if(pos == std::nullopt && size == 0)
         {
             logMessage("VFieldFile::operator[]:  during prefetch phase no data was found!");
@@ -929,7 +931,7 @@ namespace VField{
         if(!file.good())
         {
             logMessage("VFieldFile::operator[]: error opening file!");
-            return std::move(field);
+            return field;
         }
         auto log = readData(file, field, VFieldFile::slice_type(), size, false); 
         if(log != "")
@@ -937,37 +939,55 @@ namespace VField{
             logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
             logMessage(log);
         }
-        return std::move(field);
+        return field;
     }
     const OVFHeader& VFieldFile::getSegmentHeader(std::size_t index) const & 
     {
         //first, check if index is OOB
-        if(index >= data->segments.size())
+        if(index >= data->fields.size())
             throw std::out_of_range("Segment access out of range!");
         //else go and fetch the damm data
-        return std::get<0>(data->segments[index]).Header;
+        return data->fields[index].Header;
     }
     //templates for slicing vfields after import
     //TODO: check if doing in-place version instead is better
+    // Slice an arbitrary point sequence.
     template<typename T>
-    VField SliceVField(VField val, const VFieldFile::slice_type& slice)
-    {
-        //beginning iterator
-        auto beginIt = val.cbegin<T>();
-        //and teh dimension
-        const auto dim{val.pntDimension()};
-        //and translate slice into a specification for bounds
-        auto [begin, end, stride] = translateSlice(slice, val.pntCount());
-        if(begin > end) std::swap(begin, end);
-        const std::size_t newSize { (end - begin) / stride * dim };
-        //and start this bad boy up
-        auto buffer = new T[newSize];
-        for(;begin <= end; begin  += stride)
-            for(std::size_t i = 0; i < dim; i++)
-                buffer[dim * begin + i] = (beginIt + begin)[i];
-        val.insertData(buffer, newSize);
+      VField SliceVField(VField val, const VFieldFile::slice_type& slice)
+      {
+        auto source = std::as_const(val).pntView<T>();
+
+        auto [begin, end, stride] =
+          translateSlice(slice, source.extent(0));
+
+        if (begin > end)
+          std::swap(begin, end);
+
+        if (stride == 0 || end >= source.extent(0))
+          return {};
+
+        const std::size_t dim        = source.extent(1);
+        const std::size_t pointCount = 1 + (end - begin) / stride;
+        const std::size_t valueCount = pointCount * dim;
+
+        auto buffer = std::make_unique<T[]>(valueCount);
+
+        VField::vecspan<T> destination{
+          buffer.get(),
+            pointCount,
+            dim
+        };
+
+        for (std::size_t dst = 0; dst < pointCount; ++dst) {
+          const std::size_t src = begin + dst * stride;
+
+          for (std::size_t component = 0; component < dim; ++component)
+            destination[dst, component] = source[src, component];
+        }
+
+        val.insertData(buffer.release(), valueCount);
         return val;
-    }
+      }
     //and slice for rectangular grid
     template<typename T>
     VField SliceVField(VField val, const VFieldFile::slice_type& xslice,
@@ -976,8 +996,7 @@ namespace VField{
     {
         if(!val.isAddressable() || val.Header.getMeshType() != OVFHeader::MeshType::rectangular)
             return {};
-        //beginning iterator
-        auto beginIt = val.cbegin<T>();
+        const auto source = std::as_const(val).gridView<T>();
         const auto XNodeCnt = val.Header.getUint(OVFParameter::Xnodes);
         const auto YNodeCnt = val.Header.getUint(OVFParameter::Ynodes);
         const auto ZNodeCnt = val.Header.getUint(OVFParameter::Znodes);
@@ -1006,6 +1025,7 @@ namespace VField{
         //then recalculate how large of an array is needed
         vCount *= dim;
         auto buffer = new T[vCount];
+        std::size_t destination = 0;
         //whole load of magic values INC
         for(auto k = slices[6]; k <= slices[7]; k+= slices[8]) //z cycle
         {
@@ -1013,8 +1033,7 @@ namespace VField{
             {
                 for(auto i = slices[0]; i <= slices[1]; i+= slices[2]) //x cycle
                     for(std::size_t p = 0; p < dim; p++)//point values
-                        buffer[(k * XNodeCnt * YNodeCnt + j * XNodeCnt + i) * dim + p] =
-                            (beginIt + k * XNodeCnt * YNodeCnt + j * XNodeCnt + i)[p];
+                        buffer[destination++] = source[k, j, i, p];
             }
         }
         if(val.Header.validate())//only do the coordinate resize if header was valid to begin with
@@ -1041,17 +1060,18 @@ namespace VField{
     VField VFieldFile::readSlice(const std::size_t& index, const slice_type& slice) const noexcept
     {
         //first, check if index is OOB
-        if(index >= data->segments.size())
+        if(index >= data->fields.size())
         {
             logMessage("VFieldFile::readSlice: index out of range!");
             return {};
         }
         //then check the element
-        auto [field, pos, size] = data->segments[index];
+        auto field = data->fields[index];
+        auto [pos, size] = data->prefetch[index];
         if(pos == std::nullopt && size == 0)
         {
             logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
-            return std::move(field);
+            return field;
         }
         //if field is not here it is time to import it
         if(!field.isDataPresent())
@@ -1062,7 +1082,7 @@ namespace VField{
             if(!file.good())
             {
                 logMessage("VFieldFile::operator[]: error opening file!");
-                return std::move(field);
+                return field;
             }
             auto log = readData(file, field, slice, size, false); 
             if(log != "")
@@ -1070,7 +1090,7 @@ namespace VField{
                 logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
                 logMessage(log);
             }
-            return std::move(field);
+            return field;
         }
         //else slice vfield
         if(field.curDataInternalSize() == 4)
@@ -1087,17 +1107,18 @@ namespace VField{
                                  const VFieldFile::slice_type& zslice) const noexcept
     {
         //first, check if index is OOB
-        if(index >= data->segments.size())
+        if(index >= data->fields.size())
         {
             logMessage("VFieldFile::readSlice: index out of range!");
             return {};
         }
         //then check the element
-        auto [field, pos, size] = data->segments[index];
+        auto field = data->fields[index];
+        auto [pos, size] = data->prefetch[index];
         if(pos == std::nullopt && size == 0)
         {
             logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
-            return std::move(field);
+            return field;
         }
         if(!field.isAddressable())
         {
@@ -1113,7 +1134,7 @@ namespace VField{
             if(!file.good())
             {
                 logMessage("VFieldFile::operator[]: error opening file!");
-                return std::move(field);
+                return field;
             }
             //TODO: look into optimizing by translating three splices into one beforehand
             auto log = readData(file, field, {}, size, false); 
@@ -1133,4 +1154,3 @@ namespace VField{
             return {};
     }
 }
-

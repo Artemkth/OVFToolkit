@@ -283,16 +283,16 @@ inline void loadData( const VField::VField& field, float *arr, std::size_t offse
         std::copy_n( field.getData<T>() + offset, cnt, arr );
     else
     {
-        auto begin = field.cbegin<T>();
-        auto end = field.cend<T>();
         const auto dim = field.Header.expectedDimension();
+        auto begin = field.getData<T>();
+        const auto end = begin + field.curDataPoints();
 
-        std::copy_n(*begin + skip + offset, dim - skip - offset, arr);
-        begin++;
+        std::copy_n(begin + skip + offset, dim - skip - offset, arr);
+        begin += dim;
 
-        for(; begin != end; ++begin)
+        for(; begin != end; begin += dim)
         {
-            std::copy_n(*begin + skip, cnt > (dim - skip)? dim - skip : cnt % (dim - skip), arr);
+            std::copy_n(begin + skip, cnt > (dim - skip)? dim - skip : cnt % (dim - skip), arr);
             arr += dim - skip; cnt -= dim - skip;
         }
     }
@@ -1281,4 +1281,3 @@ int main(int argc, char** argv)
 
     return 0;
 }
-

@@ -1,6 +1,8 @@
 //validation stuff for OVFs
+#include <algorithm>
 #include<regex>
 #include<map>
+#include <type_traits>
 #include<vector>
 #include<cmath>
 #include"OVFDictionary.h"
@@ -39,10 +41,10 @@ namespace VField{
     {
         const std::string prefix = "Checking if grid was defined: ";
         std::vector<OVFParameter> problemParams{};
-        
+
         if(!ref.isSet(OVFParameter::Mtype))
             return {false, prefix+"Mesh type was not defined!", {OVFParameter::Mtype}};
-        
+
         if(ref.getMeshType() == OVFHeader::MeshType::irregular)
         {
             if(!ref.isSet(OVFParameter::Pcount))
@@ -474,7 +476,41 @@ namespace VField{
         return              Header.ValidationReport() +
                /*+*/        "The data is compliant with describing header: \"" + (isAddressable()? "true":"false") + '\"';
     }
-    
+
+    template<class View, class Predicate>
+      auto min_over_rows(const View& view, Predicate&& predicate)
+      {
+        static_assert(View::rank() > 0);
+
+        if (view.extent(0) == 0)
+          throw std::invalid_argument("min_over_rows: empty dimension 0");
+
+        using index_type = typename View::index_type;
+
+        return std::ranges::min(
+            std::views::iota(index_type{0}, view.extent(0))
+            | std::views::transform([&](index_type row) {
+              return std::invoke(predicate, view, row);
+              }));
+      }
+
+    template<class View, class Predicate>
+      auto max_over_rows(const View& view, Predicate&& predicate)
+      {
+        static_assert(View::rank() > 0);
+
+        if (view.extent(0) == 0)
+          throw std::invalid_argument("max_over_rows: empty dimension 0");
+
+        using index_type = typename View::index_type;
+
+        return std::ranges::max(
+            std::views::iota(index_type{0}, view.extent(0))
+            | std::views::transform([&](index_type row) {
+              return std::invoke(predicate, view, row);
+              }));
+      }
+
     ///////////////////
     //Deduction rules//
     ///////////////////
@@ -639,12 +675,18 @@ namespace VField{
         }
 
         //else need to calculate it for non-rectangular grid :'(
+        //TODO: isAddressable probably already requires this!
         if(!ref.Header.isSet(OVFParameter::VersionString))
             return {false, 0};
-        if(ref.curDataInternalSize() == 4)
-            return {true, std::min_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2) {return arr1[coordIndex] < arr2[coordIndex]; })[coordIndex]};
-        else if(ref.curDataInternalSize() == 8)
-            return {true, std::min_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2) {return arr1[coordIndex] < arr2[coordIndex]; })[coordIndex]};
+
+        auto coordPred = [coordIndex] ( const auto& ref, std::size_t i )
+          { return ref[i, coordIndex]; };
+
+        if (ref.stores<float>() )
+          return{true, min_over_rows( ref.pntView<float>(), coordPred) };
+        else if (ref.stores<double>() )
+          return{true, min_over_rows( ref.pntView<double>(), coordPred) };
+        
         return{false, 0};
     }
 
@@ -668,12 +710,14 @@ namespace VField{
         }
 
         //else need to calculate it for non-rectangular grid :'(
-        if(!ref.Header.isSet(OVFParameter::VersionString))
-            return {false, 0};
-        if(ref.curDataInternalSize() == 4)
-            return {true, std::max_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2) {return arr1[coordIndex] > arr2[coordIndex]; })[coordIndex]};
-        else if(ref.curDataInternalSize() == 8)
-            return {true, std::max_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2) {return arr1[coordIndex] > arr2[coordIndex]; })[coordIndex]};
+        auto coordPred = [coordIndex] ( const auto& ref, std::size_t i )
+          { return ref[i, coordIndex]; };
+
+        if (ref.stores<float>() )
+          return{true, max_over_rows( ref.pntView<float>(), coordPred) };
+        else if (ref.stores<double>() )
+          return{true, max_over_rows( ref.pntView<double>(), coordPred) };
+        
         return{false, 0};
     }
     
@@ -699,10 +743,30 @@ namespace VField{
                     static_cast<std::size_t>(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular ? 0 : 3)
                 };
 
-                if(ref.curDataInternalSize() == 4)
-                    return {true, norm(*std::min_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2){return norm(arr1+offset, val_dim) < norm(arr2+offset, val_dim);}) + offset, val_dim)};
-                else if(ref.curDataInternalSize() == 8)
-                    return {true, norm(*std::min_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2){return norm(arr1+offset, val_dim) < norm(arr2+offset, val_dim);}) + offset, val_dim)};
+                auto normPred = [offset, val_dim](const auto& ref, std::size_t row) {
+                  static_assert(std::remove_cvref_t<decltype(ref)>::rank() == 2);
+
+                  // offset + val_dim is the one-past-the-end index.
+                  assert(offset <= ref.extent(1));
+                  assert(offset + val_dim == ref.extent(1));
+
+                  using result_type =
+                    decltype(std::hypot(ref[row, offset], ref[row, offset]));
+
+                  result_type norm{};
+
+                  for (std::size_t column = offset; column < ref.extent(1); ++column)
+                    norm = std::hypot(norm, ref[row, column]);
+
+                  return norm;
+                };
+
+
+                if(ref.stores<float>())
+                  return {true, min_over_rows( ref.pntView<float>(), normPred ) };
+                else if (ref.stores<double>())
+                  return {true, min_over_rows( ref.pntView<double>(), normPred ) };
+
                 return {false, minVal};
             }
         },
@@ -725,10 +789,31 @@ namespace VField{
                 const std::size_t offset {
                     static_cast<std::size_t>(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular ? 0 : 3)
                 };
-                if(ref.curDataInternalSize() == 4)
-                    return {true, norm(*std::max_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2){return norm(arr1+offset, val_dim) > norm(arr2+offset, val_dim);}) + offset, val_dim)};
-                else if(ref.curDataInternalSize() == 8)
-                    return {true, norm(*std::max_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2){return norm(arr1+offset, val_dim) > norm(arr2+offset, val_dim);}) + offset, val_dim)};
+
+                auto normPred = [offset, val_dim](const auto& ref, std::size_t row) {
+                  static_assert(std::remove_cvref_t<decltype(ref)>::rank() == 2);
+
+                  // offset + val_dim is the one-past-the-end index.
+                  assert(offset <= ref.extent(1));
+                  assert(offset + val_dim == ref.extent(1));
+
+                  using result_type =
+                    decltype(std::hypot(ref[row, offset], ref[row, offset]));
+
+                  result_type norm{};
+
+                  for (std::size_t column = offset; column < ref.extent(1); ++column)
+                    norm = std::hypot(norm, ref[row, column]);
+
+                  return norm;
+                };
+
+
+                if(ref.stores<float>())
+                  return {true, max_over_rows( ref.pntView<float>(), normPred ) };
+                else if (ref.stores<double>())
+                  return {true, max_over_rows( ref.pntView<double>(), normPred ) };
+
                 return {false, maxVal};
             }
         },

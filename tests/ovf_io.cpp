@@ -89,19 +89,19 @@ int main(int argc, char** argv)
                     std::chrono::system_clock::now().time_since_epoch()
                 ).count() );//seeded with milliseconds from unix epoch start
         std::normal_distribution<double> fieldDist(0.0, 1.0);  //0.0 mean and 1.0 st. deviation
-        //filling data in with iterators for once Pog
-        const auto EndIt = testOVF.end<double>();
-        for(auto it = testOVF.begin<double>(); it != EndIt; ++it)
+        //fill the field point by point through its multidimensional view
+        auto points = testOVF.pntView<double>();
+        for(std::size_t point = 0; point < points.extent(0); ++point)
         {
             double nrm {0.0};
             for(std::size_t i = 0; i < pDim; i++)
             {
-                it[i] = fieldDist(generator);
-                nrm += it[i] * it[i];
+                points[point, i] = fieldDist(generator);
+                nrm += points[point, i] * points[point, i];
             }
             nrm = std::sqrt(nrm);
             for(std::size_t i = 0; i < pDim; i++)
-                it[i] /= nrm;
+                points[point, i] /= nrm;
         }
     }
     //try writing ovf out in file named tmpOVF.ovf
@@ -118,6 +118,22 @@ int main(int argc, char** argv)
     {
         std::cerr << "Got errors reading the file:\n" << readBack.WorkLog() << "\n";
         return 3;
+    }
+    auto fields = readBack.fieldView();
+    const auto constFields = std::as_const(readBack).fieldView();
+    if(fields.size() != 1 || constFields.size() != 1 ||
+       !fields[0].isDataPresent() || fields.data() != constFields.data())
+    {
+        std::cerr << "VFieldFile span access failed!\n";
+        return 7;
+    }
+
+    auto fileCopy = readBack;
+    if(fileCopy.fieldView().size() != fields.size() ||
+       fileCopy.fieldView()[0] != fields[0])
+    {
+        std::cerr << "VFieldFile copy with unique ownership failed!\n";
+        return 8;
     }
     //and compare to original data, by first writing and then reading back
     auto BareOVF2 { const_cast<const VField::VFieldFile&>(readBack)[0] };

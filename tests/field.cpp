@@ -24,7 +24,7 @@ int main()
     std::normal_distribution<double> fieldDist(0.0, 1.0);  //0.0 mean and 1.0 st. deviation
     std::uniform_real_distribution<double> coordDist (0, 100);
     //initially fill in stuff with random before sorting it out
-    std::generate( data, data + (pCount + 1)*Pdim, [&](){return fieldDist(generator);} );
+    std::generate( data, data + pCount*Pdim, [&](){return fieldDist(generator);} );
     //and a bit more complex for irregular data
     for(std::size_t i = 0; i < pCount * (Pdim + 3); i++)
         *(irrData + i) = (i%6 < 3) ? coordDist(generator) : fieldDist(generator);
@@ -83,8 +83,10 @@ int main()
             std::cerr << "Got incorrent number of points!\n";
             return 3;
         }
-        if( std::distance(tmpRegular.cbegin<double>(), tmpRegular.cend<double>()) != pCount ||
-            std::distance(tmpRegular.begin<double>(), tmpRegular.end<double>()) != pCount )
+        const auto constPoints = std::as_const(tmpRegular).pntView<double>();
+        auto mutablePoints = tmpRegular.pntView<double>();
+        if( constPoints.extent(0) != pCount || mutablePoints.extent(0) != pCount ||
+            constPoints.extent(1) != Pdim || mutablePoints.extent(1) != Pdim )
         {
             std::cerr << "Iterator goes over invalid ammount of points!\n";
             return 4;
@@ -93,11 +95,17 @@ int main()
         auto tmpCopy {tmpRegular};
         tmpCopy.convert<float>();
         //check if after conversion numbers are still within rounding error!
-        if( !std::equal( tmpCopy.cbegin<float>(), tmpCopy.cend<float>(), tmpRegular.cbegin<double>(),
-            [&tmpCopy] (const float* arr1, const double* arr2){
-                return std::equal(arr1, arr1 + tmpCopy.pntDimension(), arr2,
-                     [](const float& a, const double& b){return std::abs(b-a)/std::abs(b) <= std::numeric_limits<float>::epsilon(); });
-            }) )
+        const auto convertedPoints = std::as_const(tmpCopy).pntView<float>();
+        bool conversionMatches = true;
+        for (std::size_t point = 0; point < pCount && conversionMatches; ++point)
+            for (std::size_t component = 0; component < Pdim; ++component)
+            {
+                const auto original = constPoints[point, component];
+                const auto converted = convertedPoints[point, component];
+                conversionMatches = std::abs(original - converted) / std::abs(original)
+                    <= std::numeric_limits<float>::epsilon();
+            }
+        if( !conversionMatches )
         {
             std::cerr << "Conversion and/or copy failed!\n";
             return 5;
@@ -109,11 +117,28 @@ int main()
             return 6;
         }
         //check if it also detects inconsistencies
-        tmpCopy.setPoint(pCount, 42.0f);
+        tmpCopy.pntView<float>()[0, 0] = 42.0f;
         if(tmpCopy == tmpRegular)
         {
             std::cerr << "Failure to set a point/or failure in comparison!\n";
             return 7;
+        }
+
+        auto raw = tmpRegular.rawView<double>();
+        raw[0] = 24.0;
+        if (tmpRegular.getData<double>()[0] != 24.0)
+        {
+            std::cerr << "Mutable raw data access failed!\n";
+            return 8;
+        }
+
+        const auto grid = std::as_const(tmpRegular).gridView<double>();
+        if (grid.extent(0) != Zstep || grid.extent(1) != Ystep ||
+            grid.extent(2) != Xstep || grid.extent(3) != Pdim ||
+            grid[0, 0, 0, 0] != 24.0)
+        {
+            std::cerr << "Grid view has unexpected extents or mapping!\n";
+            return 9;
         }
     }
 

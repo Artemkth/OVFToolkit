@@ -1,7 +1,9 @@
+//VField memory management header
 #include<algorithm>
 #include <memory>
 #include<type_traits>
 #include<limits>
+#include<array>
 #include<cassert>
 #include<cmath>
 #include<utility>
@@ -49,7 +51,7 @@ namespace VField{
         return std::equal( arr1, arr1 + size, arr2,
                 [&] (const T& v1, const U& v2) { return v1 != 0.0? std::abs(v1 - v2)/std::abs(v1) <= epsilon : std::abs(v2) <= min_val; } );
     }
-        
+
     struct VField::StorageArray
     {
         //data size
@@ -70,7 +72,10 @@ namespace VField{
         //is there some data?
         [[nodiscard]]
           bool isEmpty() const noexcept
-          { return std::holds_alternative<std::monostate>(array); }
+          {
+            assert( std::holds_alternative<std::monostate>(array) == (storSize==0) );
+            return std::holds_alternative<std::monostate>(array);
+          }
         //c-tors
         constexpr StorageArray() = default; //should work fine with monostate :)
         StorageArray(const StorageArray& ref):StorageArray()
@@ -90,15 +95,8 @@ namespace VField{
             if (&ref == this)
               return *this;
 
-            this->clear();
-            storSize = ref.storSize;
-            std::visit(
-                [this,&ref](const auto& token)
-                {
-                  using TokenType = std::remove_cvref_t<decltype(token)>;
-                  if constexpr(!std::is_same_v<TokenType, std::monostate>)
-                    this->array.emplace<TokenType> ( ref.makeCopy<typename TokenType::element_type>() );
-                }, ref.array);
+            auto copy { ref };
+            *this = std::move(copy);
 
             return *this;
         }
@@ -229,6 +227,32 @@ namespace VField{
               return sizeof(typename TokenType::element_type);
           }, data->array );
     }
+    [[nodiscard]]
+      VField::ScalarType VField::scalarType() const noexcept
+      {
+        return std::visit(
+            [](const auto& token) -> VField::ScalarType
+            {
+              using  TokenType = std::remove_cvref_t<decltype(token)>;
+              if constexpr ( std::is_same_v<TokenType, std::monostate> )
+                return VField::ScalarType::None;
+              else if constexpr ( std::is_same_v<TokenType, std::unique_ptr<float[]>> )
+                return VField::ScalarType::Float32;
+              else
+                return VField::ScalarType::Float64;
+            },
+            data->array );
+      }
+
+    template<typename T>
+      [[nodiscard]]
+      bool VField::stores() const noexcept
+      {
+        static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
+            "instantiation is only supported for float or double!");
+        return std::holds_alternative<std::unique_ptr<T[]>>(data->array);
+      }
+
     std::size_t VField::curDataPoints() const noexcept
     { 
       assert( (data ->storSize == 0) == data->isEmpty() );
@@ -259,10 +283,22 @@ namespace VField{
     
     //and then getting the internal fields
     template<typename T>
+      T* VField::getData()
+      {
+        static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
+            "instantiation is only supported for float or double!");
+        if (data->isEmpty())
+          return nullptr;
+        return std::get<std::unique_ptr<T[]>>(data->array).get();
+      }
+
+    template<typename T>
       const T* VField::getData() const
       { 
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
+        if (data->isEmpty())
+          return nullptr;
         return std::get<std::unique_ptr<T[]>>(data->array).get();
       }
     
@@ -275,7 +311,7 @@ namespace VField{
     {
         auto buffer = new T[size];
         std::copy_n( arr, size, buffer);
-        data.reset( new StorageArray(arr, size) );
+        data.reset( new StorageArray(buffer, size) );
     }
     
     //point set methods
@@ -322,63 +358,18 @@ namespace VField{
     bool VField::operator==(const VField& ref) const noexcept
     { return Header == ref.Header && isSameDataAs(ref); }
 
-    //implementation of iterator creators
-    //TODO: investigate why templating here fails to export!
-    template<> VField::VFieldIterator<float> VField::begin<float> ()
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
-        if( data -> farray == nullptr )
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-
-        //initialize a base class, and use private access to it to form a result
-        CommonVFieldIterator<float> res;
-        res.parent = this;
-        res.pntDimension = pntDimension();
-        res.it_data = data -> farray;
-        return res;
-    }
-    template<> VField::VFieldIterator<double> VField::begin<double> ()
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
-        if( data -> darray == nullptr )
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-
-        //initialize a base class, and use private access to it to form a result
-        CommonVFieldIterator<double> res;
-        res.parent = this;
-        res.pntDimension = pntDimension();
-        res.it_data = data -> darray;
-        return res;
-    }
-    template<> VField::VFieldIterator<float> VField::end<float> ()
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
-        if( data -> farray == nullptr )
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-
-        //initialize a base class, and use private access to it to form a result
-        CommonVFieldIterator<float> res;
-        res.parent = this;
-        res.pntDimension = pntDimension();
-        res.it_data = data->farray + data->storSize;
-        return res;
-    }
-    template<> VField::VFieldIterator<double> VField::end<double> ()
-    {
-        if(!isWeaklyAddressable())
-            throw std::logic_error("VField::begin<T>(): Cannot make iterator for non-addressable data");
-        if( data -> darray == nullptr )
-            throw std::logic_error("VField::begin<T>(): Trying to access wrong type");
-
-        //initialize a base class, and use private access to it to form a result
-        CommonVFieldIterator<double> res;
-        res.parent = this;
-        res.pntDimension = pntDimension();
-        res.it_data = data->darray + data->storSize;
-        return res;
-    }
+    template OVFPARSER_EXPORT float* VField::getData<float>();
+    template OVFPARSER_EXPORT double* VField::getData<double>();
+    template OVFPARSER_EXPORT const float* VField::getData<float>() const;
+    template OVFPARSER_EXPORT const double* VField::getData<double>() const;
+    template OVFPARSER_EXPORT float* VField::getDataCopy<float>() const;
+    template OVFPARSER_EXPORT double* VField::getDataCopy<double>() const;
+    template OVFPARSER_EXPORT void VField::convert<float>();
+    template OVFPARSER_EXPORT void VField::convert<double>();
+    template OVFPARSER_EXPORT void VField::insertData<float>(float*, std::size_t) noexcept;
+    template OVFPARSER_EXPORT void VField::insertData<double>(double*, std::size_t) noexcept;
+    template OVFPARSER_EXPORT void VField::setData<float>(const float*, std::size_t);
+    template OVFPARSER_EXPORT void VField::setData<double>(const double*, std::size_t);
+    template OVFPARSER_EXPORT bool VField::stores<float>() const noexcept;
+    template OVFPARSER_EXPORT bool VField::stores<double>() const noexcept;
 }
-

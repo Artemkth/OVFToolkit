@@ -7,6 +7,63 @@ project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library
 # C++ standard
 set(CMAKE_CXX_STANDARD 23)              #a lot of c++17 features used in core
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(CheckCXXSourceCompiles)
+
+check_cxx_source_compiles([=[
+    #include <cstddef>
+    #include <mdspan>
+
+    #ifndef __cpp_lib_mdspan
+    #  error "Native mdspan feature macro is missing"
+    #elif __cpp_lib_mdspan < 202207L
+    #  error "Native mdspan implementation is too old"
+    #endif
+
+    int main()
+    {
+        int storage[6]{};
+
+        std::mdspan<
+            int,
+            std::extents<std::size_t, 2, 3>
+        > view{storage};
+
+        return static_cast<int>(view.extent(0));
+    }
+]=] OVFTOOLKIT_HAS_STD_MDSPAN)
+
+if(OVFTOOLKIT_HAS_STD_MDSPAN)
+  message(STATUS "OVFToolkit: using native std::mdspan")
+else()
+    check_cxx_source_compiles([=[
+        #include <cstddef>
+        #include <kokkos/mdspan/mdspan.hpp>
+
+        int main()
+        {
+            int storage[6]{};
+
+            Kokkos::mdspan<
+                int,
+                Kokkos::extents<std::size_t, 2, 3>
+            > view{storage};
+
+            return static_cast<int>(view.extent(0));
+        }
+    ]=] OVFTOOLKIT_HAS_KOKKOS_MDSPAN)
+
+    if(NOT OVFTOOLKIT_HAS_KOKKOS_MDSPAN)
+        message(FATAL_ERROR
+            "Neither native std::mdspan nor the Kokkos reference "
+            "implementation is usable."
+        )
+    endif()
+
+    message(STATUS "OVFToolkit: using Kokkos mdspan fallback")
+endif()
+
 # also need some parallelization libs
 find_package(Threads REQUIRED)
 # using boost for endianess, need to check if it is available!
@@ -126,6 +183,7 @@ install(FILES
     OVFParser/OVFParser.h
     OVFParser/Slice.h
     OVFParser/OVFWriter.h
+    "${PROJECT_BINARY_DIR}/OVFToolkitConfig.h"
     "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h" DESTINATION "${INCLUDE_INSTALL_DIR}"
 )
 

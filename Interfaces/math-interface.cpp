@@ -824,20 +824,16 @@ extern "C" void import(const char* fileName, int optc, int spanc)
     if(spanc == 0)
     {
         if (fileHandle.cntSegments() != 1) WSPutFunction(stdlink, "List", fileHandle.cntSegments());
-        auto begin = fileHandle.begin();
-        auto end   = fileHandle.end();
         std::size_t seg_cnt{0};
-        for(; begin != end; ++begin)
+        for(const auto& field: fileHandle.fieldView())
         {
             if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
             //Output Header
-            if (sendHeader.value_or(true)) OutputHeader(begin.getHeader());
+            if (sendHeader.value_or(true)) OutputHeader(field.Header);
 
             //Output Data
             if (sendData.value_or(true)) 
             {
-                const auto field = *begin;
-
                 //Output data
                 if(!field.isAddressable())
                 {
@@ -1377,4 +1373,3 @@ extern "C" void exportOVF(const char* fName, int optc)
     deinit();
     WSPutSymbol(stdlink, "Null");
 }
-
