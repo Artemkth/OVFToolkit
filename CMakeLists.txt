@@ -181,7 +181,6 @@ install(FILES
     OVFParser/VField.h
     OVFParser/OVFDictionary.h
     OVFParser/OVFParser.h
-    OVFParser/Slice.h
     OVFParser/OVFWriter.h
     "${PROJECT_BINARY_DIR}/OVFToolkitConfig.h"
     "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h" DESTINATION "${INCLUDE_INSTALL_DIR}"

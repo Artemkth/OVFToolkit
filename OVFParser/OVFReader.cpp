@@ -94,17 +94,6 @@ namespace VField{
         return data->fields;
     }
 
-    //translate slice into range specifier
-    inline std::array<std::size_t, 3> translateSlice(const VFieldFile::slice_type& Slice, std::size_t pCount)
-    {
-        return
-        {
-            !Slice.begin.isSpecial()? Slice.begin.getPos() : (Slice.begin == slice_pnt::begin ? 0 : pCount),
-                !Slice.end.isSpecial()? Slice.end.getPos() : (Slice.end == slice_pnt::begin ? 0 : pCount + 1),
-                Slice.stride
-        };
-    }
-
     //////////////////////////////////////////////////////////
     /// main code for reading stuff based off of regexes /////
     //////////////////////////////////////////////////////////
@@ -162,7 +151,8 @@ namespace VField{
     //returns the header and a log file, second argument is a line counter to be incremented
     std::string readHeader(std::istream&, std::size_t&, OVFHeader&);
     //read the data beginning with data header and ending all the way at '# End: Data', bool variable to tell if it is just a prefetch 
-    std::string readData(std::istream&, VField&, const VFieldFile::slice_type&, std::size_t&, bool);
+    using PointRange = std::pair<std::size_t, std::size_t>; //first point, point count
+    std::string readData(std::istream&, VField&, std::optional<PointRange>, std::size_t&, bool);
 
     //declaration of templated parse method
     template<pType p>
@@ -357,7 +347,7 @@ namespace VField{
                     auto log = readData(
                             file,
                             data->fields.back(),
-                            VFieldFile::slice_type(),
+                            std::nullopt,
                             data->prefetch.back().second,
                             prefetch
                         );
@@ -591,7 +581,8 @@ namespace VField{
     //and then for the cream of the crop, header reader!
     //main method
     //TODO: implement OVF0 reading at some point
-    std::string readData(std::istream& file, VField& out, const VFieldFile::slice_type& slice, std::size_t& cnt, bool prefetch)
+    std::string readData(std::istream& file, VField& out, std::optional<PointRange> range,
+                         std::size_t& cnt, bool prefetch)
     {
         auto version = (out.Header.isSet(OVFParameter::VersionString))? 
             matchVersionString(out.Header.getString(OVFParameter::VersionString)) : OVFVersion::Unknown; 
@@ -688,28 +679,30 @@ namespace VField{
             log = (std::string)"readData: failed strict check of data type in closing section, got: " + closingString;
         }
 
-        const bool importWhole {slice == VFieldFile::slice_type()};
-        if(!importWhole && advertisedDim == 0)
+        if(range.has_value() && advertisedDim == 0)
         {
             if(log !="") log+= "\n";
-            log += "readData: Cannot read a non-trivial slice without properly-defined dimension";
+            log += "readData: Cannot read a point range without properly-defined dimension";
             return log;
         }
-        const auto AfterDataEnd {file.tellg()};
-
         if(!prefetch)
         {
             file.seekg(DataBeginPos);
-            //actual reading of data
-            auto [begin, end, stride] = translateSlice(slice, 
-                    advertisedDim!=0&&cnt!=0? cnt/advertisedDim : 0); //hurray for structural binding
-
-            if(end < begin) std::swap(begin, end);
-            if(!importWhole && end == begin)//addedd !importWhole to make it possible to import malformed files 
+            const auto firstPoint = range.has_value() ? range->first : 0u;
+            const auto pointCount = range.has_value() ? range->second :
+                (advertisedDim == 0 ? 0u : cnt / advertisedDim);
+            if(range.has_value() &&
+               (firstPoint > advertisedCnt || pointCount > advertisedCnt - firstPoint))
             {
-                file.seekg(AfterDataEnd);
-                return log; //nothing to import, EZ
+                if(log != "") log += "\n";
+                log += "readData: Requested point range is outside the stored data";
+                return log;
             }
+
+            const std::size_t importDepth = range.has_value() ? pointCount * advertisedDim : cnt;
+            if(importDepth == 0)
+                return log;
+
             if(isBinary)
             {
                 if(internalSize == 4)
@@ -727,11 +720,9 @@ namespace VField{
                         log+= "readData: binary data (4-byte) has a wrong test magic number!";
                         return log;
                     }
-                    //then seek the first value
-                    file.seekg( begin * advertisedDim * sizeof(float) / sizeof(std::istream::char_type), std::ios_base::cur);
-                    const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
-                    auto buffer = new float[importDepth];
-                    file.read(reinterpret_cast<std::istream::char_type*>(buffer), 
+                    file.seekg(firstPoint * advertisedDim * sizeof(float) / sizeof(std::istream::char_type), std::ios_base::cur);
+                    auto buffer = std::make_unique<float[]>(importDepth);
+                    file.read(reinterpret_cast<std::istream::char_type*>(buffer.get()),
                               importDepth * sizeof(float)/sizeof(std::istream::char_type));
                     if(!file.good())
                     {
@@ -742,19 +733,8 @@ namespace VField{
                     if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         for(std::size_t i =0; i < importDepth; i++)
-                            boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(buffer + i));
-                    if(stride != 1)
-                    {
-                        auto res = new float[importDepth / stride];
-                        for(std::size_t i = 0; i < importDepth / stride / advertisedDim; i++)
-                            for(std::size_t j = 0; j < advertisedDim; j++)
-                                res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
-                        std::swap(res, buffer);
-                        delete[] res;
-                        out.insertData(buffer, importDepth / stride);
-                        return log;
-                    }
-                    out.insertData(buffer, importDepth);
+                            boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(buffer.get() + i));
+                    out.insertData(buffer.release(), importDepth);
                     return log; 
                 }
                 if(internalSize == 8)
@@ -771,11 +751,9 @@ namespace VField{
                         log+= "readData: binary data (4-byte) has a wrong test magic number!";
                         return log;
                     }
-                    //then seek the first value
-                    file.seekg( begin * sizeof(double) / sizeof(std::istream::char_type), std::ios_base::cur);
-                    const std::size_t importDepth {importWhole? cnt : ((end - begin - 1) * advertisedDim)};
-                    auto buffer = new double[importDepth];
-                    file.read(reinterpret_cast<std::istream::char_type*>(buffer), 
+                    file.seekg(firstPoint * advertisedDim * sizeof(double) / sizeof(std::istream::char_type), std::ios_base::cur);
+                    auto buffer = std::make_unique<double[]>(importDepth);
+                    file.read(reinterpret_cast<std::istream::char_type*>(buffer.get()),
                               importDepth * sizeof(double)/sizeof(std::istream::char_type));
                     if(!file.good())
                     {
@@ -786,19 +764,8 @@ namespace VField{
                     if( (version == OVFVersion::OVF1 && boost::endian::order::native == boost::endian::order::little) ||
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         for(std::size_t i =0; i < importDepth; i++)
-                            boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(buffer + i));
-                    if(stride != 1)
-                    {
-                        auto res = new double[importDepth / stride];
-                        for(std::size_t i = 0; i < importDepth / stride / advertisedDim; i++)
-                            for(std::size_t j = 0; j < advertisedDim; j++)
-                                res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
-                        std::swap(res, buffer);
-                        delete[] res;
-                        out.insertData(buffer, importDepth / stride);
-                        return log;
-                    }
-                    out.insertData(buffer, importDepth);
+                            boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(buffer.get() + i));
+                    out.insertData(buffer.release(), importDepth);
                     return log; 
                 }
             }
@@ -812,26 +779,20 @@ namespace VField{
                     return log;
                 }
 
-                std::string line{""};
-                const std::size_t importDepth {importWhole? cnt : ((end - begin) * advertisedDim)};
-                auto buffer = new double[importDepth];
-                //main loop implementation here
-                std::size_t line_cnt{0};
+                for(std::size_t skipped = 0; skipped < firstPoint && file.good(); ++skipped)
+                    file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+                std::string line{};
+                auto buffer = std::make_unique<double[]>(importDepth);
                 const std::regex tokenizer ("^\\s*([^\\s]+)(?:\\s+|$)", std::regex_constants::ECMAScript |
                                                                         std::regex_constants::optimize);
-                //TODO: check if comments are allowed
-                while(file.good())
+                for(std::size_t point = 0; point < pointCount; ++point)
                 {
-                    //first skip forward to beginning of data
-                    std::size_t skip_cnt {begin};
-                    while(skip_cnt != 0 && file.good())
-                    { file.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); skip_cnt--;}
                     std::getline(file, line);
                     if(!file)
                     {
                         if(log != "") log += "\n";
                         log += "readData: Unexpected file read error!";
-                        delete[] buffer;
                         return log;
                     }
                     std::size_t count {0};
@@ -841,35 +802,20 @@ namespace VField{
                         auto val = ParseToken<pType::Float>(sm[1].str());
                         if(val == std::nullopt)
                             break;
-                        buffer[line_cnt * advertisedDim + count++] = val.value();
+                        buffer[point * advertisedDim + count++] = val.value();
                         line = sm.suffix();
                     }
-                    if(count != advertisedDim - 1)
+                    if(count != advertisedDim)
                     {
                         if( log != "" ) log+= "\n";
                         log += (std::string)"readData: Unexpected number of values on line #"
-                               +std::to_string(line_cnt);
-                        delete[] buffer;
+                               +std::to_string(firstPoint + point);
                         return log;
                     }
-                    if(line_cnt == importDepth/advertisedDim) //TODO: check for error by 1 later
-                        break;
                 }
-                if(stride != 1)
-                {
-                    auto res = new double[importDepth / stride];
-                    for(std::size_t i = 0; i < importDepth / stride / advertisedDim; i++)
-                        for(std::size_t j = 0; j < advertisedDim; j++)
-                            res[i * advertisedDim + j] = buffer[i * stride * advertisedDim + j];
-                    std::swap(res, buffer);
-                    delete[] res;
-                    out.insertData(buffer, importDepth / stride);
-                    return log;
-                }
-                out.insertData(buffer, importDepth);
+                out.insertData(buffer.release(), importDepth);
                 return log; 
             }
-            file.seekg(AfterDataEnd);
         }
 
         return log;
@@ -896,7 +842,7 @@ namespace VField{
             logMessage("VFieldFile::operator[]: error opening file!");
             return field;
         }
-        auto log = readData(file, field, VFieldFile::slice_type(), size, false); 
+        auto log = readData(file, field, std::nullopt, size, false);
         if(log != "")
         {
             logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
@@ -933,7 +879,7 @@ namespace VField{
             logMessage("VFieldFile::operator[]: error opening file!");
             return field;
         }
-        auto log = readData(file, field, VFieldFile::slice_type(), size, false); 
+        auto log = readData(file, field, std::nullopt, size, false);
         if(log != "")
         {
             logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
@@ -949,208 +895,38 @@ namespace VField{
         //else go and fetch the damm data
         return data->fields[index].Header;
     }
-    //templates for slicing vfields after import
-    //TODO: check if doing in-place version instead is better
-    // Slice an arbitrary point sequence.
-    template<typename T>
-      VField SliceVField(VField val, const VFieldFile::slice_type& slice)
-      {
-        auto source = std::as_const(val).pntView<T>();
-
-        auto [begin, end, stride] =
-          translateSlice(slice, source.extent(0));
-
-        if (begin > end)
-          std::swap(begin, end);
-
-        if (stride == 0 || end >= source.extent(0))
-          return {};
-
-        const std::size_t dim        = source.extent(1);
-        const std::size_t pointCount = 1 + (end - begin) / stride;
-        const std::size_t valueCount = pointCount * dim;
-
-        auto buffer = std::make_unique<T[]>(valueCount);
-
-        VField::vecspan<T> destination{
-          buffer.get(),
-            pointCount,
-            dim
-        };
-
-        for (std::size_t dst = 0; dst < pointCount; ++dst) {
-          const std::size_t src = begin + dst * stride;
-
-          for (std::size_t component = 0; component < dim; ++component)
-            destination[dst, component] = source[src, component];
-        }
-
-        val.insertData(buffer.release(), valueCount);
-        return val;
-      }
-    //and slice for rectangular grid
-    template<typename T>
-    VField SliceVField(VField val, const VFieldFile::slice_type& xslice,
-                                   const VFieldFile::slice_type& yslice,
-                                   const VFieldFile::slice_type& zslice)
+    VField VFieldFile::readSlice(std::size_t index, std::size_t firstPoint,
+                                 std::size_t pointCount) const noexcept
     {
-        if(!val.isAddressable() || val.Header.getMeshType() != OVFHeader::MeshType::rectangular)
-            return {};
-        const auto source = std::as_const(val).gridView<T>();
-        const auto XNodeCnt = val.Header.getUint(OVFParameter::Xnodes);
-        const auto YNodeCnt = val.Header.getUint(OVFParameter::Ynodes);
-        const auto ZNodeCnt = val.Header.getUint(OVFParameter::Znodes);
-        std::size_t slices[9];
-        const std::size_t dim { val.pntDimension() };
-        std::size_t vCount{1u};
-        //convert slices into real coordinates
-        for(const auto& x: {std::make_tuple(XNodeCnt, xslice, slices),
-                            std::make_tuple(YNodeCnt, yslice, slices+3),
-                            std::make_tuple(ZNodeCnt, zslice, slices+6)})
-        {
-            auto& begin = *std::get<2>(x);//get the points from slices array
-            auto& end   = *(std::get<2>(x) + 1);
-            auto& stride= *(std::get<2>(x) + 2);
-            const auto& maxVal = std::get<0>(x);
-            const auto& slice = std::get<1>(x);
-            stride = slice.stride; //easy
-            begin = !slice.begin.isSpecial()? slice.begin.getPos() : ((slice.begin == slice_pnt::begin)? 0 : maxVal);
-            end = !slice.end.isSpecial()? slice.end.getPos() : ((slice.end == slice_pnt::begin)? 0 : maxVal);
-            if(begin > end)
-                std::swap(begin, end);
-            vCount *= 1 + (end - begin + 1) / stride;
-            if( begin > maxVal || end > maxVal) // no need to check for <0, unsigned types
-                return {};
-        }
-        //then recalculate how large of an array is needed
-        vCount *= dim;
-        auto buffer = new T[vCount];
-        std::size_t destination = 0;
-        //whole load of magic values INC
-        for(auto k = slices[6]; k <= slices[7]; k+= slices[8]) //z cycle
-        {
-            for(auto j = slices[3]; j <= slices[4]; j+= slices[5]) //y cycle
-            {
-                for(auto i = slices[0]; i <= slices[1]; i+= slices[2]) //x cycle
-                    for(std::size_t p = 0; p < dim; p++)//point values
-                        buffer[destination++] = source[k, j, i, p];
-            }
-        }
-        if(val.Header.validate())//only do the coordinate resize if header was valid to begin with
-        {
-            //first set the correct node counts
-            val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[1]-slices[0])/slices[2];
-            val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[4]-slices[3])/slices[5];
-            val.Header.at<pType::Uint>(OVFParameter::Xnodes) = 1 + (slices[7]-slices[6])/slices[8];
-            //then set correct initial position
-            val.Header.at<pType::Float>(OVFParameter::Xbase) += val.Header.at<pType::Float>(OVFParameter::Xstep) * slices[0];
-            val.Header.at<pType::Float>(OVFParameter::Ybase) += val.Header.at<pType::Float>(OVFParameter::Ystep) * slices[3];
-            val.Header.at<pType::Float>(OVFParameter::Zbase) += val.Header.at<pType::Float>(OVFParameter::Zstep) * slices[6];
-            //and then, finaly, set correct steps
-            val.Header.at<pType::Float>(OVFParameter::Xstep) *= slices[2];
-            val.Header.at<pType::Float>(OVFParameter::Ystep) *= slices[5];
-            val.Header.at<pType::Float>(OVFParameter::Zstep) *= slices[8];
-        }
-
-        val.insertData(buffer, vCount);
-        return val;
-    }
-
-    //and then slice reads interfaces
-    VField VFieldFile::readSlice(const std::size_t& index, const slice_type& slice) const noexcept
-    {
-        //first, check if index is OOB
         if(index >= data->fields.size())
         {
             logMessage("VFieldFile::readSlice: index out of range!");
             return {};
         }
-        //then check the element
+
         auto field = data->fields[index];
         auto [pos, size] = data->prefetch[index];
-        if(pos == std::nullopt && size == 0)
+        if(!pos.has_value() || size == 0)
         {
-            logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
+            logMessage("VFieldFile::readSlice: no source data was found during prefetch!");
             return field;
         }
-        //if field is not here it is time to import it
-        if(!field.isDataPresent())
+
+        field.clearData();
+        std::ifstream file(fPath, std::ios_base::binary);
+        file.seekg(*pos);
+        if(!file.good())
         {
-            //read the data and return that
-            std::ifstream file(fPath, std::ios_base::binary);
-            file.seekg(pos.value());
-            if(!file.good())
-            {
-                logMessage("VFieldFile::operator[]: error opening file!");
-                return field;
-            }
-            auto log = readData(file, field, slice, size, false); 
-            if(log != "")
-            {
-                logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
-                logMessage(log);
-            }
+            logMessage("VFieldFile::readSlice: error opening file!");
             return field;
         }
-        //else slice vfield
-        if(field.curDataInternalSize() == 4)
-            return SliceVField<float>(field, slice);
-        else if(field.curDataInternalSize() == 8)
-            return SliceVField<double>(field, slice);
-        else
-            //unreachable branch, hope compiler prunes it
-            return {};
-    }
-    VField VFieldFile::readSlice(const std::size_t& index,
-                                 const VFieldFile::slice_type& xslice,
-                                 const VFieldFile::slice_type& yslice,
-                                 const VFieldFile::slice_type& zslice) const noexcept
-    {
-        //first, check if index is OOB
-        if(index >= data->fields.size())
+
+        auto log = readData(file, field, PointRange{firstPoint, pointCount}, size, false);
+        if(log != "")
         {
-            logMessage("VFieldFile::readSlice: index out of range!");
-            return {};
+            logMessage("VFieldFile::readSlice: errors occurred while reading data:\n");
+            logMessage(log);
         }
-        //then check the element
-        auto field = data->fields[index];
-        auto [pos, size] = data->prefetch[index];
-        if(pos == std::nullopt && size == 0)
-        {
-            logMessage("VFieldFile::readSlice:  during prefetch phase no data was found!");
-            return field;
-        }
-        if(!field.isAddressable())
-        {
-            logMessage("VFieldFile:readSlice: VField is not addressable, abborting!");
-            return {};
-        }
-        //if field is not here it is time to import it
-        if(!field.isDataPresent())
-        {
-            //read the data and return that
-            std::ifstream file(fPath, std::ios_base::binary);
-            file.seekg(pos.value());
-            if(!file.good())
-            {
-                logMessage("VFieldFile::operator[]: error opening file!");
-                return field;
-            }
-            //TODO: look into optimizing by translating three splices into one beforehand
-            auto log = readData(file, field, {}, size, false); 
-            if(log != "" || !field.isDataPresent())
-            {
-                logMessage("VFieldFile::operator[]: errors occured while reading data:\n");
-                logMessage(log);
-            }
-        }
-        //else slice vfield
-        if(field.curDataInternalSize() == 4)
-            return SliceVField<float>(field, xslice, yslice, zslice);
-        else if(field.curDataInternalSize() == 8)
-            return SliceVField<double>(field, xslice, yslice, zslice);
-        else
-            //unreachable branch, hope compiler prunes it
-            return {};
+        return field;
     }
 }

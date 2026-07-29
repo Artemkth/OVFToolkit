@@ -135,6 +135,25 @@ int main(int argc, char** argv)
         std::cerr << "VFieldFile copy with unique ownership failed!\n";
         return 8;
     }
+
+    constexpr std::size_t sliceFirst = 7;
+    constexpr std::size_t sliceCount = 5;
+    const auto sliceDimension = testOVF.pntDimension();
+    const auto contiguousSlice = readBack.readSlice(0, sliceFirst, sliceCount);
+    const auto sourcePoints = std::as_const(testOVF).pntView<double>();
+    const auto slicedPoints = std::as_const(contiguousSlice).pntView<double>();
+    if(slicedPoints.extent(0) != sliceCount || slicedPoints.extent(1) != sliceDimension)
+    {
+        std::cerr << "Contiguous slice has unexpected dimensions!\n";
+        return 9;
+    }
+    for(std::size_t point = 0; point < sliceCount; ++point)
+        for(std::size_t component = 0; component < sliceDimension; ++component)
+            if(slicedPoints[point, component] != sourcePoints[sliceFirst + point, component])
+            {
+                std::cerr << "Contiguous slice contains unexpected data!\n";
+                return 10;
+            }
     //and compare to original data, by first writing and then reading back
     auto BareOVF2 { const_cast<const VField::VFieldFile&>(readBack)[0] };
     WriteOVF(workingDir + "tmpOVF2.ovf", testOVF);

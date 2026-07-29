@@ -1,6 +1,5 @@
 //describing file interfaces for OVFparser
 #include"VField.h"
-#include"Slice.h"
 #include"ovfparser_export.h"
 #include<memory>
 #include<span>
@@ -22,9 +21,6 @@ namespace VField{
         VField& fetch(std::size_t) const;
 
     public:
-        //TODO: Change into signed type to associate with array boundaries
-        using slice_type = slice<associatedType_t<pType::Uint>>;
-
         //c++ housekeeping
         VFieldFile();                                                                       //default constructor makes the empty structure
         explicit VFieldFile(const pathType& name, bool prefetch = true): VFieldFile()       //reads the file upon construction
@@ -65,14 +61,9 @@ namespace VField{
         std::span<VField> fieldView();
         std::span<const VField> fieldView() const;
         
-        //slice read operations
-        //first slice along the internal point count, array returned is only weakly addressable
-        VField readSlice(const std::size_t&, const slice_type&) const noexcept;
-        //and then same for slice along mesh of rectangular grid, returns a valid field
-        VField readSlice(const std::size_t& sliceN, 
-                           const slice_type& xslice,
-                           const slice_type& yslice,
-                           const slice_type& zslice) const noexcept;
+        //Read a contiguous half-open range of points from a segment.
+        VField readSlice(std::size_t segment, std::size_t firstPoint,
+                         std::size_t pointCount) const noexcept;
 
     };
 }

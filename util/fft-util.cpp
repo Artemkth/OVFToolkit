@@ -319,11 +319,11 @@ void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile
 
     //for irregular meshes offset skips over coordinate tripplets
     const auto adjBegin  = (mType == VField::OVFHeader::MeshType::rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
-    const auto adjEnd    = ((mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim + 1;
+    const auto adjEnd    = ((mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim;
 
     auto importer = [&](const std::pair<std::size_t, VField::VFieldFile>& handle)
     {
-        auto slice = handle.second.readSlice(0, { adjBegin, adjEnd, 1 });
+        auto slice = handle.second.readSlice(0, adjBegin, adjEnd - adjBegin);
 
         if (slice.curDataInternalSize() == 4)
             loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
