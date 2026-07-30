@@ -8,7 +8,6 @@
 #include<regex>
 #include<algorithm>
 #include<optional>
-#include"OVFUtil.h"
 #include"OVFParser.h"
 #include"OVFDictionary.h"
 //boost endian conversion library setup
@@ -108,43 +107,39 @@ namespace VField{
     std::regex regexTokenValue(const std::string& token, const std::string& value)
     { return std::regex("^#\\s*(" + token + ")\\s*:\\s*(" + value + ")\\s*(?:##.*)?$", commonFlags); }
 
-    //collection of patterns for all the parameters
-    const std::map<OVFParameter, std::regex> TokenMap
+    //Reader patterns are derived from the canonical dictionary tokens. The
+    //exceptions accept syntax shared by multiple OVF versions or structural
+    //lines which do not have a conventional token/value pair.
+    const std::map<OVFParameter, std::regex> TokenMap = []
     {
-        { OVFParameter::Open,    regexToken("Begin")            },
-        { OVFParameter::Close,   regexToken("End")              },
-        { OVFParameter::Comment, std::regex("^#{2,}(.*)$")      },
-        { OVFParameter::Desc,    regexToken("Desc")             },
-        { OVFParameter::Munit,   regexToken("meshunit")         },
-        { OVFParameter::Segcnt,  regexToken("Segment\\s+count") },
-        { OVFParameter::Munit,   regexToken("meshunit")         },
-        { OVFParameter::Vunit,   regexToken("valueunits?")      },//last s is optional for OVF 2
-        { OVFParameter::Vmult,   regexToken("valuemultiplier")  },
-        { OVFParameter::Vdim,    regexToken("valuedim")         },
-        { OVFParameter::Xmin,    regexToken("xmin")             },
-        { OVFParameter::Ymin,    regexToken("ymin")             },
-        { OVFParameter::Zmin,    regexToken("zmin")             },
-        { OVFParameter::Xmax,    regexToken("xmax")             },
-        { OVFParameter::Ymax,    regexToken("ymax")             },
-        { OVFParameter::Zmax,    regexToken("zmax")             },
-        { OVFParameter::Bound,   regexToken("boundary")         },
-        { OVFParameter::Vmax,    regexToken("ValueRangeMaxMag") },
-        { OVFParameter::Vmin,    regexToken("ValueRangeMinMag") },
-        { OVFParameter::Mtype,   regexToken("meshtype")         },
-        { OVFParameter::Pcount,  regexToken("pointcount")       },
-        { OVFParameter::Xbase,   regexToken("xbase")            },
-        { OVFParameter::Ybase,   regexToken("ybase")            },
-        { OVFParameter::Zbase,   regexToken("zbase")            },
-        { OVFParameter::Xstep,   regexToken("xstepsize")        },
-        { OVFParameter::Ystep,   regexToken("ystepsize")        },
-        { OVFParameter::Zstep,   regexToken("zstepsize")        },
-        { OVFParameter::Xnodes,  regexToken("xnodes")           },
-        { OVFParameter::Ynodes,  regexToken("ynodes")           },
-        { OVFParameter::Znodes,  regexToken("znodes")           },
-        { OVFParameter::Title,   regexToken("title")            },
-        { OVFParameter::Vlabels, regexToken("valuelabels")      },
-        { OVFParameter::Empty,   std::regex("^#\\s*(##.*)?$")   } //includes the case of comment on empty line
-    };
+        std::map<OVFParameter, std::regex> result{
+            {OVFParameter::Comment, std::regex("^#{2,}(.*)$")},
+            {OVFParameter::Empty, std::regex("^#\\s*(##.*)?$")}
+        };
+
+        for(const auto& descriptor: ParamTable)
+        {
+            const auto parameter = descriptor.parameter;
+            if(parameter == OVFParameter::Comment || parameter == OVFParameter::Empty)
+                continue;
+
+            if(parameter == OVFParameter::Vunit)
+            {
+                result.emplace(parameter, regexToken("valueunits?"));
+                continue;
+            }
+            if(parameter == OVFParameter::Segcnt)
+            {
+                result.emplace(parameter, regexToken("Segment\\s+count"));
+                continue;
+            }
+
+            const auto token = paramToken(parameter, OVFVersion::OVF2);
+            if(token.has_value())
+                result.emplace(parameter, regexToken(std::string(*token)));
+        }
+        return result;
+    }();
 
     //forward declarations of main functions
     //function to read the header, stops after reaching '# End: Header', stream is kept at just after end header line

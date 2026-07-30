@@ -29,6 +29,50 @@
 #include "OVFHeader.h"
 #include "OVFVersion.h"
 
+namespace VField {
+
+  /**
+   * @name Binary scalar representation requirements
+   *
+   * OVF binary data stores IEEE 754 values in fixed four- and eight-byte
+   * representations. Reject platforms whose native float or double cannot be
+   * serialized without conversion to those standard representations.
+   * @{
+   */
+  static_assert(std::numeric_limits<double>::is_iec559,
+      "The system's double is not IEC 559 compatible");
+  static_assert(std::numeric_limits<float>::is_iec559,
+      "The system's float is not IEC 559 compatible");
+  static_assert(sizeof(float) == 4,
+      "The system's float has the wrong number of bytes");
+  static_assert(sizeof(double) == 8,
+      "The system's double has the wrong number of bytes");
+  static_assert(sizeof(1.0) == sizeof(double),
+      "Double literals have an unexpected representation");
+  static_assert(sizeof(1.0f) == sizeof(float),
+      "Float literals have an unexpected representation");
+  /** @} */
+
+  /**
+   * @brief OVF binary data sentinel for a scalar type.
+   *
+   * Binary data blocks begin with this value so readers can validate scalar
+   * width and byte order before consuming the field data. Only the float and
+   * double specializations are meaningful OVF sentinels.
+   *
+   * @tparam T Scalar representation used by the binary data block.
+   */
+  template<typename T>
+    inline constexpr T TestVal{};
+
+  template<>
+    inline constexpr float TestVal<float> = 1234567.0f;
+
+  template<>
+    inline constexpr double TestVal<double> = 123456789012345.0;
+
+} // namespace VField
+
 //namespace with utilities for pre-compile computation
 namespace DictionaryHelpers{
   using Parameter      = VField::OVFParameter;
@@ -196,8 +240,8 @@ namespace DictionaryHelpers{
   { return version == VField::OVFVersion::OVF2 ? "valueunits" : "valueunit"; }
 
   inline constexpr std::array SourceParamTable{
-      ParamDescriptor{Parameter::Open,          ParameterType::Other,  "Opening marker"},
-      ParamDescriptor{Parameter::Close,         ParameterType::Other,  "Closing marker"},
+      ParamDescriptor{Parameter::Open,          ParameterType::Other,  "Opening marker", "Begin"},
+      ParamDescriptor{Parameter::Close,         ParameterType::Other,  "Closing marker", "End"},
       ParamDescriptor{Parameter::Segcnt,        ParameterType::Other,  "Segment count marker", "Segment count"},
       ParamDescriptor{Parameter::Mtype,         ParameterType::Other,  "Mesh type", "Meshtype"},
       ParamDescriptor{Parameter::Empty,         ParameterType::Other,  "Empty line"},
@@ -220,7 +264,7 @@ namespace DictionaryHelpers{
       ParamDescriptor{Parameter::Znodes,        ParameterType::Uint,   "Mesh z nodes", "znodes"},
 
       ParamDescriptor{Parameter::Vmult,         ParameterType::Float,  "Vector field value multiplier", "valuemultiplier"},
-      ParamDescriptor{Parameter::Vmin,          ParameterType::Float,  "Minimal vector field absolute value", "ValueRangeMinMax"},
+      ParamDescriptor{Parameter::Vmin,          ParameterType::Float,  "Minimal vector field absolute value", "ValueRangeMinMag"},
       ParamDescriptor{Parameter::Vmax,          ParameterType::Float,  "Maximal vector field absolute value", "ValueRangeMaxMag"},
       ParamDescriptor{Parameter::Xmin,          ParameterType::Float,  "Minimal mesh x value", "xmin"},
       ParamDescriptor{Parameter::Xmax,          ParameterType::Float,  "Maximal mesh x value", "xmax"},

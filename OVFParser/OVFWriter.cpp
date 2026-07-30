@@ -5,7 +5,6 @@
 #include<utility>
 #include<iomanip>
 #include<cstdint>
-#include"OVFUtil.h"
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
 //endian conversion
@@ -13,59 +12,8 @@
 
 namespace VField
 {
-    //header writing paraphernalia 
-    const std::map<OVFParameter, std::variant<
-                                    std::string,
-                                    std::string (*)(const OVFVersion)>>
-                                        TokenNames
-    {
-        { OVFParameter::Title,          "Title"                 },
-        { OVFParameter::Desc,           "Desc"                  },
-        { OVFParameter::Segcnt,         "Segment count"         },
-        { OVFParameter::Munit,          "meshunit"              },
-        { OVFParameter::Vunit, 
-          [](const OVFVersion ver) -> std::string 
-            { return ver == OVFVersion::OVF1? "valueunit" : "valueunits"; }
-        },
-        { OVFParameter::Vmult,          "valuemultiplier"       },
-        { OVFParameter::Vdim,           "valuedim"              },
-        { OVFParameter::Vlabels,        "valuelabels"           },
-        { OVFParameter::Xmin,           "xmin"                  },
-        { OVFParameter::Xmax,           "xmax"                  },
-        { OVFParameter::Ymin,           "ymin"                  },
-        { OVFParameter::Ymax,           "ymax"                  },
-        { OVFParameter::Zmin,           "zmin"                  },
-        { OVFParameter::Zmax,           "zmax"                  },
-        { OVFParameter::Bound,          "boundary"              },
-        { OVFParameter::Vmax,           "ValueRangeMaxMag"      },
-        { OVFParameter::Vmin,           "ValueRangeMinMax"      },
-        { OVFParameter::Mtype,          "Meshtype"              },
-        { OVFParameter::Pcount,         "pointcount"            },
-        { OVFParameter::Xbase,          "xbase"                 },
-        { OVFParameter::Ybase,          "ybase"                 },
-        { OVFParameter::Zbase,          "zbase"                 },
-        { OVFParameter::Xstep,          "xstepsize"             },
-        { OVFParameter::Ystep,          "ystepsize"             },
-        { OVFParameter::Zstep,          "zstepsize"             },
-        { OVFParameter::Xnodes,         "xnodes"                },
-        { OVFParameter::Ynodes,         "ynodes"                },
-        { OVFParameter::Znodes,         "znodes"                }
-    };
-
-    inline std::string getName(const OVFVersion ver, const OVFParameter par)
-    {
-        auto val = TokenNames.at(par);
-        switch(val.index())
-        {
-        case(0): //plain string
-            return std::get<0>(val);
-        case(1): //predicate returning string
-            return std::get<1>(val)(ver);
-        default: //no need to do default case unless somebody doesn't initialize a field in a map
-                 //but just in case
-            return "";
-        }
-    }
+    inline std::string_view getName(OVFVersion version, OVFParameter parameter)
+    { return paramToken(parameter, version).value(); }
 
     //next a specification for OVF 'recepies' is required!
     using FieldSpecifier = 
@@ -291,4 +239,3 @@ namespace VField
         return log;
     }
 }
-
