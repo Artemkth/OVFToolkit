@@ -476,12 +476,12 @@ namespace VField {
     constexpr const auto& parameterDescriptor(OVFParameter parameter) noexcept
     {
       const auto beg { static_cast<DictionaryHelpers::UnderlyingType> (FirstParameter) };
-      const auto end { static_cast<DictionaryHelpers::UnderlyingType> (LastParameter) };
       const auto parmRep { static_cast<DictionaryHelpers::UnderlyingType> (parameter) };
 
       //OOB check for poor programming, would need to static cast to OVFParameter enum dangerously to trigger
       //earlier static assert insures that every named enum member is in the table
-      assert( end >= parmRep && parmRep >= beg );
+      assert( static_cast<DictionaryHelpers::UnderlyingType>(LastParameter) >= parmRep &&
+              parmRep >= beg );
       //in release this will throw and terminate immediately instead
       return ParamTable.at( static_cast<std::size_t>(parmRep - beg) );
     }

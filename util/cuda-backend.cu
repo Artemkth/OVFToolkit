@@ -216,8 +216,11 @@ template<typename T>
 __host__ cufftResult cufftGetSizeManyWrap(cufftHandle plan, T* fftLen, T batchSize, std::size_t *estimate)
 {
     T cPoints { *fftLen/2 + 1 };
+    T paddedRealPoints { 2 * cPoints };
 
-    return cuSizeEstFunc<T>(plan, 1, fftLen, fftLen, batchSize, 1, &cPoints, batchSize, 1, CUFFT_R2C, batchSize, estimate);
+    return cuSizeEstFunc<T>(plan, 1, fftLen,
+        &paddedRealPoints, 1, paddedRealPoints,
+        &cPoints, 1, cPoints, CUFFT_R2C, batchSize, estimate);
 }
 
 //ofc cudaMalloc is a macro, fml
@@ -239,10 +242,17 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
         return 0;
     const std::size_t outputBytesPerTransform = sizeof(cufftComplex) * cPoints;
     const auto transformLength = static_cast<std::size_t>(len);
+    if(transformLength > sizeMax / sizeof(float))
+        return 0;
+    const auto inputBytesPerTransform = transformLength * sizeof(float);
     if(transformLength > 1 && transformLength - 1 > sizeMax / (2 * sizeof(float)))
         return 0;
     const std::size_t interpolationScratchPerTransform = transformLength > 1
         ? 2 * (transformLength - 1) * sizeof(float) : 0;
+    if(inputBytesPerTransform > sizeMax - interpolationScratchPerTransform)
+        return 0;
+    const std::size_t stagingBytesPerTransform = std::max(outputBytesPerTransform,
+        inputBytesPerTransform + interpolationScratchPerTransform);
     if(transformLength > 1 &&
        (transformLength > (sizeMax / sizeof(float) + 5) / 4 ||
         transformLength - 2 > sizeMax / sizeof(std::size_t)))
@@ -262,9 +272,6 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
     // cuFFT documents an upper bound of eight times the input data for its
     // workspace. Use it only to choose a representative batch for measuring
     // the actual multiplier; a pessimistic bound must not reject batch one.
-    if(static_cast<std::size_t>(len) > sizeMax / sizeof(float))
-        return 0;
-    const auto inputBytesPerTransform = static_cast<std::size_t>(len) * sizeof(float);
     const auto maxWorkspacePerTransform = inputBytesPerTransform > sizeMax / 8
         ? sizeMax : 8 * inputBytesPerTransform;
     const auto conservativeBytesPerTransform =
@@ -279,7 +286,7 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
                   plan, &len, sampleBatch, &workspace}.exec())
         return 0;
 
-    const auto workspacePerTransform = std::max(interpolationScratchPerTransform,
+    const auto workspacePerTransform = std::max(stagingBytesPerTransform,
         workspace / conservativeBatch + (workspace % conservativeBatch != 0));
     if(workspacePerTransform > sizeMax - outputBytesPerTransform)
         return 0;
@@ -303,12 +310,12 @@ __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t max
         if(batchSize <= maxMem / outputBytesPerTransform)
         {
             const auto outputBytes = batchSize * outputBytesPerTransform;
-            const auto interpolationScratch = batchSize * interpolationScratchPerTransform;
-            if(std::max(workspace, interpolationScratch) <= maxMem - outputBytes)
+            const auto stagingBytes = batchSize * stagingBytesPerTransform;
+            if(std::max(workspace, stagingBytes) <= maxMem - outputBytes)
                 return batchSize;
         }
 
-        const auto observedWorkspacePerTransform = std::max(interpolationScratchPerTransform,
+        const auto observedWorkspacePerTransform = std::max(stagingBytesPerTransform,
             workspace / batchSize + (workspace % batchSize != 0));
         if(observedWorkspacePerTransform > sizeMax - outputBytesPerTransform)
             return 0;
@@ -489,10 +496,11 @@ template<typename T>
 cufftResult cufftMakePlanWrap(cufftHandle plan, T fftLength, T batch_size, std::size_t* workAreaSize)
 {
     T cPoints { fftLength/2 + 1 };
+    T paddedRealPoints { 2 * cPoints };
 
     return cufftMakePlanFnc<T>(plan, 1, &fftLength,
-            &fftLength, batch_size, 1,
-            &cPoints, batch_size, 1,
+            &paddedRealPoints, 1, paddedRealPoints,
+            &cPoints, 1, cPoints,
             CUFFT_R2C, batch_size, workAreaSize);
 }
 
@@ -521,10 +529,17 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
     const auto interpolationScratchPerTransform = fftLength > 1 &&
         fftLength - 1 <= sizeMax / (2 * sizeof(float))
         ? 2 * (fftLength - 1) * sizeof(float) : sizeMax;
-    const auto interpolationScratch = interpolationScratchPerTransform == 0 ? 0 :
-        (batch_size <= sizeMax / interpolationScratchPerTransform
-            ? interpolationScratchPerTransform * batch_size : sizeMax);
-    const auto requiredBufferSize = std::max(workSize, interpolationScratch);
+    const auto inputBytesPerTransform = fftLength <= sizeMax / sizeof(float)
+        ? fftLength * sizeof(float) : sizeMax;
+    const auto stagingBytesPerTransform = inputBytesPerTransform <=
+        sizeMax - interpolationScratchPerTransform
+        ? std::max(sizeof(cufftComplex) * cPoints,
+            inputBytesPerTransform + interpolationScratchPerTransform)
+        : sizeMax;
+    const auto stagingSize = stagingBytesPerTransform == 0 ? 0 :
+        (batch_size <= sizeMax / stagingBytesPerTransform
+            ? stagingBytesPerTransform * batch_size : sizeMax);
+    const auto requiredBufferSize = std::max(workSize, stagingSize);
 
     const bool needsAllocation = (!lazy && allocDataSize != 0) ||
         allocDataSize < batch_size || allocBufferSize < requiredBufferSize;
@@ -698,6 +713,43 @@ void cuFFTEngine::InterpAccel_t::free()
     interpReady = false;
 }
 
+// Convert the public time-major layout to cuFFT's padded transform-major
+// layout. In this layout every real input and complex output transform starts
+// at the same byte address, as required for an in-place R2C transform.
+__global__ void pack_real_transforms(const float* const __restrict__ source,
+                                     float* const __restrict__ destination,
+                                     std::size_t transformLength,
+                                     std::size_t batchSize,
+                                     std::size_t paddedLength)
+{
+    const std::size_t coord = (blockIdx.y * gridDim.x + blockIdx.x) * threadPerBlock +
+                              threadIdx.y * blockDim.x + threadIdx.x;
+    const std::size_t count = transformLength * batchSize;
+    if(coord >= count)
+        return;
+
+    const auto time = coord / batchSize;
+    const auto transform = coord % batchSize;
+    destination[transform * paddedLength + time] = source[coord];
+}
+
+// Restore the public frequency-major layout after the in-place transform.
+__global__ void unpack_complex_transforms(const cufftComplex* const __restrict__ source,
+                                          cufftComplex* const __restrict__ destination,
+                                          std::size_t complexPoints,
+                                          std::size_t batchSize)
+{
+    const std::size_t coord = (blockIdx.y * gridDim.x + blockIdx.x) * threadPerBlock +
+                              threadIdx.y * blockDim.x + threadIdx.x;
+    const std::size_t count = complexPoints * batchSize;
+    if(coord >= count)
+        return;
+
+    const auto frequency = coord / batchSize;
+    const auto transform = coord % batchSize;
+    destination[coord] = source[transform * complexPoints + frequency];
+}
+
 //run interpolation over data to remove jitter
 __global__ void interp_kernel(float * const __restrict__ data,
                                            float * const __restrict__ workBuffer,
@@ -774,24 +826,49 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 
     if( padding != 0 )
         fail = reallocate(realSize) == 0;
-    //move data into array
-    fail = fail || cudaMemcpy( (void*)data, (const void*)input, realSize * fftLength * sizeof(cufftReal), cudaMemcpyHostToDevice ) != cudaSuccess;
+    const auto inputCount = realSize * fftLength;
+    const auto complexPoints = fftLength / 2 + 1;
+    const auto outputCount = realSize * complexPoints;
+    const auto paddedLength = 2 * complexPoints;
+
+    // Stage the public time-major input in the shared work allocation. The
+    // buffer becomes cuFFT workspace only after packing has completed.
+    fail = fail || cudaMemcpy(cudaBuffer, input, inputCount * sizeof(cufftReal),
+                             cudaMemcpyHostToDevice) != cudaSuccess;
     //reinterpolate data if interpolation is ready
     if ( InterpAccel.interpReady && !fail )
     {
+        auto scratch = static_cast<float*>(cudaBuffer) + inputCount;
         interp_kernel<<<to_grid(realSize, DefaultBlockSize), DefaultBlockSize>>>(
-                (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, realSize, fftLength,
+                static_cast<float*>(cudaBuffer), scratch, InterpAccel.sCnt, realSize, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l, 
                 InterpAccel.Indices, InterpAccel.dt);
+        fail = cudaGetLastError() != cudaSuccess;
+    }
+
+    if(!fail)
+    {
+        pack_real_transforms<<<to_grid(inputCount, DefaultBlockSize), DefaultBlockSize>>>(
+            static_cast<const float*>(cudaBuffer), reinterpret_cast<float*>(data),
+            fftLength, realSize, paddedLength);
         fail = cudaGetLastError() != cudaSuccess;
     }
 
     fail = fail || cufftExecR2C( plan, (cufftReal*)data, data ) != CUFFT_SUCCESS;
     //if there is a norm to use, normalize the data
     if( norm != 1.0f && !fail )
-        normalize<<<to_grid(2 * realSize * (fftLength/2 + 1), DefaultBlockSize), DefaultBlockSize>>> ( (cufftReal*)data, 2 * realSize * (fftLength/2 + 1), norm );
+        normalize<<<to_grid(2 * outputCount, DefaultBlockSize), DefaultBlockSize>>>
+            (reinterpret_cast<cufftReal*>(data), 2 * outputCount, norm);
 
-    fail = fail || cudaMemcpy( (void*)input, (const void*)data, realSize * (fftLength/2 + 1) * sizeof(cufftComplex), cudaMemcpyDeviceToHost ) != cudaSuccess;
+    if(!fail)
+    {
+        unpack_complex_transforms<<<to_grid(outputCount, DefaultBlockSize), DefaultBlockSize>>>(
+            data, static_cast<cufftComplex*>(cudaBuffer), complexPoints, realSize);
+        fail = cudaGetLastError() != cudaSuccess;
+    }
+
+    fail = fail || cudaMemcpy(input, cudaBuffer, outputCount * sizeof(cufftComplex),
+                              cudaMemcpyDeviceToHost) != cudaSuccess;
     fail = fail || cudaDeviceSynchronize() != cudaSuccess;
 
     if( !fail && padding != 0 )

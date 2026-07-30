@@ -87,6 +87,32 @@ find_package(FFTW COMPONENTS FLOAT_THREADS_LIB)
 include(CheckLanguage)
 CHECK_LANGUAGE(CUDA)
 IF(CMAKE_CUDA_COMPILER)
+    # CUDA 12 rejects GCC 15 by default. Using an older G++ only for nvcc can
+    # mix incompatible C++ runtimes at the final G++ 15 link, so keep one host
+    # toolchain throughout and explicitly allow the unsupported combination.
+    execute_process(
+        COMMAND "${CMAKE_CUDA_COMPILER}" --version
+        OUTPUT_VARIABLE OVFTOOLKIT_NVCC_VERSION_OUTPUT
+        ERROR_QUIET)
+    string(REGEX MATCH "release ([0-9]+)\\."
+        OVFTOOLKIT_NVCC_VERSION_MATCH "${OVFTOOLKIT_NVCC_VERSION_OUTPUT}")
+    set(OVFTOOLKIT_CUDA_MAJOR "${CMAKE_MATCH_1}")
+
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15 AND
+       OVFTOOLKIT_CUDA_MAJOR AND OVFTOOLKIT_CUDA_MAJOR LESS 13)
+        set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH
+            "Host compiler used by nvcc" FORCE)
+        if(NOT CMAKE_CUDA_FLAGS MATCHES "(^| )--allow-unsupported-compiler($| )")
+            set(CMAKE_CUDA_FLAGS
+                "${CMAKE_CUDA_FLAGS} --allow-unsupported-compiler"
+                CACHE STRING "Flags used by the CUDA compiler" FORCE)
+        endif()
+        message(WARNING
+            "CUDA ${OVFTOOLKIT_CUDA_MAJOR} with GCC ${CMAKE_CXX_COMPILER_VERSION}: "
+            "enabling --allow-unsupported-compiler")
+    endif()
+
     ENABLE_LANGUAGE(CUDA)
     SET(CUDA_FOUND On)
     IF(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
