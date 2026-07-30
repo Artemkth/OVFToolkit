@@ -9,6 +9,32 @@
 
 int main()
 {
+    {
+        VField::VField owned;
+        auto source = std::make_unique<double[]>(3);
+        source[0] = 1.0;
+        source[1] = 2.0;
+        source[2] = 3.0;
+        auto* original = source.get();
+        owned.insertData(std::move(source), 3);
+
+        auto released = owned.releaseData<double>();
+        if(released.get() != original || owned.isDataPresent() || owned.curDataPoints() != 0 ||
+           released[0] != 1.0 || released[2] != 3.0)
+        {
+            std::cerr << "Releasing field data did not transfer ownership correctly!\n";
+            return 17;
+        }
+
+        owned.insertData(std::move(released), 3);
+        owned.clearData();
+        if(owned.isDataPresent() || owned.curDataPoints() != 0)
+        {
+            std::cerr << "Clearing field data did not reset its storage!\n";
+            return 18;
+        }
+    }
+
     //begin by setting and populating a common VField file
     VField::VField testData;
     //populate with data using random

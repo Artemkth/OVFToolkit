@@ -933,6 +933,8 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
     int* dims {nullptr};
     int depth {0};
     char** headers {nullptr};
+    double* real64Data {nullptr};
+    float* real32Data {nullptr};
 
     //and create a VField header for future dumping, empty for now
     VField::VField field{}; //and import the data into it
@@ -941,27 +943,43 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
         //switch is for later if I decide to add long double
         case 8:
             {
-                double* data {nullptr};
-                
-                if(WSGetReal64Array(stdlink, &data, &dims, &headers, &depth) == 0 || (depth != 2 && depth != 4))
+                if(WSGetReal64Array(stdlink, &real64Data, &dims, &headers, &depth) == 0)
                     throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+                if(depth != 2 && depth != 4)
+                {
+                    WSReleaseReal64Array(stdlink, real64Data, dims, headers, depth);
+                    throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+                }
                 std::size_t dataPts {1};
                 for(std::size_t i = 0; i < depth; i++)
                     dataPts *= dims[i];
 
-                //put data into VField
-                field.insertData(data, dataPts);
+                try { field.setData(real64Data, dataPts); }
+                catch(...)
+                {
+                    WSReleaseReal64Array(stdlink, real64Data, dims, headers, depth);
+                    throw;
+                }
                 break;
             }
         default:
-            float* data {nullptr};
-            if(WSGetReal32Array(stdlink, &data, &dims, &headers, &depth) == 0 || (depth != 2 && depth != 4))
+            if(WSGetReal32Array(stdlink, &real32Data, &dims, &headers, &depth) == 0)
                 throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+            if(depth != 2 && depth != 4)
+            {
+                WSReleaseReal32Array(stdlink, real32Data, dims, headers, depth);
+                throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+            }
             std::size_t dataPts {1};
             for(std::size_t i = 0; i < depth; i++)
                 dataPts *= dims[i];
 
-            field.insertData(data, dataPts);
+            try { field.setData(real32Data, dataPts); }
+            catch(...)
+            {
+                WSReleaseReal32Array(stdlink, real32Data, dims, headers, depth);
+                throw;
+            }
     }
     VField::OVFHeader& head {field.Header};
     //first deduce mesh type
@@ -983,7 +1001,10 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
         head.at<VField::pType::Uint>(VField::OVFParameter::Vdim)   = dims[3];
     }
 
-    WSReleaseReal64Array(stdlink, nullptr, dims, headers, depth);
+    if(real64Data != nullptr)
+        WSReleaseReal64Array(stdlink, real64Data, dims, headers, depth);
+    else
+        WSReleaseReal32Array(stdlink, real32Data, dims, headers, depth);
     return field;
 }
 

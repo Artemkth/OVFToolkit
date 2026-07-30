@@ -36,8 +36,6 @@ namespace VField{
         if(!data -> log.empty()) data->log += '\n';
         data->log += msg;
     }
-    void VFieldFile::clearLog() const
-    { data -> log = ""; }
     const std::string& VFieldFile::WorkLog() const
     { return data -> log; }
 
@@ -67,6 +65,13 @@ namespace VField{
         if(index >= data->fields.size())
             return false;
         return data->fields[index].isDataPresent();
+    }
+    bool VFieldFile::unfetch(std::size_t index) noexcept
+    {
+        if(index >= data->fields.size())
+            return false;
+        data->fields[index].clearData();
+        return true;
     }
     bool VFieldFile::hasData(std::size_t index) const noexcept
     {
@@ -172,9 +177,9 @@ namespace VField{
     //reading from file
     bool VFieldFile::read( const pathType& path, bool prefetch) noexcept
     {
-        //reset the log
-        clearLog();
-        //and set the file name!
+        //A read always starts at the beginning of a file and owns a fresh set
+        //of diagnostics. Lazy-access diagnostics may be appended afterwards.
+        data->log.clear();
         fPath = path;
 
         constexpr std::array<OVFParameter, 5> TopLevelTags{
@@ -729,7 +734,7 @@ namespace VField{
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         for(std::size_t i =0; i < importDepth; i++)
                             boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(buffer.get() + i));
-                    out.insertData(buffer.release(), importDepth);
+                    out.insertData(std::move(buffer), importDepth);
                     return log; 
                 }
                 if(internalSize == 8)
@@ -760,7 +765,7 @@ namespace VField{
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         for(std::size_t i =0; i < importDepth; i++)
                             boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(buffer.get() + i));
-                    out.insertData(buffer.release(), importDepth);
+                    out.insertData(std::move(buffer), importDepth);
                     return log; 
                 }
             }
@@ -808,7 +813,7 @@ namespace VField{
                         return log;
                     }
                 }
-                out.insertData(buffer.release(), importDepth);
+                out.insertData(std::move(buffer), importDepth);
                 return log; 
             }
         }

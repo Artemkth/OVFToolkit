@@ -375,17 +375,17 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     }
 
     //data, later to be put into VField container, disposed by VField's destructor
-    float* data = new float[ commonHeader.expectedPoints() * commonHeader.expectedDimension() ];
+    auto data = std::make_unique<float[]>(commonHeader.expectedPoints() * commonHeader.expectedDimension());
     //copy the coordinates if buffer is irregular
     if(mType == VField::OVFHeader::MeshType::irregular)
     {
         assert(("Expected a coordinate field for transform", irregCoords != nullptr)); 
         for(std::size_t i = 0; i < pntCnt; i++)
-            std::copy_n(irregCoords + i * 3, 3, data + i * (vdim + 3));
+            std::copy_n(irregCoords + i * 3, 3, data.get() + i * (vdim + 3));
     }
 
     VField::VField field ( commonHeader );
-    field.insertData( data, commonHeader.expectedPoints() * commonHeader.expectedDimension() );
+    field.insertData(std::move(data), commonHeader.expectedPoints() * commonHeader.expectedDimension());
     output << commonHeader.getString( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
 
     std::string desc{};
@@ -405,7 +405,10 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
 
             std::size_t offset = 2 * descriptor[j][0];
             std::size_t dist = 2 * ( descriptor[j][1] - descriptor[j][0] );
-            float* dest = (mType == VField::OVFHeader::MeshType::rectangular ? data + offset : data + (3 + vdim) * offset/vdim + 3 + offset % vdim);
+            auto* fieldData = field.getData<float>();
+            float* dest = (mType == VField::OVFHeader::MeshType::rectangular
+                ? fieldData + offset
+                : fieldData + (3 + vdim) * offset / vdim + 3 + offset % vdim);
             const float* curSection { nullptr };
             if( j < ramBufferCnt )
                 curSection = hostBuffer + cnt * offset + i * dist; 

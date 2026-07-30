@@ -102,28 +102,16 @@ namespace VField{
         }
         //conversion constructors, eat up the pointer
         template<typename T>
-        explicit StorageArray(T* data, const std::size_t& length): StorageArray()
+        explicit StorageArray(std::unique_ptr<T[]> data, const std::size_t& length): StorageArray()
         {
-            static_assert(std::is_floating_point<T>::value, "StorageArray: constructed from a non-floating point argument!");
+            static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>,
+                          "StorageArray only stores float or double arrays");
             if (data == nullptr)
                 return;
-            //no trolling
+            if(length == 0)
+                return;
             storSize = length;
-            
-            //default assume it is 'double' value, casting to double
-            if ( storSize != 0 )
-            {
-                if constexpr (std::is_same_v<double, T> || std::is_same_v<float, T>)
-                  array.emplace<std::unique_ptr<T[]>>( data );
-                else
-                {
-                    //else convert data to 'double' and nuke it!
-                    double *buffer {nullptr};
-                    emplace_copy(&buffer, data, length);
-                    array.emplace<std::unique_ptr<double[]>>(buffer);
-                    delete[] data;
-                }
-            } else delete[] data; //omnomnom
+            array.emplace<std::unique_ptr<T[]>>(std::move(data));
         }
 
         StorageArray(StorageArray&& ref) noexcept = default;
@@ -202,6 +190,19 @@ namespace VField{
 
             return buffer;
           }
+
+        template<typename T>
+        std::unique_ptr<T[]> release()
+        {
+          static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
+          if(isEmpty())
+            return {};
+
+          auto released = std::move(std::get<std::unique_ptr<T[]>>(array));
+          array.emplace<std::monostate>();
+          storSize = 0;
+          return released;
+        }
     };
 
     
@@ -271,6 +272,10 @@ namespace VField{
     
     void VField::clearData() noexcept
     { data -> clear(); }
+
+    template<typename T>
+      std::unique_ptr<T[]> VField::releaseData()
+      { return data->release<T>(); }
     
     //data access methods
     template<typename T>
@@ -304,14 +309,14 @@ namespace VField{
     
     //setters
     template <typename T>
-    void VField::insertData(T* arr, std::size_t size) noexcept
-    { data.reset(new StorageArray(arr, size) ); }
+    void VField::insertData(std::unique_ptr<T[]> arr, std::size_t size) noexcept
+    { data = std::make_unique<StorageArray>(std::move(arr), size); }
     template <typename T>
     void VField::setData(const T* arr, std::size_t size)
     {
-        auto buffer = new T[size];
-        std::copy_n( arr, size, buffer);
-        data.reset( new StorageArray(buffer, size) );
+        auto buffer = std::make_unique<T[]>(size);
+        std::copy_n(arr, size, buffer.get());
+        insertData(std::move(buffer), size);
     }
     
     //point set methods
@@ -362,12 +367,14 @@ namespace VField{
     template OVFPARSER_EXPORT double* VField::getData<double>();
     template OVFPARSER_EXPORT const float* VField::getData<float>() const;
     template OVFPARSER_EXPORT const double* VField::getData<double>() const;
+    template OVFPARSER_EXPORT std::unique_ptr<float[]> VField::releaseData<float>();
+    template OVFPARSER_EXPORT std::unique_ptr<double[]> VField::releaseData<double>();
     template OVFPARSER_EXPORT float* VField::getDataCopy<float>() const;
     template OVFPARSER_EXPORT double* VField::getDataCopy<double>() const;
     template OVFPARSER_EXPORT void VField::convert<float>();
     template OVFPARSER_EXPORT void VField::convert<double>();
-    template OVFPARSER_EXPORT void VField::insertData<float>(float*, std::size_t) noexcept;
-    template OVFPARSER_EXPORT void VField::insertData<double>(double*, std::size_t) noexcept;
+    template OVFPARSER_EXPORT void VField::insertData<float>(std::unique_ptr<float[]>, std::size_t) noexcept;
+    template OVFPARSER_EXPORT void VField::insertData<double>(std::unique_ptr<double[]>, std::size_t) noexcept;
     template OVFPARSER_EXPORT void VField::setData<float>(const float*, std::size_t);
     template OVFPARSER_EXPORT void VField::setData<double>(const double*, std::size_t);
     template OVFPARSER_EXPORT bool VField::stores<float>() const noexcept;

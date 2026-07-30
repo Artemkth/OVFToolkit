@@ -19,6 +19,7 @@ namespace VField{
         std::unique_ptr<FileData> data{};
 
         VField& fetch(std::size_t) const;
+        void logMessage(const std::string&) const;
 
     public:
         //c++ housekeeping
@@ -31,11 +32,8 @@ namespace VField{
         VFieldFile& operator= (VFieldFile&&) noexcept;
         ~VFieldFile();
 
-        //interfaces
-        //logging functions
+        //Diagnostics from the most recent read and any subsequent lazy access.
         const std::string& WorkLog() const;
-        void clearLog() const;
-        void logMessage(const std::string&) const;
 
         //get current file path
         const std::string& getCurrentPath() const
@@ -56,6 +54,9 @@ namespace VField{
         //you can free internal storage by yourself if needed to, since you have the explicit access
         bool isFetched(std::size_t ) const noexcept;
         bool hasData(std::size_t ) const noexcept;
+        //Release the in-memory array while retaining enough prefetch metadata
+        //to load it again later. Returns false for an invalid segment index.
+        bool unfetch(std::size_t) noexcept;
 
         //contiguous access to all segments; pending prefetched data is loaded first
         std::span<VField> fieldView();

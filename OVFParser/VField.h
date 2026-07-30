@@ -67,7 +67,7 @@ namespace VField{
             std::size_t curDataPoints() const noexcept;
             //is data present
             bool isDataPresent() const noexcept; 
-            //clearing out the storage
+            //Delete the stored array and reset the field to an empty state.
             void clearData() noexcept;
             //initialize it empty
             template<typename T>
@@ -76,7 +76,7 @@ namespace VField{
             //data access methods
             //setting data to whatever, clears previous data 
             template<typename T>
-            void insertData(T*, std::size_t) noexcept;
+            void insertData(std::unique_ptr<T[]>, std::size_t) noexcept;
             //same but with a copy, indicated by pointer being constant
             //throw when out of memory
             template<typename T>
@@ -90,6 +90,10 @@ namespace VField{
             T* getData();
             template <typename T>
             const T* getData() const;
+            //Transfer ownership of the stored array to the caller. Throws when
+            //T does not match the stored scalar type; an empty field returns null.
+            template <typename T>
+            [[nodiscard]] std::unique_ptr<T[]> releaseData();
             //get a copy, perform a conversion if needed
             template <typename T>
             T* getDataCopy() const;
@@ -225,21 +229,25 @@ namespace VField{
     OVFPARSER_EXPORT const float* VField::getData<float>() const;
     extern template
     OVFPARSER_EXPORT const double* VField::getData<double>() const;
+    extern template
+    OVFPARSER_EXPORT std::unique_ptr<float[]> VField::releaseData<float>();
+    extern template
+    OVFPARSER_EXPORT std::unique_ptr<double[]> VField::releaseData<double>();
 
     //template for getting a copy of internal array, changes to it will be not regarded
     extern template OVFPARSER_EXPORT float*  VField::getDataCopy<float>  () const;
     extern template OVFPARSER_EXPORT double* VField::getDataCopy<double> () const;
     //instantiation of empty data setter
     template<> inline OVFPARSER_EXPORT void VField::initData<float>(std::size_t size)
-    { insertData(new float[size]{}, size); }
+    { insertData(std::make_unique<float[]>(size), size); }
     template<> inline OVFPARSER_EXPORT void VField::initData<double>(std::size_t size)
-    { insertData(new double[size]{}, size); }
+    { insertData(std::make_unique<double[]>(size), size); }
     //instantiation of conversions
     extern template OVFPARSER_EXPORT void VField::convert<float>();
     extern template OVFPARSER_EXPORT void VField::convert<double>();
     //instantiation of data setters
-    extern template OVFPARSER_EXPORT void VField::insertData<float>(float*, std::size_t) noexcept;
-    extern template OVFPARSER_EXPORT void VField::insertData<double>(double*, std::size_t) noexcept;
+    extern template OVFPARSER_EXPORT void VField::insertData<float>(std::unique_ptr<float[]>, std::size_t) noexcept;
+    extern template OVFPARSER_EXPORT void VField::insertData<double>(std::unique_ptr<double[]>, std::size_t) noexcept;
     extern template OVFPARSER_EXPORT void VField::setData<float>(const float*, std::size_t);
     extern template OVFPARSER_EXPORT void VField::setData<double>(const double*, std::size_t);
     //instantiation of store check

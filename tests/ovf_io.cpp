@@ -134,6 +134,17 @@ int main(int argc, char** argv)
         std::cerr << "VFieldFile copy with unique ownership failed!\n";
         return 8;
     }
+    if(!readBack.unfetch(0) || readBack.isFetched(0) || !readBack.hasData(0) ||
+       readBack.unfetch(readBack.cntSegments()))
+    {
+        std::cerr << "Unfetch did not preserve lazy reload metadata!\n";
+        return 13;
+    }
+    if(!readBack[0].isDataPresent())
+    {
+        std::cerr << "Unfetched segment could not be fetched again!\n";
+        return 14;
+    }
 
     constexpr std::size_t sliceFirst = 7;
     constexpr std::size_t sliceCount = 5;
