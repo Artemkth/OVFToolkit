@@ -5,6 +5,7 @@
 #include<utility>
 #include<iomanip>
 #include<cstdint>
+#include<format>
 #include"OVFWriter.h"
 #include"OVFDictionary.h"
 //endian conversion
@@ -132,12 +133,12 @@ namespace VField
     }
 
     //first defining the rules for writing out a header using make_array helper template
-    inline std::string WriteHeader(std::ostream& out, const OVFVersion& version, const OVFHeader& header) noexcept
+    inline WriteResult WriteHeader(std::ostream& out, const OVFVersion& version, const OVFHeader& header) noexcept
     {
         //start by finding a ruleset if possible
         auto it = recepyIndex.find(version);
         if(it == recepyIndex.end())
-            return "WriteHeader: Unknow or unimplemented version encountered, aborting!";
+            return std::unexpected("WriteHeader: Unknown or unimplemented version encountered, aborting!");
 
         //logger
         std::string log {""};
@@ -159,9 +160,9 @@ namespace VField
                         {
                             if(required && !header.isSet(p))
                             {
-                                if(!log.empty())
-                                    log += "\n";
-                                log += (std::string)"WriteHeader: required field \"" + std::string(paramName(p)) + "\n was not found!";
+                                std::format_to(std::back_inserter(log),
+                                    "{}WriteHeader: required field '{}' was not found!",
+                                    log.empty() ? "" : "\n", paramName(p));
                                 continue;
                             }
                             if(optional && !header.isSet(p)) //falling through if it is just an option
@@ -171,7 +172,9 @@ namespace VField
                     break;
                 }
             }
-        return log;
+        if(!log.empty())
+            return std::unexpected(std::move(log));
+        return {};
     }
 
     //and a template binary data writer
@@ -202,18 +205,19 @@ namespace VField
         delete[] buff;
     }
 
-    std::string WriteSegment(std::ostream& out, const VField& field) noexcept
+    WriteResult WriteSegment(std::ostream& out, const VField& field) noexcept
     {
         if( !out.good())
-            return "WriteSegment: Stream given was not good, aborting!";
+            return std::unexpected("WriteSegment: Stream given was not good, aborting!");
         if( !field.isWeaklyAddressable())
-            return "WriteSegment: Vector field should at least be weakly addressable, aborting!";
+            return std::unexpected("WriteSegment: Vector field should at least be weakly addressable, aborting!");
         //set modifiers for 'text-mode' values
         out << std::setprecision(8);
         
         auto version = matchVersionString(field.Header.at<pType::String>(OVFParameter::VersionString));
         out << "# Begin: Segment\n# Begin: Header\n";
-        auto log = WriteHeader(out, version, field.Header);
+        auto headerResult = WriteHeader(out, version, field.Header);
+        std::string report = headerResult ? std::string{} : std::move(headerResult.error());
         out << "# End: Header\n# Begin: Data binary "<<field.curDataInternalSize() << "\n";
         switch(field.curDataInternalSize())
         {
@@ -224,18 +228,20 @@ namespace VField
                 WriteBinaryData<double>(out, version, field);
                 break;
             default:
-                if(!log.empty())
-                    log+="\n";
-                log += "WriteSegment: somehow got invalid internal data size! Please check 'isWeaklyAddressable' for bugs!";
+                std::format_to(std::back_inserter(report),
+                    "{}WriteSegment: somehow got invalid internal data size! Please check 'isWeaklyAddressable' for bugs!",
+                    report.empty() ? "" : "\n");
         }
         out << "# End: Data binary " <<field.curDataInternalSize() << "\n" << "# End: Segment";
         out.flush();
         if(!out.good())
         {
-            if(!log.empty())
-                log += "\n";
-            log += "WriteSegment: filesystem error occured while writing the segment!";
+            std::format_to(std::back_inserter(report),
+                "{}WriteSegment: filesystem error occurred while writing the segment!",
+                report.empty() ? "" : "\n");
         }
-        return log;
+        if(!report.empty())
+            return std::unexpected(std::move(report));
+        return {};
     }
 }

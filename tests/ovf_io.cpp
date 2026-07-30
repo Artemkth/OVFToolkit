@@ -104,10 +104,10 @@ int main(int argc, char** argv)
         }
     }
     //try writing ovf out in file named tmpOVF.ovf
-    auto write_log {WriteOVF(workingDir + "tmpOVF2.ovf", testOVF)};
-    if(!write_log.empty())
+    auto writeResult {WriteOVF(workingDir + "tmpOVF2.ovf", testOVF)};
+    if(!writeResult)
     {
-        std::cerr << "Got some errors while exporting an ovf2:\n" << write_log;
+        std::cerr << "Got some errors while exporting an ovf2:\n" << writeResult.error();
         return 2;
     }
 
@@ -155,7 +155,11 @@ int main(int argc, char** argv)
             }
     //and compare to original data, by first writing and then reading back
     auto BareOVF2 { const_cast<const VField::VFieldFile&>(readBack)[0] };
-    WriteOVF(workingDir + "tmpOVF2.ovf", testOVF);
+    if(auto rewriteResult = WriteOVF(workingDir + "tmpOVF2.ovf", testOVF); !rewriteResult)
+    {
+        std::cerr << "Got errors rewriting the OVF2 file:\n" << rewriteResult.error();
+        return 11;
+    }
     readBack.read(workingDir + "tmpOVF2.ovf");
     if(BareOVF2 != readBack[0])
     {
@@ -164,15 +168,19 @@ int main(int argc, char** argv)
     }
     //success with OVF2 parsing by this point, try OVF1 for kicks too
     testOVF.Header.set(VField::OVFParameter::VersionString, "# OOMMF: rectangular mesh v1.0");
-    write_log = WriteOVF(workingDir + "tmpOVF1.ovf", testOVF);
-    if(!write_log.empty())
+    writeResult = WriteOVF(workingDir + "tmpOVF1.ovf", testOVF);
+    if(!writeResult)
     {
-        std::cerr << "Got some errors while exporting an ovf1:\n" << write_log;
+        std::cerr << "Got some errors while exporting an ovf1:\n" << writeResult.error();
         return 5;
     }
     readBack.read(workingDir + "tmpOVF1.ovf");
     auto BareOVF1 { const_cast<const VField::VFieldFile&>(readBack)[0] };
-    WriteOVF(workingDir + "tmpOVF1.ovf", testOVF);
+    if(auto rewriteResult = WriteOVF(workingDir + "tmpOVF1.ovf", testOVF); !rewriteResult)
+    {
+        std::cerr << "Got errors rewriting the OVF1 file:\n" << rewriteResult.error();
+        return 12;
+    }
     readBack.read(workingDir + "tmpOVF1.ovf");
     if(BareOVF1 != readBack[0])
     {

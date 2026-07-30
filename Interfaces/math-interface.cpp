@@ -1365,9 +1365,8 @@ extern "C" void exportOVF(const char* fName, int optc)
         }
     }
 
-    auto log { WriteOVF( output.string(), field ) };
-    if(!log.empty())
-        PostErrorMessage("ExportOVF", "expfail", log);
+    if(auto result = WriteOVF(output.string(), field); !result)
+        PostErrorMessage("ExportOVF", "expfail", result.error());
 
     //on success end by returning a 'Null'
     deinit();
