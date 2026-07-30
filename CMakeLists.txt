@@ -156,11 +156,11 @@ target_include_directories(ovfparser PUBLIC
     $<INSTALL_INTERFACE:OVFParser>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/OVFParser>
     $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/OVFParser>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>
     PRIVATE
     #boost for building internals
     "${Boost_INCLUDE_DIRS}"
-    #config header
-    "${PROJECT_BINARY_DIR}")
+    )
 
 target_compile_options(ovfparser PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors -Wno-strict-aliasing>

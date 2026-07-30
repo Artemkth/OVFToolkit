@@ -1,6 +1,7 @@
 //header file for the main vector field storage container, template class VField
 #pragma once
 #include"OVFHeader.h"
+#include"OVFToolkitConfig.h"
 #include"ovfparser_export.h"
 #include<memory>
 
@@ -20,10 +21,6 @@ namespace md = Kokkos;
 }
 
 #endif
-#ifdef MDSPAN_AVAILABLE
-#include<mdspan>
-#endif
-
 namespace VField{
     class OVFPARSER_EXPORT VField
     {
