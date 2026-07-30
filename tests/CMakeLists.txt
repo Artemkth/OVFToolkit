@@ -17,6 +17,10 @@ target_link_libraries(io-test PRIVATE ovfparser)
 file(TO_NATIVE_PATH "${PROJECT_BINARY_DIR}" native_bin_dir)
 add_test(IOTests io-test "${native_bin_dir}")
 
+add_executable(frequency-test frequency.cpp)
+target_include_directories(frequency-test PRIVATE "${CMAKE_SOURCE_DIR}/util")
+add_test(FrequencyArithmeticTest frequency-test)
+
 if(CUDA_FOUND AND FFTW_FLOAT_LIB_FOUND)
     function(add_cuda_fft_test target source test_name)
         add_executable(${target} ${source} "${CMAKE_SOURCE_DIR}/util/cuda-backend.cu")

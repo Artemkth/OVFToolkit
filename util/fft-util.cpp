@@ -10,6 +10,7 @@
 #include<type_traits>
 #include<memory>
 #include<chrono>
+#include<format>
 
 //headers for parallelization, hurray for atomic future :D
 #include<atomic>
@@ -31,6 +32,7 @@
 
 //fft engines
 #include"cuda-backend.h"
+#include"fft-frequency.h"
 
 //console backend
 #include"console.h"
@@ -345,7 +347,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                      float const* n2last_buffer, float const* last_buffer,
                      const VField::OVFHeader& commonHeader,
                      std::size_t cnt,
-                     float freqInc,
+                     double freqInc,
                      std::atomic<std::size_t>& progVar,
                      float const* hostBuffer = nullptr,
                      std::size_t  ramBufferCnt  = 0,
@@ -395,7 +397,9 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     for(std::size_t i = 0; i < cnt; i++)
     {
         //add frequency stamp to the file
-        field.Header.set( VField::OVFParameter::Desc, desc + (!desc.empty()? "\n" : "")+ "f = " + std::to_string(freqInc * i) + " Hz");
+        field.Header.set(VField::OVFParameter::Desc,
+            desc + (!desc.empty() ? "\n" : "") +
+            std::format("f = {:.9g} Hz", freqInc * static_cast<double>(i)));
 
         //start copying data from mixed sources into vfield
         for( std::size_t j = 0; j <  bufTotal; j++ )
@@ -995,6 +999,8 @@ int main(int argc, char** argv)
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
     const float norm { no_norm? 1.0f : (float)std::sqrt( trueStep ) };//scaling to get value in amplitude/sqrt(Hz)
+    const double frequencyIncrement =
+        FFTUtil::frequencyIncrement(tSeriesLength, trueStep);
 
     auto printState = [&] (BufferState state) -> std::string
     {
@@ -1267,9 +1273,9 @@ int main(int argc, char** argv)
         });
 
     if(BatchSize < VFSize) exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
-                        head, tSeriesLength/2 + 1, 1 / (times.back() - times.front()), progVar,
+                        head, tSeriesLength/2 + 1, frequencyIncrement, progVar,
                         CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
-    else exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[0] -> data.get(), nullptr, head, tSeriesLength/2 + 1, 1/(times.back() - times.front()),
+    else exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[0] -> data.get(), nullptr, head, tSeriesLength/2 + 1, frequencyIncrement,
                          progVar, CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
