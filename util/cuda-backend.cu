@@ -226,49 +226,100 @@ cudaError_t(*cudaMallocFunc)(void**, size_t) = cudaMalloc;
 template<typename T>
 __host__ std::size_t EstimateBatchSize( cufftHandle plan, T len, std::size_t maxMem, std::size_t maxBatch )
 {
-    //clamp batch size to underlying type
-    constexpr T tMax = std::numeric_limits<T>::max();
-    if (maxBatch > tMax) maxBatch = tMax;
-    //number of complex values in result of R2C transform, len/2 rounds down automatically, desired behaviour
-    auto cPoints = len/2 + 1;
-    //first check if the transformation can fit with the least conservative memory usage 
-    //cuda might require at most 8x the original array size for work area
-    //https://docs.nvidia.com/cuda/cufft/#fourier-transform-setup
-    T batch_size{ std::min<T>(clamp_cast<T>(maxMem) / (9 * sizeof(cufftComplex) * cPoints), clamp_cast<T>(maxBatch)) };
-    std::size_t estimate{};
-
-    if ( !PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}.exec() )
+    if(len <= 0 || maxMem == 0 || maxBatch == 0)
         return 0;
 
-    //if by chance there is enough memory to do transform in a single batch, return that batch size
-    if( batch_size == maxBatch && maxMem <= (estimate + sizeof(cufftComplex) * batch_size * cPoints) )
-        return batch_size;
+    // Clamp the batch size to the index range supported by the selected API.
+    constexpr T tMax = std::numeric_limits<T>::max();
+    maxBatch = std::min(maxBatch, static_cast<std::size_t>(tMax));
 
-    //otherwise try to find the size just large enough starting from the linear extrapolation
-    //first guess is extrapolation, and I guess it is also the one before last :)
-    batch_size = std::min<T>( maxMem / (estimate/batch_size + sizeof(cufftComplex) * cPoints), maxBatch );
-    while(batch_size > 0 && batch_size <= maxBatch)
+    const auto cPoints = static_cast<std::size_t>(len / 2 + 1);
+    constexpr auto sizeMax = std::numeric_limits<std::size_t>::max();
+    if(cPoints > sizeMax / sizeof(cufftComplex))
+        return 0;
+    const std::size_t outputBytesPerTransform = sizeof(cufftComplex) * cPoints;
+    const auto transformLength = static_cast<std::size_t>(len);
+    if(transformLength > 1 && transformLength - 1 > sizeMax / (2 * sizeof(float)))
+        return 0;
+    const std::size_t interpolationScratchPerTransform = transformLength > 1
+        ? 2 * (transformLength - 1) * sizeof(float) : 0;
+    if(transformLength > 1 &&
+       (transformLength > (sizeMax / sizeof(float) + 5) / 4 ||
+        transformLength - 2 > sizeMax / sizeof(std::size_t)))
+        return 0;
+    const auto interpolationFloatBytes = transformLength > 1
+        ? (4 * transformLength - 5) * sizeof(float) : 0;
+    const auto interpolationIndexBytes = transformLength > 1
+        ? (transformLength - 2) * sizeof(std::size_t) : 0;
+    if(interpolationFloatBytes > sizeMax - interpolationIndexBytes)
+        return 0;
+    const std::size_t interpolationStaticBytes =
+        interpolationFloatBytes + interpolationIndexBytes;
+    if(outputBytesPerTransform > maxMem || interpolationStaticBytes >= maxMem)
+        return 0;
+    maxMem -= interpolationStaticBytes;
+
+    // cuFFT documents an upper bound of eight times the input data for its
+    // workspace. Use it only to choose a representative batch for measuring
+    // the actual multiplier; a pessimistic bound must not reject batch one.
+    if(static_cast<std::size_t>(len) > sizeMax / sizeof(float))
+        return 0;
+    const auto inputBytesPerTransform = static_cast<std::size_t>(len) * sizeof(float);
+    const auto maxWorkspacePerTransform = inputBytesPerTransform > sizeMax / 8
+        ? sizeMax : 8 * inputBytesPerTransform;
+    const auto conservativeBytesPerTransform =
+        maxWorkspacePerTransform > sizeMax - outputBytesPerTransform
+            ? sizeMax : maxWorkspacePerTransform + outputBytesPerTransform;
+    const std::size_t conservativeBatch = std::max<std::size_t>(1,
+        std::min(maxBatch, maxMem / conservativeBytesPerTransform));
+
+    std::size_t workspace{};
+    auto sampleBatch = static_cast<T>(conservativeBatch);
+    if(!PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area",
+                  plan, &len, sampleBatch, &workspace}.exec())
+        return 0;
+
+    const auto workspacePerTransform = std::max(interpolationScratchPerTransform,
+        workspace / conservativeBatch + (workspace % conservativeBatch != 0));
+    if(workspacePerTransform > sizeMax - outputBytesPerTransform)
+        return 0;
+    const auto measuredBytesPerTransform =
+        workspacePerTransform + outputBytesPerTransform;
+    std::size_t batchSize = std::min(maxBatch, maxMem / measuredBytesPerTransform);
+    if(batchSize == 0)
+        return 0;
+
+    // The workspace multiplier should stay constant for a fixed transform
+    // length. Verify the direct estimate and allow a few strictly decreasing
+    // corrections in case cuFFT selects a different internal algorithm.
+    constexpr unsigned maxCorrections = 4;
+    for(unsigned correction = 0; correction <= maxCorrections; ++correction)
     {
-        if ( !PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area", plan, &len, batch_size, &estimate}.exec() )
+        auto checkedBatch = static_cast<T>(batchSize);
+        if(!PackedAPI{cufftGetSizeManyWrap<T>, "estimating needed work area",
+                      plan, &len, checkedBatch, &workspace}.exec())
             return 0;
 
-        const auto perBatch { sizeof(cufftComplex) * cPoints + estimate/batch_size };
-        //using signed type could be buggy if we get gpu memory bigger than 2^32 bytes lol
-        const long long int excessMem { static_cast<long long int>(maxMem - (estimate + sizeof(cufftComplex)*batch_size*cPoints)) };
-        const bool isFitting { excessMem >= 0 };
-        //stop if you cannot fit another spatial point in a batch 
-        if ( isFitting && (batch_size == maxBatch || excessMem < perBatch) )
-            return batch_size;
-
-        if ( isFitting )
+        if(batchSize <= maxMem / outputBytesPerTransform)
         {
-            if ( batch_size == maxBatch || excessMem < perBatch )
-                return batch_size;
-
-            batch_size += std::min<std::size_t>(excessMem/perBatch, 1);
+            const auto outputBytes = batchSize * outputBytesPerTransform;
+            const auto interpolationScratch = batchSize * interpolationScratchPerTransform;
+            if(std::max(workspace, interpolationScratch) <= maxMem - outputBytes)
+                return batchSize;
         }
-        else batch_size--;
+
+        const auto observedWorkspacePerTransform = std::max(interpolationScratchPerTransform,
+            workspace / batchSize + (workspace % batchSize != 0));
+        if(observedWorkspacePerTransform > sizeMax - outputBytesPerTransform)
+            return 0;
+        const auto observedBytesPerTransform =
+            observedWorkspacePerTransform + outputBytesPerTransform;
+        const auto corrected = std::min(maxBatch, maxMem / observedBytesPerTransform);
+        if(corrected == 0 || batchSize == 1)
+            return 0;
+        batchSize = std::min(corrected, batchSize - 1);
     }
+
     return 0;
 }
 
@@ -455,16 +506,6 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
 
     std::size_t cPoints { fftLength/2 + 1 };
 
-    //clear the old work areas if needed
-    if (!lazy && allocDataSize != 0 || allocDataSize < batch_size)
-    {
-        fail = !run_api_pack( 
-                PackedAPI{ cudaFree, "freeing data buffer", (void*)data },
-                PackedAPI{ cudaFree, "freeing work buffer", cudaBuffer } );
-        allocDataSize = 0;
-        allocBufferSize = 0;
-    }
-
     //recreate a plan
     fail = fail || !run_api_pack( 
             PackedAPI{ cufftDestroy, "destroying old plan", plan },
@@ -476,22 +517,45 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
             PackedAPI{ static_cast<cufftMakePlanFunc_t<long long int>>(cufftMakePlanWrap<long long int>), "making a 64bit API cuFFT plan", plan, static_cast<long long int>(fftLength), static_cast<long long int>(batch_size), &workSize }.exec() :
             PackedAPI{ static_cast<cufftMakePlanFunc_t<int>>(cufftMakePlanWrap<int>), "making a cuFFT plan", plan, static_cast<int>(fftLength), static_cast<int>(batch_size), &workSize }.exec() );
 
+    constexpr auto sizeMax = std::numeric_limits<std::size_t>::max();
+    const auto interpolationScratchPerTransform = fftLength > 1 &&
+        fftLength - 1 <= sizeMax / (2 * sizeof(float))
+        ? 2 * (fftLength - 1) * sizeof(float) : sizeMax;
+    const auto interpolationScratch = interpolationScratchPerTransform == 0 ? 0 :
+        (batch_size <= sizeMax / interpolationScratchPerTransform
+            ? interpolationScratchPerTransform * batch_size : sizeMax);
+    const auto requiredBufferSize = std::max(workSize, interpolationScratch);
+
+    const bool needsAllocation = (!lazy && allocDataSize != 0) ||
+        allocDataSize < batch_size || allocBufferSize < requiredBufferSize;
+    if(!fail && needsAllocation)
+    {
+        if(data != nullptr)
+            fail = !PackedAPI{cudaFree, "freeing data buffer", (void*)data}.exec();
+        if(cudaBuffer != nullptr)
+            fail = fail || !PackedAPI{cudaFree, "freeing work buffer", cudaBuffer}.exec();
+        data = nullptr;
+        cudaBuffer = nullptr;
+        allocDataSize = 0;
+        allocBufferSize = 0;
+    }
+
     if( !fail && allocDataSize == 0 )
     {
         fail = !run_api_pack(
                 PackedAPI{ cudaMallocFunc, "allocating data buffer", (void**)&data, sizeof(cufftComplex)*batch_size*cPoints },
-                PackedAPI{ cudaMallocFunc, "allocating work buffer", (void**)&cudaBuffer, workSize } );
+                PackedAPI{ cudaMallocFunc, "allocating shared FFT/interpolation work buffer", (void**)&cudaBuffer, requiredBufferSize } );
         if( !fail )
         {
             allocDataSize = batch_size;
-            allocBufferSize = workSize;
+            allocBufferSize = requiredBufferSize;
 
         }
     }
 
     if( !fail )
         fail = !PackedAPI{cufftSetWorkArea, "setting work buffer location", plan, cudaBuffer}.exec();
-    return fail? 0 : workSize;
+    return fail? 0 : requiredBufferSize;
 }
 
 //actually excited to do some computation on videocard on my own :D
@@ -511,6 +575,8 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
     if( fail || fftLength < 2 )
         //2 is acceptable = do nothing, lol
         return false;
+
+    InterpAccel.free();
 
     //constants for reinterpreter
     InterpAccel.sCnt = fftLength - 1;//nunmber of intervals between cnt points
@@ -569,12 +635,13 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
         PackedAPI{cudaMallocFunc, "allocating GPU memory for FP constants",
           (void**)&InterpAccel.h, sizeof(float) * (3 * sCnt + fftLength -2)},
         PackedAPI{cudaMallocFunc, "allocating spline indexing array",
-          (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)}) &&
-        !run_api_pack(
+          (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)});
+    if(!failed)
+        failed = !run_api_pack(
         PackedAPI{cudaMemcpy, "copying FP constants to GPU",
-          (void*)&InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
+          (void*)InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
         PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
-          (void*)&InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
+          (void*)InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
 
     if(!failed)
     {
@@ -585,7 +652,8 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
     //TODO: implement retrying BlockBuffer allocation
 
     //and cleanup if failed along the way 
-    if(failed || cudaDeviceSynchronize() != cudaSuccess)
+    failed = failed || cudaDeviceSynchronize() != cudaSuccess;
+    if(failed)
     {
         InterpAccel.free();
         cudaDeviceSynchronize();
@@ -618,12 +686,16 @@ cuFFTEngine::~cuFFTEngine() noexcept
 
 void cuFFTEngine::InterpAccel_t::free()
 {
-    if (interpReady)
-    {
-        run_api_pack( PackedAPI{cudaFree, "freeing interp FP accelerators", (void*)h},
-                      PackedAPI{cudaFree, "freeing interp indice array", (void*)Indices} );
-        interpReady = false;
-    }
+    if(h != nullptr)
+        PackedAPI{cudaFree, "freeing interp FP accelerators", (void*)h}.exec();
+    if(Indices != nullptr)
+        PackedAPI{cudaFree, "freeing interp index array", (void*)Indices}.exec();
+    h = nullptr;
+    mu = nullptr;
+    l = nullptr;
+    dt = nullptr;
+    Indices = nullptr;
+    interpReady = false;
 }
 
 //run interpolation over data to remove jitter
@@ -643,7 +715,7 @@ __global__ void interp_kernel(float * const __restrict__ data,
                               threadIdx.y * blockDim.x + threadIdx.x };
 
     //nothing to do for overflow threads
-    if( !index < batchSize )
+    if(index >= batchSize)
         return;
 
     //the additional 2*splLen floats dynamic overhead
@@ -706,10 +778,13 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
     fail = fail || cudaMemcpy( (void*)data, (const void*)input, realSize * fftLength * sizeof(cufftReal), cudaMemcpyHostToDevice ) != cudaSuccess;
     //reinterpolate data if interpolation is ready
     if ( InterpAccel.interpReady && !fail )
+    {
         interp_kernel<<<to_grid(realSize, DefaultBlockSize), DefaultBlockSize>>>(
                 (float*)data, (float*)cudaBuffer, InterpAccel.sCnt, realSize, fftLength,
                 InterpAccel.h, InterpAccel.mu, InterpAccel.l, 
                 InterpAccel.Indices, InterpAccel.dt);
+        fail = cudaGetLastError() != cudaSuccess;
+    }
 
     fail = fail || cufftExecR2C( plan, (cufftReal*)data, data ) != CUFFT_SUCCESS;
     //if there is a norm to use, normalize the data
@@ -724,4 +799,3 @@ bool cuFFTEngine::RunTransform( float* input, float norm, std::size_t padding)
 
     return !fail;
 }
-
