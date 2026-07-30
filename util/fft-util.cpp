@@ -57,8 +57,8 @@ class CMDMonitor
         bool ready {false};
 
         //static magic
-        static constexpr const char* cOff = "\e[?25l";
-        static constexpr const char* cOn = "\e[?25h";
+        static constexpr const char* cOff = "\x1b[?25l";
+        static constexpr const char* cOn = "\x1b[?25h";
 
         void pad_n(std::size_t n)
         {out << std::string(n, ' ');}
@@ -357,7 +357,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     std::ifstream fsBuffer(fileBuffer, std::ios_base::in | std::ios_base::binary);
     if(!fsBuffer.good())
     {
-        std::cerr << "Unable to open the buffer file: \"" << fileBuffer.c_str() << "\"!\n";
+        std::cerr << "Unable to open the buffer file: " << fileBuffer << "!\n";
         return false;
     }
     const auto mType = commonHeader.getMeshType(); 
@@ -370,7 +370,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     std::ofstream output(outputFile, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
     if(!output.good())
     {
-        std::cerr << "Unable to open the output file: \"" << outputFile.c_str() << "\"!\n";
+        std::cerr << "Unable to open the output file: " << outputFile << "!\n";
         return false;
     }
 
