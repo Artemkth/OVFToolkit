@@ -48,11 +48,6 @@ namespace VField{
         std::map<OVFParameter, Field> ParameterFields = defParameters ;
         //mesh type
         std::optional<MeshType> meshType{};
-        //last check results
-        bool isChecked{false};
-        bool isValid{false};
-        std::string ValidationReport{};
-
         //method to reset all fields
         void reset()
         {
@@ -111,25 +106,9 @@ namespace VField{
 
     //validation stuff
     //Implemented in OVFGrammar.cpp!
-    extern std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref);
-    //and interfaces declared
-    bool OVFHeader::validate()
-    {
-        if(data->isChecked)
-            return data->isValid;
-        //else do a legit check
-        const auto result = ValidateHeader(*this);
-        data->isValid = std::get<0>(result);
-        data->ValidationReport = std::get<1>(result);
-        data->isChecked = true;
-        return data->isValid;
-    }
-    const associatedType_t<pType::String> OVFHeader::ValidationReport()
-    {
-        if(!data->isChecked)
-            validate();
-        return data->ValidationReport;
-    }
+    extern ValidationResult ValidateHeader(const OVFHeader& ref);
+    ValidationResult OVFHeader::validate() const
+    { return ValidateHeader(*this); }
 
     //Header storage default c-tor
     OVFHeader::OVFHeader(): OVFHeader(OVFVersion::OVF2) {}
@@ -162,19 +141,16 @@ namespace VField{
         if(param == OVFParameter::VersionString)
             data -> resetVersion();
         std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[param]) = val;
-        data->isChecked = false;
     }
     void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Uint>& val)
     {
         if(paramType(param) == pType::Float)
             set(param, static_cast<associatedType_t<pType::Float>>(val));
         std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[param]) = val;
-        data->isChecked = false;
     }
     void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Float>& val)
     {
         std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[param]) = val;
-        data->isChecked = false;
     }
     void OVFHeader::setVersion(OVFVersion version)
     { set(OVFParameter::VersionString, std::string{canonicalVersionString(version)}); }
@@ -219,8 +195,6 @@ namespace VField{
     void OVFHeader::setMesh(MeshType ref) noexcept
     {
         data->meshType = ref;
-        //invalidating a checked status
-        data->isChecked = false;
     }
     //reset function
     void OVFHeader::reset()
@@ -236,21 +210,17 @@ namespace VField{
         {
             case(pType::Float):
                 std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).reset();
-                data->isChecked = false;
                 break;
             case(pType::Uint):
                 std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[p]).reset();
-                data->isChecked = false;
                 break;
             case(pType::String):
                 std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[p]).reset();
-                data->isChecked = false;
                 break;
             case(pType::Other):
                 if(p == OVFParameter::Mtype)
                 {
                     data->meshType.reset();
-                    data->isChecked = false;
                     break;
                 }
         }

@@ -1353,21 +1353,21 @@ extern "C" void exportOVF(const char* fName, int optc)
     ParseWSTPHeader( HeaderRules, field );
 
     //check if header is valid
-    if( Validate && !field.isValid() )
+    if(Validate)
     {
-        PostErrorMessage("ExportOVF", "noncomp", field.ValidationReport());
+        if(const auto validation = field.validate(); !validation)
+        {
+            PostErrorMessage("ExportOVF", "noncomp", validation.error().report);
 
-        deinit();
-        WSPutSymbol(stdlink, "$Failed");
-        return; //!
+            deinit();
+            WSPutSymbol(stdlink, "$Failed");
+            return; //!
+        }
     }
-    else
-    {
-        auto log { WriteOVF( output.string(), field ) };
 
-        if(!log.empty())
-            PostErrorMessage("ExportOVF", "expfail", log);
-    }
+    auto log { WriteOVF( output.string(), field ) };
+    if(!log.empty())
+        PostErrorMessage("ExportOVF", "expfail", log);
 
     //on success end by returning a 'Null'
     deinit();

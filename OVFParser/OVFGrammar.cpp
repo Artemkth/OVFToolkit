@@ -5,6 +5,7 @@
 #include <type_traits>
 #include<vector>
 #include<cmath>
+#include<format>
 #include"OVFDictionary.h"
 #include"VField.h"
 
@@ -33,24 +34,29 @@ namespace VField{
         return count;
     }
     
+    ValidationResult failure(std::string report, std::vector<OVFParameter> parameters)
+    {
+        return std::unexpected(ValidationError{std::move(report), std::move(parameters)});
+    }
+
     //and then version rulesets
-    using validator = std::tuple<bool, std::string, std::vector<OVFParameter>> (*)(const OVFHeader&);
+    using validator = ValidationResult (*)(const OVFHeader&);
     //and a method to check if grid is defined
-    std::tuple<bool, std::string, std::vector<OVFParameter>> isGridDefined(const OVFHeader& ref)
+    ValidationResult isGridDefined(const OVFHeader& ref)
     {
         const std::string prefix = "Checking if grid was defined: ";
         std::vector<OVFParameter> problemParams{};
 
         if(!ref.isSet(OVFParameter::Mtype))
-            return {false, prefix+"Mesh type was not defined!", {OVFParameter::Mtype}};
+            return failure(std::format("{}Mesh type was not defined!", prefix), {OVFParameter::Mtype});
 
         if(ref.getMeshType() == OVFHeader::MeshType::irregular)
         {
             if(!ref.isSet(OVFParameter::Pcount))
-                return {false, prefix+"In a file with with irregular mesh point count was not specified", {OVFParameter::Pcount}};
+                return failure(std::format("{}In a file with irregular mesh point count was not specified", prefix), {OVFParameter::Pcount});
             if(ref.getUint(OVFParameter::Pcount) <= 0)
-                return {false, prefix+"Non-positive point count was specified for a irregular mesh", {OVFParameter::Pcount}};
-            return {true, prefix + "SUCCESS", problemParams};
+                return failure(std::format("{}Non-positive point count was specified for an irregular mesh", prefix), {OVFParameter::Pcount});
+            return {};
         }
         
         //next check is for regular mesh parameters only
@@ -81,19 +87,18 @@ namespace VField{
         }
         
         if(problemParams.size() == 0)
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         
         //else form error message
-        std::string errMessage{prefix + "Following required parameters to define rectangular grid were not found:"};
+        std::string errMessage{std::format("{}Following required parameters to define rectangular grid were not found:", prefix)};
         for(const auto& x: problemParams)
         {
-            errMessage += "\n\t";
-            errMessage += paramName(x);
+            std::format_to(std::back_inserter(errMessage), "\n\t{}", paramName(x));
         }
-        return {false, errMessage, problemParams};
+        return failure(std::move(errMessage), std::move(problemParams));
     }
     //checking if strings are single line
-    std::tuple<bool, std::string, std::vector<OVFParameter>> CheckStrings(const OVFHeader& ref)
+    ValidationResult CheckStrings(const OVFHeader& ref)
     {
         std::string log = "Checking if string parameters are compliant: ";
         std::vector<OVFParameter> faultyStrings{};
@@ -108,28 +113,27 @@ namespace VField{
                 faultyStrings.push_back(x);
         }
         if(faultyStrings.empty())
-            return {true, log + "SUCCESS", faultyStrings};
+            return {};
 
-        log +=  "\nThe following string parameters have a newline in them: ";
+        log = std::format("{}\nThe following string parameters have a newline in them:", log);
         for(const auto& x: faultyStrings)
         {
-            log += "\n";
-            log += paramName(x);
+            std::format_to(std::back_inserter(log), "\n{}", paramName(x));
         }
-        return { false, log, faultyStrings };
+        return failure(std::move(log), std::move(faultyStrings));
     }
     //checking physical constrains, i.e. if values are sane
-    std::tuple<bool, std::string, std::vector<OVFParameter>> checkPhysicalConstraints(const OVFHeader& ref)
+    ValidationResult checkPhysicalConstraints(const OVFHeader& ref)
     {
         const std::string prefix = "Checking a sanity of physical values: ";
         std::vector<OVFParameter> problemParams{};
         std::vector<std::string> problems {};
         //TODO: check into nuking 2 reduntant checks here, those are done before ruleset is called in order to get the version
         if(!ref.isSet(OVFParameter::VersionString))
-            return{false, prefix+"\n\tVersion string was not set", {OVFParameter::VersionString}};
+            return failure(std::format("{}\n\tVersion string was not set", prefix), {OVFParameter::VersionString});
         //nothing to check for OVF v0.0
         if(matchVersionString(ref.at<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF0)
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         //otherwise checking all the parameters
         //first check is for parameters being limited
         if constexpr(std::numeric_limits<associatedType<pType::Float>>::has_infinity ||
@@ -142,8 +146,7 @@ namespace VField{
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(paramName(x)) + "' = " +
-                        std::to_string(val) + "\n");
+                        problems.push_back(std::format("Encountered a non-finite value '{}' = {}\n", paramName(x), val));
                     }
                 }
         }
@@ -157,16 +160,15 @@ namespace VField{
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + std::string(paramName(x)) + "' = " +
-                        std::to_string(val) + "\n");
+                        problems.push_back(std::format("Encountered a non-finite value '{}' = {}\n", paramName(x), val));
                     }
                 }
         }
         auto gridProblems = isGridDefined(ref);
-        if( std::get<0>(gridProblems) )
+        if(!gridProblems)
         {
             problems.push_back("Grid parameters were not defined!!");
-            for(const auto& x: std::get<2>(gridProblems))
+            for(const auto& x: gridProblems.error().parameters)
                 problemParams.push_back(x);
         }
         else 
@@ -188,7 +190,7 @@ namespace VField{
                     auto val = ref.getUint(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + std::string(paramName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::format("The value '{}' = {}, was not positively defined!", paramName(x), val));
                         problemParams.push_back(x);
                     }
                 }
@@ -197,7 +199,7 @@ namespace VField{
                     auto val = ref.getFloat(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + std::string(paramName(x)) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::format("The value '{}' = {}, was not positively defined!", paramName(x), val));
                         problemParams.push_back(x);
                     }
                 }
@@ -205,7 +207,7 @@ namespace VField{
         }
         
         if(problems.size() == 0)
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         
         std::string accum { prefix};
         for(const auto& x: problems)
@@ -214,14 +216,14 @@ namespace VField{
             accum += x;
         }
         
-        return {false, accum, problemParams};
+        return failure(std::move(accum), std::move(problemParams));
     }
     
     //nothing is disallowed lol
     const auto OVF0Rules = std::vector<validator> {};
     //then rules for OVF1
     const auto OVF1Rules = std::vector<validator>{
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if all required fields were filled: ";
             std::vector<OVFParameter> problemParams{};
@@ -243,46 +245,43 @@ namespace VField{
                     problemParams.push_back(x);
                 
             if(problemParams.size() == 0)
-                return {true, prefix + "SUCCESS", {}};
+                return {};
             
             //else form error message
             std::string errMessage{"Following required parameters(for OVF 1.0) were not found:"};
             for(const auto& x: problemParams)
             {
-                errMessage += "\n\t";
-                errMessage += paramName(x) ;
+                std::format_to(std::back_inserter(errMessage), "\n\t{}", paramName(x));
             }
-            return {false, errMessage, problemParams};
+            return failure(std::move(errMessage), std::move(problemParams));
         },
         CheckStrings,
         //check if grid is defined
         isGridDefined,
         //check that the boundary list, if present, is a list of tripples of points
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>> 
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if 'boundarylist' is ill-formed:\n";
             if(!ref.isSet(OVFParameter::Bound))
-                return {true, prefix + "SUCCESS", {}}; //nothing to check
+                return {}; //nothing to check
             //get the boundary vertex list
             const std::string boundaryList { ref.at<pType::String>(OVFParameter::Bound)};
             //count how many tokens there are, validating if they are convertible to double
             auto cnt = countTokens(boundaryList, [](const std::string& ref){try{std::stod(ref);}catch(const std::logic_error&){return false;} return true;});
             if( cnt == 0)
-                return{false, prefix + "A string in 'boundarylist' contains invalid tokens: \n\t" + boundaryList, {OVFParameter::Bound}};
+                return failure(std::format("{}A string in 'boundarylist' contains invalid tokens: \n\t{}", prefix, boundaryList), {OVFParameter::Bound});
             if( cnt % 3 != 0)
-                return{false, prefix + "Bounding box vortex list should have tripplets of coordinates, " + std::to_string(cnt) + 
-                    " values were read in 'boundarylist': \n\t" + boundaryList, {OVFParameter::Bound}};
+                return failure(std::format("{}Bounding box vortex list should have triplets of coordinates, {} values were read in 'boundarylist': \n\t{}", prefix, cnt, boundaryList), {OVFParameter::Bound});
             if( cnt < 12 )
-                return{false, prefix + "Not enough points to set a bounding volume, at least 4 vertices needed, got" + std::to_string(cnt/3) + 
-                    " vortexes in 'boundarylist': \n\t" + boundaryList, {OVFParameter::Bound}};
+                return failure(std::format("{}Not enough points to set a bounding volume; at least 4 vertices are needed, got {} vertices in 'boundarylist': \n\t{}", prefix, cnt / 3, boundaryList), {OVFParameter::Bound});
             
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         }
         //TODO: implement checking for version string having same mesh type specified!
     };
     //then rules for OVF2
     const auto OVF2Rules = std::vector<validator>{
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>> 
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if all required fields were filled: ";
             //check if all required field are present
@@ -305,46 +304,45 @@ namespace VField{
                     missingList.push_back(x);
                 
             if(missingList.size() == 0)
-                return {true, prefix + "SUCCESS", {}};
+                return {};
             
             //else form error message
             std::string errMessage{"Following required parameters(for OVF 2.0) were not found:"};
             for(const auto& x: missingList)
             {
-                errMessage += "\n\t";
-                errMessage += paramName(x) ;
+                std::format_to(std::back_inserter(errMessage), "\n\t{}", paramName(x));
             }
-            return {false, errMessage, missingList};
+            return failure(std::move(errMessage), std::move(missingList));
         },
         CheckStrings,
         isGridDefined,
         //check if value units has correct number of tokens
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if 'valueunits' are ill-formed:\n";
             //should not reach here normally
             if(!ref.isSet(OVFParameter::Vunit))
-                return {false, prefix + "Value units are not set yet", {OVFParameter::Vunit}};
+                return failure(std::format("{}Value units are not set yet", prefix), {OVFParameter::Vunit});
             if(!ref.isSet(OVFParameter::Vdim))
-                return {false, prefix + "Value dimensions are not set yet", {OVFParameter::Vdim}};
+                return failure(std::format("{}Value dimensions are not set yet", prefix), {OVFParameter::Vdim});
             std::size_t num {0};
             if((num = countTokens(ref.at<pType::String>(OVFParameter::Vunit))) != ref.at<pType::Uint>(OVFParameter::Vdim) && num != 1)
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit), {OVFParameter::Vunit}};
-            return {true, prefix + "SUCCESS", {}};
+                return failure(std::format("{}Unexpected number of tokens: {} while parsing value units:\n\t{}", prefix, num, ref.at<pType::String>(OVFParameter::Vunit)), {OVFParameter::Vunit});
+            return {};
         },
         //check if value labels has correct number of tokens
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if 'valuelabels' is ill-formed: ";
             //should not reach here normally
             if(!ref.isSet(OVFParameter::Vlabels))
-                return {false, prefix + "Value labels are not set yet\n", {OVFParameter::Vlabels}};
+                return failure(std::format("{}Value labels are not set yet", prefix), {OVFParameter::Vlabels});
             if(!ref.isSet(OVFParameter::Vdim))
-                return {false, prefix + "Value dimensions are not set yet\n", {OVFParameter::Vdim}};
+                return failure(std::format("{}Value dimensions are not set yet", prefix), {OVFParameter::Vdim});
             std::size_t num {countTokens(ref.at<pType::String>(OVFParameter::Vlabels))};
             if(num != 1 && num != ref.at<pType::Uint>(OVFParameter::Vdim))
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit) + "\n", {OVFParameter::Vlabels}};
-            return {true, prefix + "SUCCESS\n", {}};
+                return failure(std::format("{}Unexpected number of tokens: {} while parsing value labels:\n\t{}", prefix, num, ref.at<pType::String>(OVFParameter::Vlabels)), {OVFParameter::Vlabels});
+            return {};
         }
     };
     //OMEGA map for rulesets
@@ -357,7 +355,7 @@ namespace VField{
     //count expected number of points
     std::size_t expectedValueCount(const OVFHeader& ref)
     {
-        if(!std::get<0>(isGridDefined(ref)))
+        if(!isGridDefined(ref))
             return 0u;
         auto version = matchVersionString(ref.at<pType::String>(OVFParameter::VersionString));
         if(version == OVFVersion::OVF0)
@@ -391,29 +389,31 @@ namespace VField{
                 u.push_back(x);
     }
     //full header validator
-    std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref)
+    ValidationResult ValidateHeader(const OVFHeader& ref)
     {
-        bool valid {true};
-        std::string log{"Checking the header of a file:"};
+        std::string report;
         std::vector<OVFParameter> problematicVars {};
         if(!ref.isSet(OVFParameter::VersionString))
-            return{ false, log + " version string was not set, aborting!", {OVFParameter::VersionString}};
+            return failure("Header version string was not set, aborting!", {OVFParameter::VersionString});
         //else execute the correct ruleset
         const auto version = matchVersionString(ref.at<pType::String>(OVFParameter::VersionString));
         if(Ruleset.find(version) == Ruleset.end())
-            return{ false, log + " version reported does not have a ruleset implemented!", {OVFParameter::VersionString}};
+            return failure("Header version does not have a ruleset implemented!", {OVFParameter::VersionString});
         //otherwise it is safe to execute ruleset
         const auto& rules = Ruleset.at(version);
         for(const auto& rule: rules)
         {
-            auto checkResult = rule(ref);
-            valid &= std::get<0>(checkResult);
-            log = log + '\n' + std::get<1>(checkResult);
-            //no need to check for uniqueness before, initial array satisfies it by being empty
-            appendUnique(problematicVars, std::get<2>(checkResult));
+            if(auto checkResult = rule(ref); !checkResult)
+            {
+                std::format_to(std::back_inserter(report), "{}{}",
+                               report.empty() ? "" : "\n", checkResult.error().report);
+                appendUnique(problematicVars, checkResult.error().parameters);
+            }
         }
         //TODO: add verification that header has the same mesh type as file title for OVF1!
-        return{ valid, log, problematicVars};
+        if(report.empty())
+            return {};
+        return failure(std::move(report), std::move(problematicVars));
     }
     
     //method telling if current data is isAddressable, i.e. if data structure within array is known
@@ -461,19 +461,13 @@ namespace VField{
     }
     
     //implementation of validator from VField itself, checks both header and data
-    bool VField::isValid()
+    ValidationResult VField::validate() const
     {
-        //first check our own header
-        const bool isHeaderValid = Header.validate();
-        //great if it is valid, but also need to check if data is there=
-        return isHeaderValid && isAddressable();
-    }
-    
-    //report generator
-    std::string VField::ValidationReport()
-    {
-        return              Header.ValidationReport() +
-               /*+*/        "The data is compliant with describing header: \"" + (isAddressable()? "true":"false") + '\"';
+        if(auto headerValidation = Header.validate(); !headerValidation)
+            return headerValidation;
+        if(!isAddressable())
+            return failure("Field data does not match the describing header", {});
+        return {};
     }
 
     template<class View, class Predicate>
@@ -850,7 +844,7 @@ namespace VField{
                     return {false, val};
                 if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
                 {
-                    if(!std::get<0>(isGridDefined(ref.Header)))
+                    if(!isGridDefined(ref.Header))
                         return {false, val};
                     val = ref.Header.at<pType::Uint>(OVFParameter::Xnodes) *
                           ref.Header.at<pType::Uint>(OVFParameter::Ynodes) *
@@ -1001,15 +995,17 @@ namespace VField{
         do{
             lastCnt = missingList.size();
             auto res = ValidateHeader(this->Header);
-            if(std::get<0>(res))
+            if(res)
             {
                 result+='\n';
-                result+=(std::string)"Iteration #" + std::to_string(iterCnt)+ "suceeded!";
+                std::format_to(std::back_inserter(result), "Iteration #{} succeeded!", iterCnt);
                 break;
             }
-            missingList = std::move(std::get<2>(res));
+            missingList = std::move(res.error().parameters);
             result+='\n';
-            result+= (std::string)"Iteration #" + std::to_string(iterCnt) + "failed, following arguments tripped the validation: {" + csvParamList(missingList) + " }";
+            std::format_to(std::back_inserter(result),
+                           "Iteration #{} failed, following arguments tripped the validation: {{{} }}",
+                           iterCnt, csvParamList(missingList));
             for(const auto x: missingList)
                 DeduceField(x, true);
             iterCnt++;

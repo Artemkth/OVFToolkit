@@ -118,8 +118,7 @@ namespace VField{
             //defined and realized in OVFGrammar.cpp!
             bool isAddressable() const noexcept;                                     //validate if there is enough information to traverse internal array
             bool isWeaklyAddressable() const noexcept;                               //validate if there is *just* enough information to traverse internal array
-            bool isValid();                                                 //check if vector field is in spec
-            std::string ValidationReport();                                 //full report of validation results, run validation if needed
+            [[nodiscard]] ValidationResult validate() const;                //validate the header and stored field data
             bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
             std::string DeduceRecursively(const std::size_t& max_iter = 5); //try to deduce out all of the missing required fields
             void Strip() noexcept;                                          //remove optional parameters

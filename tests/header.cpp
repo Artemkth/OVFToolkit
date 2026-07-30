@@ -18,6 +18,23 @@ int main()
         std::cerr << "Unknown OVF version construction should throw!\n";
         return 20;
     } catch(const std::invalid_argument&) {}
+
+    const auto initialValidation = testHeader.validate();
+    if(initialValidation || initialValidation.error().report.empty() ||
+       initialValidation.error().parameters.empty())
+    {
+        std::cerr << "Incomplete header validation did not return diagnostics!\n";
+        return 21;
+    }
+    testHeader.clear(VField::OVFParameter::VersionString);
+    const auto validationWithoutVersion = testHeader.validate();
+    if(validationWithoutVersion ||
+       validationWithoutVersion.error().report.find("version string was not set") == std::string::npos)
+    {
+        std::cerr << "Header validation returned stale diagnostics!\n";
+        return 22;
+    }
+    testHeader.setVersion(VField::OVFVersion::OVF2);
     //and now fill in some fields, bare minimum to see if it was successfull
     const std::string testString{  "Just of-a-wall header" };
     const std::size_t testUnsigned { 11 };

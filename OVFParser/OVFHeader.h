@@ -8,6 +8,8 @@
 #pragma once
 #include<string>
 #include<memory>
+#include<expected>
+#include<vector>
 #include<stdexcept>
 #include"ovfparser_export.h" //generated with cmake, shared lib export macros
 
@@ -78,6 +80,13 @@ namespace VField{
         Unknown,                           //unknown something after #
         Invalid                            //invalid syntaxis
     };
+
+    struct ValidationError {
+        std::string report;
+        std::vector<OVFParameter> parameters;
+    };
+
+    using ValidationResult = std::expected<void, ValidationError>;
     
     //Header container+utilities class
     class OVFPARSER_EXPORT OVFHeader{
@@ -134,9 +143,9 @@ namespace VField{
         
         //reset function
         void reset();
-        //validation function, TODO: move into VField
-        bool validate();                                          //validate contents
-        const associatedType_t<pType::String> ValidationReport(); //report checks done, run validation if needed
+        //Run the complete validation every time. A successful validation is silent;
+        //a failed result contains the report and offending parameters.
+        [[nodiscard]] ValidationResult validate() const;
         //template for getting access to data by reference, throws when wrong data type is requested for a given parameter
         template<pType p>
         associatedType_t<p>& at(OVFParameter) &;           //will check the type, and throw if incorrect one is used!
