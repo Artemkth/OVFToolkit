@@ -7,7 +7,6 @@
 #include<cmath>
 #include"OVFDictionary.h"
 #include"VField.h"
-#include"OVFVersion.h"
 
 namespace VField{
     //shared flags

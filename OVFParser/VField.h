@@ -39,6 +39,8 @@ namespace VField{
             VField();
             explicit VField(const associatedType_t<pType::String>& version): VField()
             { Header.set(OVFParameter::VersionString, version); }
+            explicit VField(OVFVersion version): VField()
+            { Header = OVFHeader{version}; }
             explicit VField(const OVFHeader& head) : VField()
             { Header = head; }
             //constructors for fully populating the internals

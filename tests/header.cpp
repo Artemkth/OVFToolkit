@@ -5,7 +5,19 @@
 
 int main()
 {
-    VField::OVFHeader testHeader("# OOMMF OVF 2.0");
+    VField::OVFHeader testHeader;
+    VField::OVFHeader ovf1Header{VField::OVFVersion::OVF1};
+    if(testHeader.getString(VField::OVFParameter::VersionString) != "# OOMMF OVF 2.0" ||
+       ovf1Header.getString(VField::OVFParameter::VersionString) != "# OOMMF: rectangular mesh v1.0")
+    {
+        std::cerr << "Default or enum-based OVF version construction failed!\n";
+        return 19;
+    }
+    try {
+        [[maybe_unused]] VField::OVFHeader invalid{VField::OVFVersion::Unknown};
+        std::cerr << "Unknown OVF version construction should throw!\n";
+        return 20;
+    } catch(const std::invalid_argument&) {}
     //and now fill in some fields, bare minimum to see if it was successfull
     const std::string testString{  "Just of-a-wall header" };
     const std::size_t testUnsigned { 11 };

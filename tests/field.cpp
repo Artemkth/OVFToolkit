@@ -10,7 +10,7 @@
 int main()
 {
     //begin by setting and populating a common VField file
-    VField::VField testData("# OOMMF OVF 2.0");
+    VField::VField testData;
     //populate with data using random
     std::default_random_engine generator( std::chrono::duration_cast<std::chrono::milliseconds>( 
                 std::chrono::system_clock::now().time_since_epoch()
@@ -49,7 +49,7 @@ int main()
     }
 
     //Define common header
-    VField::OVFHeader commonHeader("# OOMMF OVF 2.0");
+    VField::OVFHeader commonHeader;
     commonHeader.set(VField::OVFParameter::Title, "Random VField");
     commonHeader.set(VField::OVFParameter::Desc, "really, it is random!");
     //mesh parameters

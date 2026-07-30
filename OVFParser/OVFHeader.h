@@ -12,6 +12,20 @@
 #include"ovfparser_export.h" //generated with cmake, shared lib export macros
 
 namespace VField{
+    /** @brief Recognised revisions of the OOMMF vector-field file format. */
+    enum class OVFVersion {
+        /** @see https://math.nist.gov/oommf/doc/userguide20b0/userguide/OVF_0.0_format.html
+         *  @see https://web.archive.org/web/%2A/https://math.nist.gov/oommf/doc/userguide12b3/userguide/OVF_0.0_format.html */
+        OVF0,
+        /** @see https://math.nist.gov/oommf/doc/userguide20b0/userguide/OVF_1.0_format.html
+         *  @see https://web.archive.org/web/%2A/https://math.nist.gov/oommf/doc/userguide12b3/userguide/OVF_1.0_format.html */
+        OVF1,
+        /** @see https://math.nist.gov/oommf/doc/userguide21a1/userguide-xml/sec_ovf20format.html
+         *  @see https://web.archive.org/web/%2A/https://math.nist.gov/oommf/doc/userguide12b3/userguide/OVF_2.0_format.html */
+        OVF2,
+        Unknown
+    };
+
     //OVF syntaxis dictionaries
     //parameter types
     enum class pType {
@@ -82,6 +96,7 @@ namespace VField{
         //the one where version string is explicitly known beforehand, useful when parsing a file, to be defined outside
         explicit OVFHeader(const associatedType_t<pType::String>& ref) : OVFHeader()
         { set(OVFParameter::VersionString, ref); }
+        explicit OVFHeader(OVFVersion);
         //copy stuff
         OVFHeader(const OVFHeader&);
         OVFHeader& operator=(const OVFHeader&);
@@ -108,6 +123,7 @@ namespace VField{
         void set(OVFParameter, const associatedType_t<pType::String>& );
         void set(OVFParameter, const associatedType_t<pType::Uint>& );
         void set(OVFParameter, const associatedType_t<pType::Float>& );
+        void setVersion(OVFVersion);
         
         //unset a value
         void clear(OVFParameter) noexcept;
@@ -142,4 +158,3 @@ namespace VField{
     template<> OVFPARSER_EXPORT associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (OVFParameter p) &;
     template<> OVFPARSER_EXPORT associatedType_t<pType::String>& OVFHeader::at<pType::String> (OVFParameter p) &;
 }
-

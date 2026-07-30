@@ -483,7 +483,7 @@ std::size_t parseMemSize(const std::string& sizeSpec)
 void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
 {
     //mandatory to set version to OVF 2.0, because others don't support vdim != 3
-    head.at<VField::pType::String>(VField::OVFParameter::VersionString) = "# OOMMF OVF 2.0";
+    head.setVersion(VField::OVFVersion::OVF2);
 
     //change value dimension accordingly
     if( head.isSet(VField::OVFParameter::Vdim) )

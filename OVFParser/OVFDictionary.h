@@ -18,7 +18,10 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <ranges>
+#include <regex>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -27,9 +30,59 @@
 #include <optional>
 
 #include "OVFHeader.h"
-#include "OVFVersion.h"
 
 namespace VField {
+
+  /**
+   * @brief Version signatures accepted at the beginning of an OVF file.
+   *
+   * Matching is case-insensitive and accepts the historical OVF 1 aliases
+   * documented by OOMMF.
+   */
+  inline const std::map<OVFVersion, std::regex> VersionPatterns{
+    {OVFVersion::OVF0,
+      std::regex("^#\\s*OOMMF\\s*:\\s*(.+?)\\s+v0.0\\s*$",
+        std::regex_constants::icase | std::regex_constants::ECMAScript)},
+    {OVFVersion::OVF1,
+      std::regex("^#\\s*OOMMF\\s*:\\s*(.+?)\\s+v((?:1.0)|(?:0.99)|(?:0.0a0))\\s*$",
+        std::regex_constants::icase | std::regex_constants::ECMAScript)},
+    {OVFVersion::OVF2,
+      std::regex("^#\\s*OOMMF\\s+OVF\\s+2.0\\s*$",
+        std::regex_constants::icase | std::regex_constants::ECMAScript)}
+  };
+
+  /**
+   * @brief Identify an OVF revision from its file signature.
+   *
+   * @param signature First line of an OVF file.
+   * @return Matching revision, or OVFVersion::Unknown when unsupported.
+   */
+  [[nodiscard]]
+  inline OVFVersion matchVersionString(const std::string& signature)
+  {
+    for(const auto& [version, pattern]: VersionPatterns)
+      if(std::regex_match(signature, pattern))
+        return version;
+    return OVFVersion::Unknown;
+  }
+
+  /**
+   * @brief Return the canonical file signature for an OVF revision.
+   * @throws std::invalid_argument If version is OVFVersion::Unknown.
+   */
+  [[nodiscard]]
+  inline std::string_view canonicalVersionString(OVFVersion version)
+  {
+    switch(version)
+    {
+      case OVFVersion::OVF0: return "# OOMMF: irregular mesh v0.0";
+      case OVFVersion::OVF1: return "# OOMMF: rectangular mesh v1.0";
+      case OVFVersion::OVF2: return "# OOMMF OVF 2.0";
+      case OVFVersion::Unknown:
+        throw std::invalid_argument("Unknown OVF revision has no file signature");
+    }
+    std::unreachable();
+  }
 
   /**
    * @name Binary scalar representation requirements

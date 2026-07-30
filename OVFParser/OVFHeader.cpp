@@ -1,7 +1,6 @@
 //file for implementing interfaces of 'OVFHeader.h'
 #include "OVFHeader.h"
 #include"OVFDictionary.h"
-#include"OVFVersion.h"
 #include<map>
 #include<algorithm>
 #include<vector>
@@ -133,7 +132,10 @@ namespace VField{
     }
 
     //Header storage default c-tor
-    OVFHeader::OVFHeader(): data( std::make_unique<OVFHeader::HeaderData>() ) {}
+    OVFHeader::OVFHeader(): OVFHeader(OVFVersion::OVF2) {}
+    OVFHeader::OVFHeader(OVFVersion version):
+        data(std::make_unique<OVFHeader::HeaderData>())
+    { setVersion(version); }
     //d-tor
     OVFHeader::~OVFHeader() noexcept = default;
     //
@@ -174,6 +176,8 @@ namespace VField{
         std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[param]) = val;
         data->isChecked = false;
     }
+    void OVFHeader::setVersion(OVFVersion version)
+    { set(OVFParameter::VersionString, std::string{canonicalVersionString(version)}); }
     //check if a given field is set
     bool OVFHeader::isSet(OVFParameter refP) const noexcept
     {
@@ -220,7 +224,10 @@ namespace VField{
     }
     //reset function
     void OVFHeader::reset()
-    {data->reset();data->isChecked = false;}
+    {
+        data->reset();
+        setVersion(OVFVersion::OVF2);
+    }
 
     //unset a parameter
     void OVFHeader::clear(OVFParameter p) noexcept
@@ -313,4 +320,3 @@ namespace VField{
                         (data -> ParameterFields.at(OVFParameter::Pcount)).value_or(0) );
     }
 }
-
