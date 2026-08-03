@@ -62,7 +62,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install boost-program-options fftw3 hdf5 tbb vtk --triplet x64-windows
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install boost-program-options boost-endian fftw3 hdf5 tbb vtk --triplet x64-windows
       - name: Configure
         shell: pwsh
         run: >-
@@ -128,7 +128,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install boost-program-options fftw3 hdf5 tbb vtk --triplet x64-windows
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install boost-program-options boost-endian fftw3 hdf5 tbb vtk --triplet x64-windows
       - name: Configure
         shell: pwsh
         run: >-
