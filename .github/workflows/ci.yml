@@ -28,7 +28,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes g++-14 libboost-program-options-dev libfftw3-dev libtbb-dev ninja-build
+          sudo apt-get install --yes g++-14 libboost-program-options-dev \
+            libfftw3-dev libhdf5-dev libkokkos-dev libtbb-dev libvtk9-dev \
+            ninja-build
           python -m pip install "cmake>=3.30"
       - name: Configure
         run: >-
@@ -53,7 +55,8 @@ jobs:
         shell: pwsh
         run: >-
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install
-          boost-program-options fftw3 tbb --triplet x64-windows
+          boost-program-options fftw3 hdf5 kokkos tbb vtk
+          --triplet x64-windows
       - name: Configure
         shell: pwsh
         run: >-
@@ -81,8 +84,8 @@ jobs:
       - name: Install dependencies
         run: >-
           apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes
-          g++-14 libboost-program-options-dev libfftw3-dev libtbb-dev
-          ninja-build python3-pip
+          g++-14 libboost-program-options-dev libfftw3-dev libhdf5-dev
+          libkokkos-dev libtbb-dev libvtk9-dev ninja-build python3-pip
           && python3 -m pip install --break-system-packages "cmake>=3.30"
       - name: Configure
         run: >-
@@ -112,7 +115,8 @@ jobs:
         shell: pwsh
         run: >-
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install
-          boost-program-options fftw3 tbb --triplet x64-windows
+          boost-program-options fftw3 hdf5 kokkos tbb vtk
+          --triplet x64-windows
       - name: Configure
         shell: pwsh
         run: >-
