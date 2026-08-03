@@ -47,11 +47,11 @@ int main(int argc, char** argv)
         ref.set(VField::OVFParameter::Vunit, "\"a.u.\" \"a.u.\" \"a.u.\"");
 
         //and now for mesh parameters
-        ref.set(VField::OVFParameter::Vdim,   VField::associatedType_t<VField::pType::Uint>{3}  );
-        ref.set(VField::OVFParameter::Xnodes, VField::associatedType_t<VField::pType::Uint>{256});
-        ref.set(VField::OVFParameter::Ynodes, VField::associatedType_t<VField::pType::Uint>{256});
-        ref.set(VField::OVFParameter::Znodes, VField::associatedType_t<VField::pType::Uint>{8}  );
-        ref.setMesh(VField::OVFHeader::MeshType::rectangular);
+        ref.set(VField::OVFParameter::Vdim,   VField::parameter_cpp_type_t<VField::ParameterType::Unsigned>{3}  );
+        ref.set(VField::OVFParameter::Xnodes, VField::parameter_cpp_type_t<VField::ParameterType::Unsigned>{256});
+        ref.set(VField::OVFParameter::Ynodes, VField::parameter_cpp_type_t<VField::ParameterType::Unsigned>{256});
+        ref.set(VField::OVFParameter::Znodes, VField::parameter_cpp_type_t<VField::ParameterType::Unsigned>{8}  );
+        ref.setMeshType(VField::MeshType::Rectangular);
 
         //and for coordinate grid
         ref.set(VField::OVFParameter::Xbase, 1.);
@@ -76,11 +76,11 @@ int main(int argc, char** argv)
     {
         //and then do the random data generation
         const std::size_t pCount {
-                      testOVF.header().getUint(VField::OVFParameter::Xnodes) *
-                      testOVF.header().getUint(VField::OVFParameter::Ynodes) *
-                      testOVF.header().getUint(VField::OVFParameter::Znodes)
+                      testOVF.header().requireAs<std::size_t>(VField::OVFParameter::Xnodes) *
+                      testOVF.header().requireAs<std::size_t>(VField::OVFParameter::Ynodes) *
+                      testOVF.header().requireAs<std::size_t>(VField::OVFParameter::Znodes)
                       };
-        const std::size_t pDim { testOVF.header().getUint(VField::OVFParameter::Vdim) };
+        const std::size_t pDim { testOVF.header().requireAs<std::size_t>(VField::OVFParameter::Vdim) };
         //then initialize data using init interface
         testOVF.initData<double>( pCount * pDim );
         //let the randOOm generation begin!

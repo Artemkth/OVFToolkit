@@ -40,7 +40,7 @@ namespace VField
         FieldSpecifier{true, {OVFParameter::Mtype}},
         FieldSpecifier{
             [](const OVFHeader& head)
-            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::rectangular;},
+            {return head.contains(OVFParameter::Mtype) && head.meshType() == MeshType::Rectangular;},
             {
                 OVFParameter::Xnodes, OVFParameter::Ynodes, OVFParameter::Znodes,
                 OVFParameter::Xstep,  OVFParameter::Ystep,  OVFParameter::Zstep,
@@ -49,7 +49,7 @@ namespace VField
         },
         FieldSpecifier{
             [](const OVFHeader& head)
-            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::irregular;},
+            {return head.contains(OVFParameter::Mtype) && head.meshType() == MeshType::Irregular;},
             {OVFParameter::Pcount}
         },
         "Miscellaneous data:",
@@ -66,7 +66,7 @@ namespace VField
         FieldSpecifier{true, {OVFParameter::Mtype}},
         FieldSpecifier{
             [](const OVFHeader& head)
-            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::rectangular;},
+            {return head.contains(OVFParameter::Mtype) && head.meshType() == MeshType::Rectangular;},
             {
                 OVFParameter::Xnodes, OVFParameter::Ynodes, OVFParameter::Znodes,
                 OVFParameter::Xstep,  OVFParameter::Ystep,  OVFParameter::Zstep,
@@ -75,7 +75,7 @@ namespace VField
         },
         FieldSpecifier{
             [](const OVFHeader& head)
-            {return head.isSet(OVFParameter::Mtype) && head.getMeshType() == OVFHeader::MeshType::irregular;},
+            {return head.contains(OVFParameter::Mtype) && head.meshType() == MeshType::Irregular;},
             {OVFParameter::Pcount}
         },
         "Miscellaneous data:",
@@ -95,7 +95,7 @@ namespace VField
         //first handling special cases of Description(multiline string output), and Meshtype (predefined string)
         if( p == OVFParameter::Desc)
         {
-            std::string desc = header.getString(p);
+            std::string desc = header.requireAs<std::string>(p);
             std::regex pat("(.+?)\\s*(?:\n|$)", std::regex_constants::ECMAScript);
             std::smatch sm;
             while(!desc.empty() && std::regex_search(desc, sm, pat))
@@ -109,21 +109,21 @@ namespace VField
         if(p == OVFParameter::Mtype)
         {
             out << "# " << getName(ver, p) << ": ";
-            out << (header.getMeshType() == OVFHeader::MeshType::rectangular?  "rectangular" : "irregular") << "\n";
+            out << (header.meshType() == MeshType::Rectangular?  "rectangular" : "irregular") << "\n";
             return;
         }
         //else
         out << "# " << getName(ver, p) << ": ";
         switch(paramType(p))
         {
-            case(pType::Uint):
-                out << header.getUint(p);
+            case(ParameterType::Unsigned):
+                out << header.requireAs<std::size_t>(p);
                 break;
-            case(pType::String):
-                out << header.getString(p);
+            case(ParameterType::String):
+                out << header.requireAs<std::string>(p);
                 break;
-            case(pType::Float):
-                out << header.getFloat(p);
+            case(ParameterType::Floating):
+                out << header.requireAs<double>(p);
                 break;
             default:
                 //TODO: come up with something 
@@ -158,14 +158,14 @@ namespace VField
                     if(required || optional)
                         for(const auto& p: specifier.second)
                         {
-                            if(required && !header.isSet(p))
+                            if(required && !header.contains(p))
                             {
                                 std::format_to(std::back_inserter(log),
                                     "{}WriteHeader: required field '{}' was not found!",
                                     log.empty() ? "" : "\n", paramName(p));
                                 continue;
                             }
-                            if(optional && !header.isSet(p)) //falling through if it is just an option
+                            if(optional && !header.contains(p)) //falling through if it is just an option
                                 continue;
                             writeField(out, header, version, p);
                         }
@@ -214,7 +214,7 @@ namespace VField
         //set modifiers for 'text-mode' values
         out << std::setprecision(8);
         
-        auto version = matchVersionString(field.header().at<pType::String>(OVFParameter::VersionString));
+        auto version = field.header().version();
         out << "# Begin: Segment\n# Begin: Header\n";
         auto headerResult = WriteHeader(out, version, field.header());
         std::string report = headerResult ? std::string{} : std::move(headerResult.error());

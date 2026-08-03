@@ -285,7 +285,7 @@ inline void loadData( const VField::VField& field, float *arr, std::size_t offse
         std::copy_n( field.data<T>() + offset, cnt, arr );
     else
     {
-        const auto dim = field.header().expectedDimension();
+        const auto dim = field.header().pointDimension().value();
         auto begin = field.data<T>();
         const auto end = begin + field.scalarCount();
 
@@ -311,26 +311,26 @@ void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile
     progress = 0;
     
     const auto& head = handles.front().second.getSegmentHeader(0);
-    const auto mType = head.getMeshType();
-    const auto dim   = head.expectedDimension();
-    const auto pts   = head.expectedPoints();
+    const auto mType = head.meshType().value();
+    const auto dim   = head.pointDimension().value();
+    const auto pts   = head.pointCount().value();
     const auto len   = handles.size();
-    const auto vdim  = dim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3);
+    const auto vdim  = dim - (mType == VField::MeshType::Rectangular? 0 : 3);
     impLen = std::min( impLen, vdim * pts - offset );
     progMax = impLen * len;
 
     //for irregular meshes offset skips over coordinate tripplets
-    const auto adjBegin  = (mType == VField::OVFHeader::MeshType::rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
-    const auto adjEnd    = ((mType == VField::OVFHeader::MeshType::rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim;
+    const auto adjBegin  = (mType == VField::MeshType::Rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
+    const auto adjEnd    = ((mType == VField::MeshType::Rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim;
 
     auto importer = [&](const std::pair<std::size_t, VField::VFieldFile>& handle)
     {
         auto slice = handle.second.readSlice(0, adjBegin, adjEnd - adjBegin);
 
         if (slice.scalarSizeBytes() == 4)
-            loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
+            loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::MeshType::Rectangular ? 0 : 3);
         else
-            loadData<double>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
+            loadData<double>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::MeshType::Rectangular ? 0 : 3);
 
         progress += impLen;
     };
@@ -362,9 +362,9 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
         std::cerr << "Unable to open the buffer file: " << fileBuffer << "!\n";
         return false;
     }
-    const auto mType = commonHeader.getMeshType(); 
-    const std::size_t vdim    = commonHeader.getUint( VField::OVFParameter::Vdim );
-    const std::size_t pntCnt  = commonHeader.expectedPoints() * vdim; //guaranteed to be set because constructed earlier
+    const auto mType = commonHeader.meshType().value();
+    const std::size_t vdim    = commonHeader.requireAs<std::size_t>( VField::OVFParameter::Vdim );
+    const std::size_t pntCnt  = commonHeader.pointCount().value() * vdim;
     const std::size_t bufTotal= descriptor.size();
     assert(("Incompatible array dimensions!\n", vdim % 2 == 0 && pntCnt == descriptor.back()[1] * 2));
 
@@ -377,9 +377,10 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     }
 
     //data, later to be put into VField container, disposed by VField's destructor
-    auto data = std::make_unique<float[]>(commonHeader.expectedPoints() * commonHeader.expectedDimension());
+    auto data = std::make_unique<float[]>(
+        commonHeader.pointCount().value() * commonHeader.pointDimension().value());
     //copy the coordinates if buffer is irregular
-    if(mType == VField::OVFHeader::MeshType::irregular)
+    if(mType == VField::MeshType::Irregular)
     {
         assert(("Expected a coordinate field for transform", irregCoords != nullptr)); 
         for(std::size_t i = 0; i < pntCnt; i++)
@@ -387,12 +388,13 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     }
 
     VField::VField field ( commonHeader );
-    field.adoptData(std::move(data), commonHeader.expectedPoints() * commonHeader.expectedDimension());
-    output << commonHeader.getString( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
+    field.adoptData(std::move(data),
+        commonHeader.pointCount().value() * commonHeader.pointDimension().value());
+    output << commonHeader.requireAs<std::string>( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
 
     std::string desc{};
-    if( commonHeader.isSet( VField::OVFParameter::Desc) )
-        desc = commonHeader.getString( VField::OVFParameter::Desc );
+    if( commonHeader.contains( VField::OVFParameter::Desc) )
+        desc = commonHeader.requireAs<std::string>( VField::OVFParameter::Desc );
 
     for(std::size_t i = 0; i < cnt; i++)
     {
@@ -410,7 +412,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
             std::size_t offset = 2 * descriptor[j][0];
             std::size_t dist = 2 * ( descriptor[j][1] - descriptor[j][0] );
             auto* fieldData = field.data<float>();
-            float* dest = (mType == VField::OVFHeader::MeshType::rectangular
+            float* dest = (mType == VField::MeshType::Rectangular
                 ? fieldData + offset
                 : fieldData + (3 + vdim) * offset / vdim + 3 + offset % vdim);
             const float* curSection { nullptr };
@@ -432,7 +434,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
             }
 
             //and copy data into destination buffer
-            if(mType == VField::OVFHeader::MeshType::rectangular)
+            if(mType == VField::MeshType::Rectangular)
                 std::copy_n(curSection, dist, dest);
             else
             {
@@ -493,35 +495,38 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
     head.setVersion(VField::OVFVersion::OVF2);
 
     //change value dimension accordingly
-    if( head.isSet(VField::OVFParameter::Vdim) )
-        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) *= 2;
+    if( head.contains(VField::OVFParameter::Vdim) )
+        head.set(VField::OVFParameter::Vdim,
+            head.requireAs<std::size_t>(VField::OVFParameter::Vdim) * 2);
     else
-        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = 6;
+        head.set(VField::OVFParameter::Vdim, std::size_t{6});
 
     //delete the whole line with timestamp from description
-    if( head.isSet(VField::OVFParameter::Desc) )
+    if( head.contains(VField::OVFParameter::Desc) )
     {
         std::regex tStampLineNLine("\\n.*"s + tStampPattern + ".*\\n", //matches internal lines
              std::regex_constants::ECMAScript | std::regex_constants::nosubs);
         std::regex tStampLineDel("(^|\\n).*"s + tStampPattern + ".*($|\\n)", //matches all lines
              std::regex_constants::ECMAScript | std::regex_constants::nosubs);
 
-        auto& desc = head.at<VField::pType::String>(VField::OVFParameter::Desc);
+        auto desc = head.requireAs<std::string>(VField::OVFParameter::Desc);
         desc = std::regex_replace( desc, tStampLineNLine, "\n" ); //replace internal lines by newline symbol
         desc = std::regex_replace( desc, tStampLineDel, "" );     //and delete the rest of the line types
 
         if( desc.empty() )
             head.clear(VField::OVFParameter::Desc);
+        else
+            head.set(VField::OVFParameter::Desc, std::move(desc));
     }
 
     //generate new value labels and units if old ones were present and compliant with standard
-    if( head.isSet(VField::OVFParameter::Vlabels) || head.isSet(VField::OVFParameter::Vunit) )
+    if( head.contains(VField::OVFParameter::Vlabels) || head.contains(VField::OVFParameter::Vunit) )
     {
         std::regex tokenPattern("^\\s*(\".*?\"|[^\\s]+)(?:\\s+|$)");
         auto Tokenize = [&head, &tokenPattern](VField::OVFParameter p)
         {
             std::vector<std::string> tokens{};
-            auto str = head.getString(p);
+            auto str = head.requireAs<std::string>(p);
 
             std::smatch matchRes;
             while(std::regex_search(str, matchRes, tokenPattern))
@@ -533,11 +538,10 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
             return tokens;
         };
 
-        if( head.isSet(VField::OVFParameter::Vlabels) )
+        if( head.contains(VField::OVFParameter::Vlabels) )
         {
             auto ValueLabels = Tokenize(VField::OVFParameter::Vlabels);
-            auto& labelString = head.at<VField::pType::String>(VField::OVFParameter::Vlabels);
-            labelString = "";
+            std::string labelString;
 
             for(const auto& x: ValueLabels)
             {
@@ -547,29 +551,31 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
                 labelString += (isQuoted? "\""s : ""s) + "Re{" + (isQuoted? x.substr(2, x.length() - 1) : x) + "}" + (isQuoted? "\" " : " ");
                 labelString += (isQuoted? "\""s : ""s) + "Im{" + (isQuoted? x.substr(2, x.length() - 1) : x) + "}" + (isQuoted? "\"" : "");
             }
+            head.set(VField::OVFParameter::Vlabels, std::move(labelString));
         }
-        if( head.isSet(VField::OVFParameter::Vunit) )
+        if( head.contains(VField::OVFParameter::Vunit) )
         {
             auto ValueUnits = Tokenize(VField::OVFParameter::Vunit);
             if( ValueUnits.size() != 1 )
             {
-                auto& unitString = head.at<VField::pType::String>(VField::OVFParameter::Vunit);
-                unitString = "";
+                std::string unitString;
 
                 for(const auto& x: ValueUnits) //double all units
                 {
                     if( !unitString.empty() ) unitString += " ";
                     unitString += x + " " + x;
                 }
+                head.set(VField::OVFParameter::Vunit, std::move(unitString));
             }
         }
     }
 
     //add message about transform into title
-    if( head.isSet(VField::OVFParameter::Title) )
+    if( head.contains(VField::OVFParameter::Title) )
     {
-        auto& title = head.at<VField::pType::String> (VField::OVFParameter::Title);
-        title = "Temporal Fourier transform of \""s + title + "\"";
+        head.set(VField::OVFParameter::Title,
+            "Temporal Fourier transform of \""s +
+            head.requireAs<std::string>(VField::OVFParameter::Title) + "\"");
     }
 }
 
@@ -728,7 +734,7 @@ int main(int argc, char** argv)
         //and then check if header is oiro
         const VField::OVFHeader& ref = file.getSegmentHeader(0);
         std::smatch pat_matches{};
-        if (ref.isSet(VField::OVFParameter::Desc) && std::regex_search(ref.getString(VField::OVFParameter::Desc), pat_matches, timeRegEx))
+        if (ref.contains(VField::OVFParameter::Desc) && std::regex_search(ref.requireAs<std::string>(VField::OVFParameter::Desc), pat_matches, timeRegEx))
         {
             char* ret{ nullptr };
             auto str = pat_matches[1].str();
@@ -738,7 +744,7 @@ int main(int argc, char** argv)
         }
         else //could not parse time
             std::cerr << "Could not parse time from 'Description' field in file \"" << fName << "\", with regular expression \"" << TimeRegExStr << "\"."
-            "Got \"" << (ref.isSet(VField::OVFParameter::Desc) ? ref.getString(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
+            "Got \"" << (ref.contains(VField::OVFParameter::Desc) ? ref.requireAs<std::string>(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
         
         //set last file to the one we processed 
         lastFile = fName.c_str();
@@ -867,17 +873,17 @@ int main(int argc, char** argv)
 
     {
         //check if internal dimensions are compatible
-        const auto expDim = filesMeta.front().second.getSegmentHeader(0).expectedDimension();
-        const auto expCnt = filesMeta.front().second.getSegmentHeader(0).expectedPoints();
+        const auto expDim = filesMeta.front().second.getSegmentHeader(0).pointDimension();
+        const auto expCnt = filesMeta.front().second.getSegmentHeader(0).pointCount();
 
-        if( expDim == 0 || expCnt == 0)
+        if(!expDim || !expCnt)
         {
-            std::cerr << "First file has ill-formatted data: " << expCnt << " points with of " << expDim << " dimensions!\n";
+            std::cerr << "First file has indeterminate point count or dimension!\n";
             return 1;
         }
         //guaranteed to be set by this point
-        const auto mType = filesMeta.front().second.getSegmentHeader(0).getMeshType();
-        VFSize = (expDim - (mType == VField::OVFHeader::MeshType::rectangular? 0 : 3)) * expCnt;
+        const auto mType = filesMeta.front().second.getSegmentHeader(0).meshType().value();
+        VFSize = (*expDim - (mType == VField::MeshType::Rectangular? 0 : 3)) * *expCnt;
         //begin initialization of engines outside main thread once dimensions are known
         engineInit = std::async( std::launch::async, [&] ()
         {
@@ -917,9 +923,9 @@ int main(int argc, char** argv)
         for(; it != end; ++it)
         {
             const auto& head = it -> second.getSegmentHeader(0);
-            if ( head.expectedDimension() != expDim ||
-                 head.expectedPoints()    != expCnt ||
-                 head.getMeshType()       != mType    )
+            if ( head.pointDimension() != expDim ||
+                 head.pointCount()    != expCnt ||
+                 head.meshType()       != mType    )
             {
                 if(!badFiles.empty()) badFiles += ", ";
                 badFiles += "\""s + it -> second.getCurrentPath() + "\"";

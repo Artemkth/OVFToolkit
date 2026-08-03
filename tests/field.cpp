@@ -182,8 +182,8 @@ int main()
         //make copies and keep originals of fields for later
         VField::VField tmpRegular(commonHeader, pCount * Pdim, data);
         VField::VField tmpIrregular(commonHeader, pCount * (Pdim + 3), irrData);
-        tmpRegular.header().setMesh(VField::OVFHeader::MeshType::rectangular);
-        tmpIrregular.header().setMesh(VField::OVFHeader::MeshType::irregular);
+        tmpRegular.header().setMeshType(VField::MeshType::Rectangular);
+        tmpIrregular.header().setMeshType(VField::MeshType::Irregular);
         //this should be enough to make both weakly addressable!
         if(!tmpRegular.isWeaklyAddressable() || !tmpIrregular.isWeaklyAddressable())
         {

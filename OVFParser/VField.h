@@ -130,7 +130,7 @@ namespace VField{
              * @brief Construct an empty field with a version string.
              * @param version OVF version string stored in Header.
              */
-            explicit VField(const associatedType_t<pType::String>& version): VField()
+            explicit VField(const std::string& version): VField()
             { header_.set(OVFParameter::VersionString, version); }
             /**
              * @brief Construct an empty field for an OVF version.
@@ -573,9 +573,9 @@ namespace VField{
                   throw std::logic_error("A grid view requires rectangular field data with consistent node counts.");
 
                 return gridspan<T>{data<T>(),
-                    header_.getUint(OVFParameter::Znodes),
-                    header_.getUint(OVFParameter::Ynodes),
-                    header_.getUint(OVFParameter::Xnodes),
+                    header_.requireAs<std::size_t>(OVFParameter::Znodes),
+                    header_.requireAs<std::size_t>(OVFParameter::Ynodes),
+                    header_.requireAs<std::size_t>(OVFParameter::Xnodes),
                     pointDimension()};
               }
             /**
@@ -594,9 +594,9 @@ namespace VField{
                   throw std::logic_error("A grid view requires rectangular field data with consistent node counts.");
 
                 return gridspan<const T>{data<T>(),
-                    header_.getUint(OVFParameter::Znodes),
-                    header_.getUint(OVFParameter::Ynodes),
-                    header_.getUint(OVFParameter::Xnodes),
+                    header_.requireAs<std::size_t>(OVFParameter::Znodes),
+                    header_.requireAs<std::size_t>(OVFParameter::Ynodes),
+                    header_.requireAs<std::size_t>(OVFParameter::Xnodes),
                     pointDimension()};
               }
             /**

@@ -6,6 +6,10 @@ add_executable(header-test header.cpp)
 target_link_libraries(header-test PRIVATE ovfparser)
 add_test(HeaderTest header-test)
 
+add_executable(header-typed-test header_typed.cpp)
+target_link_libraries(header-typed-test PRIVATE ovfparser)
+add_test(HeaderTypedTest header-typed-test)
+
 #test for VField container
 add_executable(vfield-test field.cpp)
 target_link_libraries(vfield-test PRIVATE ovfparser)

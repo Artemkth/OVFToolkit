@@ -16,12 +16,12 @@ namespace VField
     //writing a file with a single field, binary only
     inline OVFPARSER_NO_EXPORT WriteResult WriteOVF(const std::string& fName, const VField& ref) noexcept
     {
-        if(!ref.header().isSet(OVFParameter::VersionString))
+        if(!ref.header().contains(OVFParameter::VersionString))
             return std::unexpected("WriteOVF: Version string was not set, aborting!");
         std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())
             return std::unexpected(std::format("WriteOVF: Unable to open '{}'!", fName));
-        file << ref.header().getString(OVFParameter::VersionString) << "\n";
+        file << ref.header().requireAs<std::string>(OVFParameter::VersionString) << "\n";
         file << "# Segment count: 1" << "\n";
         auto result = WriteSegment(file, ref);
         if(!file.good())
@@ -42,16 +42,19 @@ namespace VField
         std::size_t size { 0 };
         for(auto it = begin; it != end; ++it)
             size++;
-        if(!begin.isSet(OVFParameter::VersionString))
+        if(begin == end)
+            return std::unexpected("WriteOVF: No segments were provided!");
+        if(!begin->header().contains(OVFParameter::VersionString))
             return std::unexpected("WriteOVF: Version string was not set, aborting!");
         //making sure version strings are the same
+        const auto version = begin->header().template requireAs<std::string>(
+            OVFParameter::VersionString);
         for(auto it = begin; it != end; it++)
-            it -> template at<pType::String> (OVFParameter::VersionString) = 
-                begin -> template at<pType::String> (OVFParameter::VersionString);
+            it->header().set(OVFParameter::VersionString, version);
         std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())
             return std::unexpected(std::format("WriteOVF: Unable to open '{}'!", fName));
-        file << begin ->header().getString(OVFParameter::VersionString) << "\n";
+        file << version << "\n";
         file << "# Segment count: "<< size << "\n";
         for(auto it = begin; it != end; ++it)
         {

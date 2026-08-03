@@ -126,17 +126,20 @@ namespace VField {
 
 } // namespace VField
 
-//namespace with utilities for pre-compile computation
+/** @brief Implementation helpers used to derive the public OVF dictionary. */
 namespace DictionaryHelpers{
+  /** OVF parameter shorthand used by compile-time helpers. */
   using Parameter      = VField::OVFParameter;
-  using ParameterType  = VField::pType;
+  /** Parameter category shorthand used by compile-time helpers. */
+  using ParameterType  = VField::ParameterType;
+  /** Underlying integer type used for dense enum arithmetic. */
   using UnderlyingType = std::underlying_type_t<Parameter>;
 
   // -----------------------------------------------------------------------------
   // Pre-C++26 enum reflection backend
   // -----------------------------------------------------------------------------
 
-  //some hacky comparison, finds compiler trying to cast instead of writing Enum type explicitly
+  /** @brief Probe whether @p P is a named enumerator using the compiler signature. */
   template <Parameter P>
     consteval bool IsDefined()
     {
@@ -153,6 +156,7 @@ namespace DictionaryHelpers{
 #endif
     }
 
+  /** @brief Generate and verify a dense sequence of enum values from @p First. */
   template <Parameter First, std::size_t... I>
     consteval auto enumValuesImpl(std::index_sequence<I...>)
     {
@@ -168,6 +172,7 @@ namespace DictionaryHelpers{
       };
     }
 
+  /** @brief Return every dense enum value in the inclusive range. */
   template <Parameter First, Parameter Last>
     consteval auto enumValues()
     {
@@ -185,12 +190,14 @@ namespace DictionaryHelpers{
   // Generic constexpr range helpers
   // -----------------------------------------------------------------------------
 
+  /** @brief Test whether @p value occurs in @p range. */
   template <std::ranges::input_range R, class T>
     constexpr bool isElem(const T& value, const R& range)
     {
       return std::ranges::contains(range, value);
     }
 
+  /** @brief Test whether two ranges share at least one value. */
   template <std::ranges::input_range R1, std::ranges::forward_range R2>
     constexpr bool isIntersecting(const R1& lhs, const R2& rhs)
     {
@@ -199,6 +206,7 @@ namespace DictionaryHelpers{
           });
     }
 
+  /** @brief Test whether every value in @p subset occurs in @p superset. */
   template <std::ranges::input_range Subset, std::ranges::forward_range Superset>
     constexpr bool isSubset(const Subset& subset, const Superset& superset)
     {
@@ -207,6 +215,7 @@ namespace DictionaryHelpers{
           });
     }
 
+  /** @brief Test whether @p range contains a repeated value. */
   template <std::ranges::forward_range R>
     constexpr bool hasDuplicates(const R& range)
     {
@@ -219,6 +228,7 @@ namespace DictionaryHelpers{
       return false;
     }
 
+  /** @brief Count values from @p lhs that also occur in @p rhs. */
   template <std::ranges::input_range R1, std::ranges::forward_range R2>
     constexpr std::size_t countIntersect(const R1& lhs, const R2& rhs)
     {
@@ -227,6 +237,7 @@ namespace DictionaryHelpers{
             }));
     }
 
+  /** @brief Concatenate parameter arrays at compile time. */
   template <class... Arrays>
     constexpr auto makeUnion(const Arrays&... arrays)
     {
@@ -241,6 +252,7 @@ namespace DictionaryHelpers{
       return result;
     }
 
+  /** @brief Return @p values with the first occurrence of @p value removed. */
   template <std::size_t N>
     constexpr auto removeValue(const std::array<Parameter, N>& values,
         Parameter value)
@@ -269,6 +281,7 @@ namespace DictionaryHelpers{
   // Parameter metadata
   // -----------------------------------------------------------------------------
 
+  /** Function used to resolve a version-dependent serialized token. */
   using TokenResolver_t = std::string_view (*)(VField::OVFVersion);
   /**
     * @brief Description of one recognised OVF header parameter.
@@ -277,26 +290,32 @@ namespace DictionaryHelpers{
     * the requested OVF version by a constexpr function.
     */
   struct ParamDescriptor {
+    /** Token representation: absent, fixed, or resolved for an OVF revision. */
     using Token_t = std::variant<std::monostate, std::string_view, TokenResolver_t>;
 
+    /** Parameter described by this entry. */
     Parameter parameter;
+    /** Runtime storage category. */
     ParameterType type;
+    /** Human-readable parameter description. */
     std::string_view description;
+    /** Serialized token representation. */
     Token_t token{};
 
+    /** @brief Compare every descriptor field. */
     friend constexpr bool operator==(const ParamDescriptor&, const ParamDescriptor&) = default;
   };
 
-  //special resolved token for value units renamed between ovf1 and ovf2
-  //ovf0 doesn't require anything, and all metadata is options, so might as well be OVF1 syntax
+  /** @brief Resolve the value-unit token renamed between OVF 1 and OVF 2. */
   constexpr auto valueUnitToken(VField::OVFVersion version) noexcept -> std::string_view 
   { return version == VField::OVFVersion::OVF2 ? "valueunits" : "valueunit"; }
 
+  /** @brief Human-maintained source table from which all dictionary views derive. */
   inline constexpr std::array SourceParamTable{
       ParamDescriptor{Parameter::Open,          ParameterType::Other,  "Opening marker", "Begin"},
       ParamDescriptor{Parameter::Close,         ParameterType::Other,  "Closing marker", "End"},
       ParamDescriptor{Parameter::Segcnt,        ParameterType::Other,  "Segment count marker", "Segment count"},
-      ParamDescriptor{Parameter::Mtype,         ParameterType::Other,  "Mesh type", "Meshtype"},
+      ParamDescriptor{Parameter::Mtype,         ParameterType::Mesh,   "Mesh type", "Meshtype"},
       ParamDescriptor{Parameter::Empty,         ParameterType::Other,  "Empty line"},
       ParamDescriptor{Parameter::Comment,       ParameterType::Other,  "Comment"},
       ParamDescriptor{Parameter::Unknown,       ParameterType::Other,  "Unknown token"},
@@ -310,29 +329,30 @@ namespace DictionaryHelpers{
       ParamDescriptor{Parameter::Vlabels,       ParameterType::String, "Vector field value labels", "valuelabels"},
       ParamDescriptor{Parameter::Bound,         ParameterType::String, "Bounding frame vertices", "boundary"},
 
-      ParamDescriptor{Parameter::Pcount,        ParameterType::Uint,   "File point count", "pointcount"},
-      ParamDescriptor{Parameter::Vdim,          ParameterType::Uint,   "Vector field dimension", "valuedim"},
-      ParamDescriptor{Parameter::Xnodes,        ParameterType::Uint,   "Mesh x nodes", "xnodes"},
-      ParamDescriptor{Parameter::Ynodes,        ParameterType::Uint,   "Mesh y nodes", "ynodes"},
-      ParamDescriptor{Parameter::Znodes,        ParameterType::Uint,   "Mesh z nodes", "znodes"},
+      ParamDescriptor{Parameter::Pcount,        ParameterType::Unsigned,   "File point count", "pointcount"},
+      ParamDescriptor{Parameter::Vdim,          ParameterType::Unsigned,   "Vector field dimension", "valuedim"},
+      ParamDescriptor{Parameter::Xnodes,        ParameterType::Unsigned,   "Mesh x nodes", "xnodes"},
+      ParamDescriptor{Parameter::Ynodes,        ParameterType::Unsigned,   "Mesh y nodes", "ynodes"},
+      ParamDescriptor{Parameter::Znodes,        ParameterType::Unsigned,   "Mesh z nodes", "znodes"},
 
-      ParamDescriptor{Parameter::Vmult,         ParameterType::Float,  "Vector field value multiplier", "valuemultiplier"},
-      ParamDescriptor{Parameter::Vmin,          ParameterType::Float,  "Minimal vector field absolute value", "ValueRangeMinMag"},
-      ParamDescriptor{Parameter::Vmax,          ParameterType::Float,  "Maximal vector field absolute value", "ValueRangeMaxMag"},
-      ParamDescriptor{Parameter::Xmin,          ParameterType::Float,  "Minimal mesh x value", "xmin"},
-      ParamDescriptor{Parameter::Xmax,          ParameterType::Float,  "Maximal mesh x value", "xmax"},
-      ParamDescriptor{Parameter::Ymin,          ParameterType::Float,  "Minimal mesh y value", "ymin"},
-      ParamDescriptor{Parameter::Ymax,          ParameterType::Float,  "Maximal mesh y value", "ymax"},
-      ParamDescriptor{Parameter::Zmin,          ParameterType::Float,  "Minimal mesh z value", "zmin"},
-      ParamDescriptor{Parameter::Zmax,          ParameterType::Float,  "Maximal mesh z value", "zmax"},
-      ParamDescriptor{Parameter::Xbase,         ParameterType::Float,  "Mesh initial x value", "xbase"},
-      ParamDescriptor{Parameter::Ybase,         ParameterType::Float,  "Mesh initial y value", "ybase"},
-      ParamDescriptor{Parameter::Zbase,         ParameterType::Float,  "Mesh initial z value", "zbase"},
-      ParamDescriptor{Parameter::Xstep,         ParameterType::Float,  "Mesh x step", "xstepsize"},
-      ParamDescriptor{Parameter::Ystep,         ParameterType::Float,  "Mesh y step", "ystepsize"},
-      ParamDescriptor{Parameter::Zstep,         ParameterType::Float,  "Mesh z step", "zstepsize"},
+      ParamDescriptor{Parameter::Vmult,         ParameterType::Floating,  "Vector field value multiplier", "valuemultiplier"},
+      ParamDescriptor{Parameter::Vmin,          ParameterType::Floating,  "Minimal vector field absolute value", "ValueRangeMinMag"},
+      ParamDescriptor{Parameter::Vmax,          ParameterType::Floating,  "Maximal vector field absolute value", "ValueRangeMaxMag"},
+      ParamDescriptor{Parameter::Xmin,          ParameterType::Floating,  "Minimal mesh x value", "xmin"},
+      ParamDescriptor{Parameter::Xmax,          ParameterType::Floating,  "Maximal mesh x value", "xmax"},
+      ParamDescriptor{Parameter::Ymin,          ParameterType::Floating,  "Minimal mesh y value", "ymin"},
+      ParamDescriptor{Parameter::Ymax,          ParameterType::Floating,  "Maximal mesh y value", "ymax"},
+      ParamDescriptor{Parameter::Zmin,          ParameterType::Floating,  "Minimal mesh z value", "zmin"},
+      ParamDescriptor{Parameter::Zmax,          ParameterType::Floating,  "Maximal mesh z value", "zmax"},
+      ParamDescriptor{Parameter::Xbase,         ParameterType::Floating,  "Mesh initial x value", "xbase"},
+      ParamDescriptor{Parameter::Ybase,         ParameterType::Floating,  "Mesh initial y value", "ybase"},
+      ParamDescriptor{Parameter::Zbase,         ParameterType::Floating,  "Mesh initial z value", "zbase"},
+      ParamDescriptor{Parameter::Xstep,         ParameterType::Floating,  "Mesh x step", "xstepsize"},
+      ParamDescriptor{Parameter::Ystep,         ParameterType::Floating,  "Mesh y step", "ystepsize"},
+      ParamDescriptor{Parameter::Zstep,         ParameterType::Floating,  "Mesh z step", "zstepsize"},
    };
 
+  /** @brief Check that the source metadata table contains no duplicate parameter. */
   consteval bool sourceParametersAreUnique()
    {
       for (auto it{SourceParamTable.begin()}; it != SourceParamTable.end(); ++it) 
@@ -348,6 +368,7 @@ namespace DictionaryHelpers{
       return true;
    }
 
+   /** @brief Reorder the source table to match the supplied parameter universe. */
    template <std::size_t N>
    consteval auto orderTable( const std::array<Parameter, N>& universe )
    {
@@ -369,6 +390,7 @@ namespace DictionaryHelpers{
       return result;
    }
 
+   /** @brief Extract parameters having dictionary category @p Type. */
    template <ParameterType Type, const auto& Table>
    consteval auto parametersOfType()
    {
@@ -397,7 +419,9 @@ namespace VField {
 
   // Keep the range declaration explicit for the C++23 implementation.
   // C++26 reflection can replace DictionaryHelpers::enumValues() later.
+  /** @brief First enumerator covered by the dense parameter dictionary. */
   inline constexpr auto FirstParameter { OVFParameter::VersionString };
+  /** @brief Last enumerator covered by the dense parameter dictionary. */
   inline constexpr auto LastParameter  { OVFParameter::Invalid };
   //these values are validated already by the fact that they addressed through the enum namespace
   //test the compiler compatibility for static checks anyway
@@ -439,6 +463,7 @@ namespace VField {
       _noParamAfterLast()&&_noParamBeforeFirst(),
       "The Compiler didn't appreciate the hack, please fix, or wait for reflection!");
 
+  /** @brief Every declared OVF parameter in ordinal order. */
   inline constexpr auto ParamUniverse { DictionaryHelpers::enumValues<FirstParameter, LastParameter>() };
 
   /**
@@ -535,12 +560,44 @@ namespace VField {
           parameterDescriptor(parameter).token
           );
     }
-  template<pType Type>
+  /** @brief Parameters whose dictionary category is @p Type. */
+  template<ParameterType Type>
     inline constexpr auto PTypeList{ DictionaryHelpers::parametersOfType<Type, ParamTable>() };
 
-  inline constexpr auto& FPParamList{ PTypeList<pType::Float> };
-  inline constexpr auto& UINTParamList{ PTypeList<pType::Uint> };
-  inline constexpr auto& StringParamList{ PTypeList<pType::String> };
-  inline constexpr auto& OtherParamList{ PTypeList<pType::Other> };
+  /** @brief Floating-point header parameters. */
+  inline constexpr auto& FPParamList{ PTypeList<ParameterType::Floating> };
+  /** @brief Unsigned-integer header parameters. */
+  inline constexpr auto& UINTParamList{ PTypeList<ParameterType::Unsigned> };
+  /** @brief Text header parameters. */
+  inline constexpr auto& StringParamList{ PTypeList<ParameterType::String> };
+  /** @brief Mesh-organisation header parameters. */
+  inline constexpr auto& MeshParamList{ PTypeList<ParameterType::Mesh> };
+  /** @brief Service parameters that do not store a header value. */
+  inline constexpr auto& OtherParamList{ PTypeList<ParameterType::Other> };
+
+  /**
+   * @brief Compile-time metadata and C++ value type for @p Parameter.
+   *
+   * Instantiation for service parameters is rejected because they do not hold
+   * values in OVFHeader.
+   */
+  template<OVFParameter Parameter>
+  struct parameter_traits {
+    /** Dictionary storage category for @p Parameter. */
+    static constexpr ParameterType type = parameterDescriptor(Parameter).type;
+    static_assert(type != ParameterType::Other,
+        "OVF service parameters do not have a stored C++ value type");
+    /** C++ value type derived from type. */
+    using value_type = parameter_cpp_type_t<type>;
+  };
+
+  template<OVFParameter Parameter>
+  HeaderValueResult<parameter_value_t<Parameter>>
+    OVFHeader::lookup() const noexcept
+    { return lookupAs<parameter_value_t<Parameter>>(Parameter); }
+
+  template<OVFParameter Parameter>
+  void OVFHeader::set(parameter_value_t<Parameter> value)
+    { set(Parameter, ParameterValue{std::move(value)}); }
 
 } // namespace VField

@@ -155,22 +155,22 @@ namespace VField{
     std::string readData(std::istream&, VField&, std::optional<PointRange>, std::size_t&, bool);
 
     //declaration of templated parse method
-    template<pType p>
-    inline std::optional<associatedType_t<p>> ParseToken(const std::string&);
+    template<ParameterType p>
+    inline std::optional<parameter_cpp_type_t<p>> ParseToken(const std::string&);
     //specialisations for reading
-    template<> inline std::optional<associatedType_t<pType::Uint>> ParseToken<pType::Uint>(const std::string& str)
+    template<> inline std::optional<parameter_cpp_type_t<ParameterType::Unsigned>> ParseToken<ParameterType::Unsigned>(const std::string& str)
     {
         try{ return stoul(str); }
         catch(const std::logic_error&)
         { return std::nullopt; }
     }
-    template<> inline std::optional<associatedType_t<pType::Float>> ParseToken<pType::Float>(const std::string& str)
+    template<> inline std::optional<parameter_cpp_type_t<ParameterType::Floating>> ParseToken<ParameterType::Floating>(const std::string& str)
     {
         try{ return stod(str); }
         catch(const std::logic_error&)
         { return std::nullopt; }
     }
-    template<> inline std::optional<associatedType_t<pType::String>> ParseToken<pType::String>(const std::string& str)
+    template<> inline std::optional<std::string> ParseToken<ParameterType::String>(const std::string& str)
     { return str; }
 
     constexpr std::size_t BadBlockMax {5};
@@ -201,7 +201,7 @@ namespace VField{
         data -> prefetch.clear();
         
         //else continue
-        associatedType_t<pType::String> version{""};
+        std::string version{""};
         std::getline(file, version);
         if(!file.good())
         {
@@ -278,7 +278,7 @@ namespace VField{
                 else
                 {
                     std::regex_match(buffer, res, TokenMap.at(OVFParameter::Segcnt));//guaranteed to succeed
-                    auto segCntParse = ParseToken<pType::Uint>(res[2].str());
+                    auto segCntParse = ParseToken<ParameterType::Unsigned>(res[2].str());
                     if(segCntParse == std::nullopt)
                     {
                         logMessage((std::string)"VFieldFile::read: Could not parse the count of segments! line #" + 
@@ -449,7 +449,7 @@ namespace VField{
             {
                 //handling:
                 //first check if parameter is already set
-                if(head.isSet(*it) && *it != OVFParameter::Desc)
+                if(head.contains(*it) && *it != OVFParameter::Desc)
                 {
                     if(log != "") log+= "\n";
                     log += (std::string)"readHeader: found a duplicate value of type: " + std::string(paramName(*it)) +
@@ -459,9 +459,9 @@ namespace VField{
                 //else set the value
                 switch(paramType(*it))
                 {
-                case(pType::Uint):
+                case(ParameterType::Unsigned):
                     {
-                        auto pval = ParseToken<pType::Uint>(res[2].str());
+                        auto pval = ParseToken<ParameterType::Unsigned>(res[2].str());
                         if(pval == std::nullopt)
                         {
                             if(log != "") log+= "\n";
@@ -472,9 +472,9 @@ namespace VField{
                         head.set(*it, pval.value());
                     }
                     break;
-                case(pType::Float):
+                case(ParameterType::Floating):
                     {
-                        auto pval = ParseToken<pType::Float>(res[2].str());
+                        auto pval = ParseToken<ParameterType::Floating>(res[2].str());
                         if(pval == std::nullopt)
                         {
                             if(log != "") log+= "\n";
@@ -485,12 +485,14 @@ namespace VField{
                         head.set(*it, pval.value());
                     }
                     break;
-                case(pType::String):
+                case(ParameterType::String):
                     if(*it == OVFParameter::Desc)
                     {
-                        if(head.isSet(OVFParameter::Desc))
-                            head.at<pType::String>(OVFParameter::Desc) += "\n";
-                        head.at<pType::String>(OVFParameter::Desc) += res[2].str();
+                        std::string description;
+                        if(head.contains(OVFParameter::Desc))
+                            description = head.requireAs<std::string>(OVFParameter::Desc) + "\n";
+                        description += res[2].str();
+                        head.set(OVFParameter::Desc, std::move(description));
                         break;
                     }
                     head.set(*it, res[2].str());
@@ -550,16 +552,16 @@ namespace VField{
                     ":\n" + buffer;
                 break;
             case(OVFParameter::Mtype):
-                if(head.isSet(OVFParameter::Mtype))
+                if(head.contains(OVFParameter::Mtype))
                 {
                     if(log != "") log += "\n";
                     log+= (std::string)"readHeader: Trying to redefine mesh type at line #" + std::to_string(line_cnt);
                     break;
                 }
                 if(std::regex_match(buffer, regexTokenValue("Meshtype", "rectangular")))
-                    head.setMesh(OVFHeader::MeshType::rectangular);
+                    head.setMeshType(MeshType::Rectangular);
                 else if(std::regex_match(buffer, regexTokenValue("Meshtype", "irregular")))
-                    head.setMesh(OVFHeader::MeshType::irregular);
+                    head.setMeshType(MeshType::Irregular);
                 else
                 { if (log != "") log+= "\n"; log += (std::string)"readHeader: Invalid mesh type token was passed at line #" +
                     std::to_string(line_cnt) + ": \"" + res[1].str() + "\"";}
@@ -584,8 +586,7 @@ namespace VField{
     std::string readData(std::istream& file, VField& out, std::optional<PointRange> range,
                          std::size_t& cnt, bool prefetch)
     {
-        auto version = (out.header().isSet(OVFParameter::VersionString))?
-            matchVersionString(out.header().getString(OVFParameter::VersionString)) : OVFVersion::Unknown;
+        const auto version = out.header().version();
         std::string dataHeader {""};
         std::getline(file, dataHeader);
         if(!file)
@@ -595,7 +596,7 @@ namespace VField{
         if(!std::regex_match(dataHeader, match, regexTokenValue("Begin","Data*\\s+(binary\\s+(4|8)|text)")))
             return (std::string)"readData: Ill formed data begin line: \"" + dataHeader + "\"";
         bool isBinary = !std::regex_match(dataHeader, regexTokenValue("Begin", "Data\\s+text"));
-        std::size_t internalSize = isBinary? ParseToken<pType::Uint>(match[4].str()).value() : 8; // guaranteed to have value from previous lines
+        std::size_t internalSize = isBinary? ParseToken<ParameterType::Unsigned>(match[4].str()).value() : 8; // guaranteed to have value from previous lines
         const auto DataBeginPos {file.tellg()};
         //next peek if data is ending at expected position
         std::string log {""};
@@ -603,14 +604,14 @@ namespace VField{
         std::size_t advertisedCnt {0};
         {
             //try setting previous 2 parameters
-            if(version != OVFVersion::Unknown && out.header().isSet(OVFParameter::Mtype) && (version != OVFVersion::OVF2 || out.header().isSet(OVFParameter::Vdim)))
-                advertisedDim = (out.header().getMeshType() == OVFHeader::MeshType::rectangular? 0:3)+(version == OVFVersion::OVF2? out.header().getUint(OVFParameter::Vdim) : 3);
+            if(version != OVFVersion::Unknown && out.header().contains(OVFParameter::Mtype) && (version != OVFVersion::OVF2 || out.header().contains(OVFParameter::Vdim)))
+                advertisedDim = (out.header().meshType() == MeshType::Rectangular? 0:3)+(version == OVFVersion::OVF2? out.header().requireAs<std::size_t>(OVFParameter::Vdim) : 3);
             if(cnt!=0 && advertisedDim!=0)
                 advertisedCnt = cnt / advertisedDim;
-            else if( out.header().isSet(OVFParameter::Mtype) && (out.header().getMeshType() != OVFHeader::MeshType::irregular || out.header().isSet(OVFParameter::Pcount)) &&
-                     out.header().isSet(OVFParameter::Xnodes) && out.header().isSet(OVFParameter::Ynodes) && out.header().isSet(OVFParameter::Znodes) )
-                advertisedCnt = out.header().getMeshType() == OVFHeader::MeshType::irregular ? out.header().getUint(OVFParameter::Pcount) :
-                                    out.header().getUint(OVFParameter::Xnodes) * out.header().getUint(OVFParameter::Ynodes) * out.header().getUint(OVFParameter::Znodes);
+            else if( out.header().contains(OVFParameter::Mtype) && (out.header().meshType() != MeshType::Irregular || out.header().contains(OVFParameter::Pcount)) &&
+                     out.header().contains(OVFParameter::Xnodes) && out.header().contains(OVFParameter::Ynodes) && out.header().contains(OVFParameter::Znodes) )
+                advertisedCnt = out.header().meshType() == MeshType::Irregular ? out.header().requireAs<std::size_t>(OVFParameter::Pcount) :
+                                    out.header().requireAs<std::size_t>(OVFParameter::Xnodes) * out.header().requireAs<std::size_t>(OVFParameter::Ynodes) * out.header().requireAs<std::size_t>(OVFParameter::Znodes);
             if(advertisedDim == 0 || advertisedCnt == 0)
                 log += "readData: Couldn't read the array dimensions from the header provided!";
         }
@@ -799,7 +800,7 @@ namespace VField{
                     std::smatch sm;
                     while(std::regex_search(line, sm, tokenizer))
                     {
-                        auto val = ParseToken<pType::Float>(sm[1].str());
+                        auto val = ParseToken<ParameterType::Floating>(sm[1].str());
                         if(val == std::nullopt)
                             break;
                         buffer[point * advertisedDim + count++] = val.value();

@@ -247,16 +247,16 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
 bool OutputData(const VField::VField& field) //output data to mathematica
 {
     //output data methods
-    const bool isRect { field.header().getMeshType() == VField::OVFHeader::MeshType::rectangular };
+    const bool isRect { field.header().meshType() == VField::MeshType::Rectangular };
     const int depth {isRect? 4 : 2};
     std::vector<int> dims;
     //static casts, explicitly converting to smaller type :'(
     //TODO: add an error throw for when some argument is larger than INT_MAX
     if(isRect)
         dims = { 
-            static_cast<int>(field.header().getUint(VField::OVFParameter::Znodes)),
-            static_cast<int>(field.header().getUint(VField::OVFParameter::Ynodes)),
-            static_cast<int>(field.header().getUint(VField::OVFParameter::Xnodes)),
+            static_cast<int>(field.header().requireAs<std::size_t>(VField::OVFParameter::Znodes)),
+            static_cast<int>(field.header().requireAs<std::size_t>(VField::OVFParameter::Ynodes)),
+            static_cast<int>(field.header().requireAs<std::size_t>(VField::OVFParameter::Xnodes)),
             static_cast<int>(field.pointDimension())
         };
     else
@@ -312,12 +312,12 @@ constexpr bool putVal(const VField::OVFHeader& head)
     bool result{WSPutFunction(stdlink, "Rule", 2) != 0};
     result = result && PutValue(ParamKeys.at(p));
 
-    if constexpr(paramType(p) == VField::pType::Uint)
-        return result && PutValue(head.getUint(p));
-    else if constexpr(paramType(p) == VField::pType::Float)
-        return result && PutValue(head.getFloat(p));
-    else if constexpr(paramType(p) == VField::pType::String)
-        return result && PutValue(head.getString(p));
+    if constexpr(paramType(p) == VField::ParameterType::Unsigned)
+        return result && PutValue(head.requireAs<std::size_t>(p));
+    else if constexpr(paramType(p) == VField::ParameterType::Floating)
+        return result && PutValue(head.requireAs<double>(p));
+    else if constexpr(paramType(p) == VField::ParameterType::String)
+        return result && PutValue(head.requireAs<std::string>(p));
     //if everything else fails
     static_assert(true, "Wrong, unhandled type of parameter!");
 }
@@ -327,7 +327,7 @@ template<typename T, T v>
 constexpr bool isOutputted(const VField::OVFHeader& head)
 {
     if constexpr(std::is_same<T, VField::OVFParameter>::value)
-        return head.isSet(v);
+        return head.contains(v);
     else
         //assuming first element is a predicate taking a header
         return v(head, false);
@@ -336,7 +336,7 @@ template<typename T, T v>
 constexpr bool Output(const VField::OVFHeader& head)
 {
     if constexpr(std::is_same<T, VField::OVFParameter>::value)
-        return !head.isSet(v) || putVal<v>(head);
+        return !head.contains(v) || putVal<v>(head);
     else if(v(head, false))
         return v(head, true);
     return false;
@@ -368,9 +368,9 @@ inline bool OutputMeshType(const VField::OVFHeader& head, bool write = false)
 
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue(ParamKeys.at(VField::OVFParameter::Mtype));
-    if(!head.isSet(VField::OVFParameter::Mtype))
+    if(!head.contains(VField::OVFParameter::Mtype))
         return res && WSPutSymbol(stdlink, "Undefined") != 0;
-    return res && PutValue(head.getMeshType() == VField::OVFHeader::MeshType::rectangular? "Rectangular" : "Irregular");
+    return res && PutValue(head.meshType() == VField::MeshType::Rectangular? "Rectangular" : "Irregular");
 }
 
 inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = false)
@@ -384,12 +384,12 @@ inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = fal
     };
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue("CellSize");
-    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);}))
+    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.contains(p);}))
     {
-        std::array<VField::associatedType_t<VField::pType::Float>,3> val {
-            head.getFloat(VField::OVFParameter::Xstep),
-            head.getFloat(VField::OVFParameter::Ystep),
-            head.getFloat(VField::OVFParameter::Zstep)
+        std::array<VField::parameter_cpp_type_t<VField::ParameterType::Floating>,3> val {
+            head.requireAs<double>(VField::OVFParameter::Xstep),
+            head.requireAs<double>(VField::OVFParameter::Ystep),
+            head.requireAs<double>(VField::OVFParameter::Zstep)
         };
         res = res && PutValue(val);
     }
@@ -398,7 +398,7 @@ inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = fal
     {
         res = res && WSPutFunction(stdlink, "List", 3) != 0;
         for(const auto& p: args)
-            res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+            res = res && (head.contains(p) ? PutValue(head.requireAs<double>(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
     }
 
     return res;
@@ -414,12 +414,12 @@ inline bool OutputCoordOrigin(const VField::OVFHeader& head, bool write = false)
     };
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue("Origin");
-    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);}))
+    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.contains(p);}))
     {
-        std::array<VField::associatedType_t<VField::pType::Float>,3> val {
-            head.getFloat(VField::OVFParameter::Xbase),
-            head.getFloat(VField::OVFParameter::Ybase),
-            head.getFloat(VField::OVFParameter::Zbase)
+        std::array<VField::parameter_cpp_type_t<VField::ParameterType::Floating>,3> val {
+            head.requireAs<double>(VField::OVFParameter::Xbase),
+            head.requireAs<double>(VField::OVFParameter::Ybase),
+            head.requireAs<double>(VField::OVFParameter::Zbase)
         };
         res = res && PutValue(val);
     }
@@ -428,7 +428,7 @@ inline bool OutputCoordOrigin(const VField::OVFHeader& head, bool write = false)
     {
         res = res && WSPutFunction(stdlink, "List", 3) != 0;
         for(const auto& p: args)
-            res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+            res = res && (head.contains(p) ? PutValue(head.requireAs<double>(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
     }
 
     return res;
@@ -443,7 +443,7 @@ inline bool OutputBBox(const VField::OVFHeader& head, bool write = false)
         VField::OVFParameter::Zmin,
         VField::OVFParameter::Zmax,
     };
-    const bool any_present{std::any_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);})};
+    const bool any_present{std::any_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.contains(p);})};
     if(!write)
         return any_present;
 
@@ -458,7 +458,7 @@ inline bool OutputBBox(const VField::OVFHeader& head, bool write = false)
     {
         if(i++%2 == 0)
             res = res && WSPutFunction(stdlink, "List", 2);
-        res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+        res = res && (head.contains(p) ? PutValue(head.requireAs<double>(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
     }
 
     return res;
@@ -983,20 +983,20 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
     //first deduce mesh type
     if(depth == 2)
     {
-        head.setMesh(VField::OVFHeader::MeshType::irregular);
-        head.at<VField::pType::Uint>(VField::OVFParameter::Pcount) = dims[0];
+        head.setMeshType(VField::MeshType::Irregular);
+        head.set(VField::OVFParameter::Pcount, static_cast<std::size_t>(dims[0]));
         if(dims[1] > 3)
-            head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = dims[1] - 3;
+            head.set(VField::OVFParameter::Vdim, static_cast<std::size_t>(dims[1] - 3));
         //else skip
     }
     else
     {
-        head.setMesh(VField::OVFHeader::MeshType::rectangular);
+        head.setMeshType(VField::MeshType::Rectangular);
 
-        head.at<VField::pType::Uint>(VField::OVFParameter::Znodes) = dims[0];
-        head.at<VField::pType::Uint>(VField::OVFParameter::Ynodes) = dims[1];
-        head.at<VField::pType::Uint>(VField::OVFParameter::Xnodes) = dims[2];
-        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim)   = dims[3];
+        head.set(VField::OVFParameter::Znodes, static_cast<std::size_t>(dims[0]));
+        head.set(VField::OVFParameter::Ynodes, static_cast<std::size_t>(dims[1]));
+        head.set(VField::OVFParameter::Xnodes, static_cast<std::size_t>(dims[2]));
+        head.set(VField::OVFParameter::Vdim, static_cast<std::size_t>(dims[3]));
     }
 
     return field;
@@ -1007,7 +1007,7 @@ void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& 
 {
     switch(paramType(p))
     {
-        case VField::pType::String:
+        case VField::ParameterType::String:
             if(atom.index() != 2)
             {
                 PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a string");
@@ -1015,24 +1015,24 @@ void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& 
             }
             head.set(p, std::get<std::string>(atom));
             break;
-        case VField::pType::Float:
+        case VField::ParameterType::Floating:
             if(atom.index() == 2)
             {
                 PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a numeric value");
                 return;
             }
             if(atom.index() == 0)
-                head.set(p, static_cast<VField::associatedType_t<VField::pType::Float>>(std::get<0>(atom)));
+                head.set(p, static_cast<VField::parameter_cpp_type_t<VField::ParameterType::Floating>>(std::get<0>(atom)));
             else if(atom.index() == 1)
-                head.set(p, static_cast<VField::associatedType_t<VField::pType::Float>>(std::get<1>(atom)));
+                head.set(p, static_cast<VField::parameter_cpp_type_t<VField::ParameterType::Floating>>(std::get<1>(atom)));
             break;
-        case VField::pType::Uint:
+        case VField::ParameterType::Unsigned:
             if(atom.index() != 0)
             {
                 PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a integer");
                 return;
             }
-            head.set(p, static_cast<VField::associatedType_t<VField::pType::Uint>>(std::get<0>(atom)));
+            head.set(p, static_cast<VField::parameter_cpp_type_t<VField::ParameterType::Unsigned>>(std::get<0>(atom)));
             break;
 
         default:
