@@ -1,0 +1,75 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.11",
+    "nanobind>=2.4",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ovftoolkit"
+version = "0.2.0"
+description = "Fast, lazy NumPy access to OOMMF vector-field files"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Artem Bondarenko" },
+]
+keywords = ["OOMMF", "OVF", "micromagnetics", "NumPy", "vector field"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Typing :: Typed",
+]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.version = ">=3.30"
+wheel.packages = []
+install.components = ["Python"]
+build.verbose = true
+build.tool-args = ["-j2"]
+sdist.exclude = [
+    ".cache",
+    ".gitmodules",
+    "CMake",
+    "build*",
+    "compile_commands.json",
+    "docs",
+    "external",
+    "submodules",
+    "tests",
+    "testing",
+    "tools",
+    "util",
+    "bindings/wolfram",
+    "tools/mumax-runner/__pycache__",
+]
+
+[tool.scikit-build.cmake.define]
+OVFTOOLKIT_BUILD_TOOLS = "OFF"
+OVFTOOLKIT_BUILD_DOCS = "OFF"
+OVFTOOLKIT_BUILD_WOLFRAM_BINDING = "OFF"
+OVFTOOLKIT_BUILD_PYTHON_BINDING = "ON"
+OVFTOOLKIT_PYTHON_WHEEL = "ON"
+BUILD_TESTING = "OFF"
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux_* *-win32"
+test-requires = ["numpy"]
+test-command = "python -c \"import ovftoolkit as ovf; assert ovf.VField().data is None\""
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]

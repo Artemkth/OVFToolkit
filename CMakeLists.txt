@@ -12,6 +12,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CheckCXXSourceCompiles)
 include(GNUInstallDirs)
 
+option(OVFTOOLKIT_BUILD_TOOLS "Build OVFToolkit command-line tools" ON)
+option(OVFTOOLKIT_BUILD_DOCS "Configure the Doxygen documentation target" ON)
+option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
+    "Build the Wolfram Language WSTP binding when Mathematica is available" ON)
+
 check_cxx_source_compiles([=[
     #include <cstddef>
     #include <mdspan>
@@ -67,9 +72,14 @@ endif()
 
 # also need some parallelization libs
 find_package(Threads REQUIRED)
-# using boost for endianess, need to check if it is available!
+# The parser only needs Boost headers. Command-line tools additionally use
+# program_options, which should not be a build dependency of Python wheels.
 cmake_policy(SET CMP0167 NEW)
-find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
+if(OVFTOOLKIT_BUILD_TOOLS)
+    find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
+else()
+    find_package(Boost 1.58.0 REQUIRED)
+endif()
 
 #library build file
 include(GenerateExportHeader)
@@ -78,10 +88,13 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 #find interfaces for Mathematica
-set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
-find_package(Mathematica COMPONENTS WSTP)
+if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING)
+    set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
+    find_package(Mathematica COMPONENTS WSTP)
+endif()
 
 #find fftw frameworks and other components for time fourier of magnetization files
+if(OVFTOOLKIT_BUILD_TOOLS)
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake/findFFTW" ${CMAKE_MODULE_PATH})
 # Try to find either CPU FFTW or CUDA/cuFFT for Fourier analysis.  The
 # threaded FFTW companion library is optional; the serial float library is
@@ -168,6 +181,10 @@ IF(BUILD_FFUTIL)
     ENDIF()
     MESSAGE(STATUS "${FFMESSAGE}")
 ENDIF()
+else()
+    set(BUILD_FFUTIL OFF)
+    set(OVFTOOLKIT_CUFFT_FOUND OFF)
+endif()
 
 IF(MSVC)
 	add_definitions(-DNOMINMAX)
@@ -204,7 +221,9 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     include(CTest)
 endif()
 
-add_subdirectory(tools)
+if(OVFTOOLKIT_BUILD_TOOLS)
+    add_subdirectory(tools)
+endif()
 
 #and install information for library
 set(INCLUDE_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/OVFParser")
@@ -223,12 +242,12 @@ install(FILES
 )
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
-add_subdirectory(docs)
+if(OVFTOOLKIT_BUILD_DOCS)
+    add_subdirectory(docs)
+endif()
 
 IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_subdirectory(tests)
 ENDIF()
 
-option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
-    "Build the Wolfram Language WSTP binding when Mathematica is available" ON)
 add_subdirectory(bindings)

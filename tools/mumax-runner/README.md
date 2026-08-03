@@ -11,3 +11,21 @@ on an external interface.
 
 This directory is GPL-3.0-or-later because the Go executable incorporates
 mumax3. The rest of OVFToolkit remains under its top-level MIT license.
+
+## Python package
+
+The controller can be installed independently from PyPI distributions built
+in this directory:
+
+```sh
+python -m pip install ovftoolkit-mumax-runner
+mumax-runner
+```
+
+The package does not download or bundle CUDA or mumax3. Install the
+`mumax-slave` executable built by OVFToolkit beside the launcher or somewhere
+on `PATH`. Programmatic use is available through:
+
+```python
+from ovftoolkit_mumax import MumaxEngine
+```

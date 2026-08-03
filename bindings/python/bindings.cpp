@@ -140,6 +140,24 @@ class PythonReader {
     void close() noexcept { file_.reset(); }
 };
 
+class PythonReaderIterator {
+    PythonReader* reader_;
+    std::size_t index_{};
+
+  public:
+    explicit PythonReaderIterator(PythonReader& reader) noexcept
+      : reader_(&reader) {}
+
+    [[nodiscard]] PythonReaderIterator& iter() noexcept { return *this; }
+
+    [[nodiscard]] VField::VField next()
+    {
+        if(index_ >= reader_->size())
+            throw nb::stop_iteration();
+        return reader_->read(static_cast<std::ptrdiff_t>(index_++));
+    }
+};
+
 class PythonWriter {
     std::filesystem::path path_;
     std::size_t expected_;
@@ -550,7 +568,7 @@ void validateField(const VField::VField& field)
 
 } // namespace
 
-NB_MODULE(ovftoolkit, module)
+NB_MODULE(_native, module)
 {
     module.doc() = "Opaque Python bindings for OVFToolkit";
 
@@ -576,11 +594,19 @@ NB_MODULE(ovftoolkit, module)
         }, nb::arg("exception_type").none(), nb::arg("exception").none(),
            nb::arg("traceback").none())
         .def("__len__", &PythonReader::size)
+        .def("__iter__", [](PythonReader& reader) {
+            return PythonReaderIterator{reader};
+        }, nb::keep_alive<0, 1>())
         .def("__getitem__", &PythonReader::read)
         .def("read", &PythonReader::read, nb::arg("segment") = 0)
         .def("header", &PythonReader::header, nb::arg("segment") = 0)
         .def("close", &PythonReader::close)
         .def_prop_ro("closed", &PythonReader::closed);
+
+    nb::class_<PythonReaderIterator>(module, "ReaderIterator")
+        .def("__iter__", &PythonReaderIterator::iter,
+            nb::rv_policy::reference_internal)
+        .def("__next__", &PythonReaderIterator::next);
 
     nb::class_<PythonWriter>(module, "Writer")
         .def("__enter__", [](PythonWriter& writer) -> PythonWriter& {

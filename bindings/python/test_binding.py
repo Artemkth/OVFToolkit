@@ -119,7 +119,7 @@ with tempfile.TemporaryDirectory() as directory:
     with ovf.reader(path) as source:
         assert len(source) == 1
         assert source.header()[ovf.OVFParameter.Title] == "Python context manager"
-        loaded = source[-1]
+        loaded, = source
         assert isinstance(loaded.data, np.ndarray)
         np.testing.assert_array_equal(loaded.data, original.data)
     assert source.closed
