@@ -1,0 +1,147 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_gpu_tests:
+        description: Run CUDA tests on a self-hosted GPU runner
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  linux-cpu:
+    name: Linux CPU (FFTW)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++-14 libboost-program-options-dev libfftw3-dev libtbb-dev ninja-build
+          python -m pip install "cmake>=3.30"
+      - name: Configure
+        run: >-
+          CXX=g++-14 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DOVFTOOLKIT_BUILD_DOCS=OFF
+          -DOVFTOOLKIT_BUILD_WOLFRAM_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_PYTHON_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_MUMAX_RUNNER=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows-cpu:
+    name: Windows CPU (FFTW)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        shell: pwsh
+        run: >-
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install
+          boost-program-options fftw3 tbb --triplet x64-windows
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -S . -B build -A x64
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DOVFTOOLKIT_BUILD_DOCS=OFF
+          -DOVFTOOLKIT_BUILD_WOLFRAM_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_PYTHON_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_MUMAX_RUNNER=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  linux-cuda:
+    name: Linux CUDA 12.9 compile
+    runs-on: ubuntu-24.04
+    container: nvidia/cuda:12.9.1-devel-ubuntu24.04
+    steps:
+      - name: Install checkout prerequisites
+        run: apt-get update && apt-get install --yes git ca-certificates
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: >-
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes
+          g++-14 libboost-program-options-dev libfftw3-dev libtbb-dev
+          ninja-build python3-pip
+          && python3 -m pip install --break-system-packages "cmake>=3.30"
+      - name: Configure
+        run: >-
+          CC=gcc-14 CXX=g++-14 cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOVFTOOLKIT_BUILD_DOCS=OFF
+          -DOVFTOOLKIT_BUILD_WOLFRAM_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_PYTHON_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_MUMAX_RUNNER=OFF
+      - name: Compile CPU and CUDA targets
+        run: cmake --build build --parallel
+
+  windows-cuda:
+    name: Windows CUDA 12.9 compile
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install CUDA 12.9
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "12.9.1"
+          method: network
+          sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cufft"]'
+      - name: Install dependencies
+        shell: pwsh
+        run: >-
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install
+          boost-program-options fftw3 tbb --triplet x64-windows
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -S . -B build -A x64
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          "-DCUDAToolkit_ROOT=$env:CUDA_PATH"
+          -DOVFTOOLKIT_BUILD_DOCS=OFF
+          -DOVFTOOLKIT_BUILD_WOLFRAM_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_PYTHON_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_MUMAX_RUNNER=OFF
+      - name: Compile CPU and CUDA targets
+        run: cmake --build build --config Release --parallel
+
+  gpu-tests:
+    name: Self-hosted CUDA tests
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_gpu_tests }}
+    runs-on: [self-hosted, linux, x64, cuda]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Configure
+        run: >-
+          cmake -S . -B build-ci-gpu -DCMAKE_BUILD_TYPE=Release
+          -DOVFTOOLKIT_BUILD_DOCS=OFF
+          -DOVFTOOLKIT_BUILD_WOLFRAM_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_PYTHON_BINDING=OFF
+          -DOVFTOOLKIT_BUILD_MUMAX_RUNNER=OFF
+      - name: Build
+        run: cmake --build build-ci-gpu --parallel
+      - name: Run GPU tests
+        run: ctest --test-dir build-ci-gpu -L gpu --output-on-failure

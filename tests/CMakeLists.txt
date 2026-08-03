@@ -59,7 +59,9 @@ if(OVFTOOLKIT_CUFFT_FOUND AND FFTW_FLOAT_LIB_FOUND)
             CUDA_STANDARD_REQUIRED ON)
 
         add_test(NAME ${test_name} COMMAND ${target})
-        set_tests_properties(${test_name} PROPERTIES SKIP_RETURN_CODE 77)
+        set_tests_properties(${test_name} PROPERTIES
+            LABELS gpu
+            SKIP_RETURN_CODE 77)
     endfunction()
 
     add_cuda_fft_test(cuda-inplace-test cuda_inplace.cu CUDAInPlaceFFT)
@@ -83,5 +85,7 @@ if(OVFTOOLKIT_CUFFT_FOUND AND FFTW_FLOAT_LIB_FOUND)
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON)
     add_test(NAME CrossEngineFFT COMMAND cross-engine-fft-test)
-    set_tests_properties(CrossEngineFFT PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(CrossEngineFFT PROPERTIES
+        LABELS gpu
+        SKIP_RETURN_CODE 77)
 endif()
