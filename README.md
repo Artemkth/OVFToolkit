@@ -100,7 +100,7 @@ The core C++ library requires:
 - a C++23 compiler and standard library;
 - POSIX threads or the Windows threading runtime;
 - Boost 1.58 or newer headers;
-- native `std::mdspan`, or the Kokkos mdspan reference headers.
+- native `std::mdspan`, or the bundled Kokkos mdspan reference implementation.
 
 Python bindings additionally require Python 3.10 or newer, its development
 headers, nanobind, and NumPy. Matplotlib is needed only for the plotting

@@ -21,7 +21,7 @@ namespace VField {
 namespace md = std;
 }
 #else
-#include <kokkos/mdspan/mdspan.hpp>
+#include <mdspan/mdspan.hpp>
 
 namespace VField {
 namespace md = Kokkos;

@@ -43,9 +43,11 @@ check_cxx_source_compiles([=[
 if(OVFTOOLKIT_HAS_STD_MDSPAN)
   message(STATUS "OVFToolkit: using native std::mdspan")
 else()
+    set(CMAKE_REQUIRED_INCLUDES
+        "${CMAKE_SOURCE_DIR}/externals/mdspan/include")
     check_cxx_source_compiles([=[
         #include <cstddef>
-        #include <kokkos/mdspan/mdspan.hpp>
+        #include <mdspan/mdspan.hpp>
 
         int main()
         {
@@ -59,6 +61,7 @@ else()
             return static_cast<int>(view.extent(0));
         }
     ]=] OVFTOOLKIT_HAS_KOKKOS_MDSPAN)
+    unset(CMAKE_REQUIRED_INCLUDES)
 
     if(NOT OVFTOOLKIT_HAS_KOKKOS_MDSPAN)
         message(FATAL_ERROR
@@ -213,6 +216,11 @@ target_include_directories(ovfparser PUBLIC
     "${Boost_INCLUDE_DIRS}"
     )
 
+if(NOT OVFTOOLKIT_HAS_STD_MDSPAN)
+    target_include_directories(ovfparser PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/externals/mdspan/include>)
+endif()
+
 target_compile_options(ovfparser PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors -Wno-strict-aliasing>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>)
@@ -240,6 +248,13 @@ install(FILES
     "${PROJECT_BINARY_DIR}/OVFToolkitConfig.h"
     "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h" DESTINATION "${INCLUDE_INSTALL_DIR}"
 )
+if(NOT OVFTOOLKIT_HAS_STD_MDSPAN)
+    install(DIRECTORY externals/mdspan/include/
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+    install(FILES externals/mdspan/LICENSE
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+        RENAME LICENSE-mdspan)
+endif()
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 if(OVFTOOLKIT_BUILD_DOCS)
