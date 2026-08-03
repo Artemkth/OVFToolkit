@@ -651,10 +651,20 @@ namespace VField{
                 advertisedDim = (out.header().meshType() == MeshType::Rectangular? 0:3)+(version == OVFVersion::OVF2? out.header().requireAs<std::size_t>(OVFParameter::Vdim) : 3);
             if(cnt!=0 && advertisedDim!=0)
                 advertisedCnt = cnt / advertisedDim;
-            else if( out.header().contains(OVFParameter::Mtype) && (out.header().meshType() != MeshType::Irregular || out.header().contains(OVFParameter::Pcount)) &&
-                     out.header().contains(OVFParameter::Xnodes) && out.header().contains(OVFParameter::Ynodes) && out.header().contains(OVFParameter::Znodes) )
-                advertisedCnt = out.header().meshType() == MeshType::Irregular ? out.header().requireAs<std::size_t>(OVFParameter::Pcount) :
-                                    out.header().requireAs<std::size_t>(OVFParameter::Xnodes) * out.header().requireAs<std::size_t>(OVFParameter::Ynodes) * out.header().requireAs<std::size_t>(OVFParameter::Znodes);
+            else if(out.header().contains(OVFParameter::Mtype))
+            {
+                if(out.header().meshType() == MeshType::Irregular &&
+                   out.header().contains(OVFParameter::Pcount))
+                    advertisedCnt = out.header().requireAs<std::size_t>(OVFParameter::Pcount);
+                else if(out.header().meshType() == MeshType::Rectangular &&
+                        out.header().contains(OVFParameter::Xnodes) &&
+                        out.header().contains(OVFParameter::Ynodes) &&
+                        out.header().contains(OVFParameter::Znodes))
+                    advertisedCnt =
+                        out.header().requireAs<std::size_t>(OVFParameter::Xnodes) *
+                        out.header().requireAs<std::size_t>(OVFParameter::Ynodes) *
+                        out.header().requireAs<std::size_t>(OVFParameter::Znodes);
+            }
             if(advertisedDim == 0 || advertisedCnt == 0)
                 log += "readData: Couldn't read the array dimensions from the header provided!";
         }
