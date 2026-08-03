@@ -182,6 +182,7 @@ add_library(ovfparser
     OVFParser/OVFReader.cpp
     OVFParser/OVFWriter.cpp
 )
+set_target_properties(ovfparser PROPERTIES POSITION_INDEPENDENT_CODE ON)
 generate_export_header(ovfparser EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h")
 
 configure_file(OVFToolkitConfig.h.in OVFToolkitConfig.h)
