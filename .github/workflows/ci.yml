@@ -47,16 +47,22 @@ jobs:
   windows-cpu:
     name: Windows CPU (FFTW)
     runs-on: windows-2022
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: windows-vcpkg-x64-ovftoolkit-v1
       - name: Install dependencies
         shell: pwsh
-        run: >-
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install
-          boost-program-options fftw3 hdf5 tbb vtk
-          --triplet x64-windows
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install boost-program-options fftw3 hdf5 tbb vtk --triplet x64-windows
       - name: Configure
         shell: pwsh
         run: >-
@@ -101,6 +107,8 @@ jobs:
   windows-cuda:
     name: Windows CUDA 12.9 compile
     runs-on: windows-2022
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
     steps:
       - uses: actions/checkout@v6
         with:
@@ -111,12 +119,16 @@ jobs:
           cuda: "12.9.1"
           method: network
           sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cufft"]'
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: windows-vcpkg-x64-ovftoolkit-v1
       - name: Install dependencies
         shell: pwsh
-        run: >-
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install
-          boost-program-options fftw3 hdf5 tbb vtk
-          --triplet x64-windows
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install boost-program-options fftw3 hdf5 tbb vtk --triplet x64-windows
       - name: Configure
         shell: pwsh
         run: >-
