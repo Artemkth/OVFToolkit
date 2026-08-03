@@ -188,11 +188,11 @@ namespace VField
     {
         auto tVal {TestVal<T>};
         std::vector<T> buff;
-        const T* outData = field.getData<T>();
+        const T* outData = field.data<T>();
         if( (boost::endian::order::native == boost::endian::order::little && version == OVFVersion::OVF1) ||
                 boost::endian::order::native == boost::endian::order::big )
         {
-            buff = field.getDataCopy<T>();
+            buff = field.dataCopy<T>();
             outData = buff.data();
             boost::endian::endian_reverse_inplace( *reinterpret_cast<typename UintAnalogue<T>::type*>(&tVal) );
         }
@@ -202,7 +202,7 @@ namespace VField
             boost::endian::endian_reverse_inplace(
                 *reinterpret_cast<typename UintAnalogue<T>::type*>(&value));
         const char* outBuff = reinterpret_cast<const std::ostream::char_type*>(outData);
-        out.write(outBuff, field.curDataPoints() * sizeof(T)/sizeof(char));
+        out.write(outBuff, static_cast<std::streamsize>(field.dataSizeBytes()));
     }
 
     WriteResult WriteSegment(std::ostream& out, const VField& field) noexcept
@@ -214,12 +214,12 @@ namespace VField
         //set modifiers for 'text-mode' values
         out << std::setprecision(8);
         
-        auto version = matchVersionString(field.Header.at<pType::String>(OVFParameter::VersionString));
+        auto version = matchVersionString(field.header().at<pType::String>(OVFParameter::VersionString));
         out << "# Begin: Segment\n# Begin: Header\n";
-        auto headerResult = WriteHeader(out, version, field.Header);
+        auto headerResult = WriteHeader(out, version, field.header());
         std::string report = headerResult ? std::string{} : std::move(headerResult.error());
-        out << "# End: Header\n# Begin: Data binary "<<field.curDataInternalSize() << "\n";
-        switch(field.curDataInternalSize())
+        out << "# End: Header\n# Begin: Data binary "<<field.scalarSizeBytes() << "\n";
+        switch(field.scalarSizeBytes())
         {
             case(4):
                 WriteBinaryData<float>(out, version, field);
@@ -232,7 +232,7 @@ namespace VField
                     "{}WriteSegment: somehow got invalid internal data size! Please check 'isWeaklyAddressable' for bugs!",
                     report.empty() ? "" : "\n");
         }
-        out << "# End: Data binary " <<field.curDataInternalSize() << "\n" << "# End: Segment";
+        out << "# End: Data binary " <<field.scalarSizeBytes() << "\n" << "# End: Segment";
         out.flush();
         if(!out.good())
         {

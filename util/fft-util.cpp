@@ -282,12 +282,12 @@ template<typename T>
 inline void loadData( const VField::VField& field, float *arr, std::size_t offset, std::size_t cnt, std::size_t skip )
 {
     if(skip == 0)
-        std::copy_n( field.getData<T>() + offset, cnt, arr );
+        std::copy_n( field.data<T>() + offset, cnt, arr );
     else
     {
-        const auto dim = field.Header.expectedDimension();
-        auto begin = field.getData<T>();
-        const auto end = begin + field.curDataPoints();
+        const auto dim = field.header().expectedDimension();
+        auto begin = field.data<T>();
+        const auto end = begin + field.scalarCount();
 
         std::copy_n(begin + skip + offset, dim - skip - offset, arr);
         begin += dim;
@@ -327,7 +327,7 @@ void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile
     {
         auto slice = handle.second.readSlice(0, adjBegin, adjEnd - adjBegin);
 
-        if (slice.curDataInternalSize() == 4)
+        if (slice.scalarSizeBytes() == 4)
             loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
         else
             loadData<double>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::OVFHeader::MeshType::rectangular ? 0 : 3);
@@ -397,7 +397,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     for(std::size_t i = 0; i < cnt; i++)
     {
         //add frequency stamp to the file
-        field.Header.set(VField::OVFParameter::Desc,
+        field.header().set(VField::OVFParameter::Desc,
             desc + (!desc.empty() ? "\n" : "") +
             std::format("f = {:.9g} Hz", freqInc * static_cast<double>(i)));
 
@@ -409,7 +409,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
 
             std::size_t offset = 2 * descriptor[j][0];
             std::size_t dist = 2 * ( descriptor[j][1] - descriptor[j][0] );
-            auto* fieldData = field.getData<float>();
+            auto* fieldData = field.data<float>();
             float* dest = (mType == VField::OVFHeader::MeshType::rectangular
                 ? fieldData + offset
                 : fieldData + (3 + vdim) * offset / vdim + 3 + offset % vdim);

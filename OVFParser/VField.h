@@ -34,136 +34,233 @@ namespace VField{
      *
      * Preserves the original deleter when data allocated by another API is
      * adopted and later released again.
+     * @tparam T Array element type.
      */
     template<typename T>
     class DataDeleter
     {
-        struct DeleterBase
-        {
-            virtual ~DeleterBase() = default;
-            virtual void destroy(T*) noexcept = 0;
-        };
-
-        template<typename Deleter>
-        struct DeleterModel final : DeleterBase
-        {
-            Deleter deleter;
-
-            template<typename U>
-            explicit DeleterModel(U&& ref): deleter(std::forward<U>(ref)) {}
-
-            void destroy(T* pointer) noexcept override
-            { std::invoke(deleter, pointer); }
-        };
-
-        std::unique_ptr<DeleterBase> deleter{};
+        std::move_only_function<void(T*) noexcept> deleter_;
 
       public:
+        /** @brief Construct a deleter that uses `delete[]`. */
         DataDeleter() noexcept = default;
 
+        /**
+         * @brief Preserve an arbitrary array deleter for later invocation.
+         * @tparam Deleter Nothrow callable type accepting a `T*`.
+         * @param ref Deleter to store; move-only deleters are supported.
+         */
         template<typename Deleter>
-          requires std::is_invocable_v<std::remove_reference_t<Deleter>&, T*>
-        explicit DataDeleter(Deleter&& ref)
-        {
-            using StoredDeleter = std::remove_cvref_t<Deleter>;
-            if constexpr(!std::is_same_v<StoredDeleter, std::default_delete<T[]>>)
-                deleter = std::make_unique<DeleterModel<StoredDeleter>>(
-                    std::forward<Deleter>(ref));
-        }
+          requires std::is_nothrow_invocable_v<std::remove_reference_t<Deleter>&, T*>
+        explicit DataDeleter(Deleter&& ref):
+          deleter_(std::forward<Deleter>(ref)) {}
 
-        DataDeleter(DataDeleter&&) noexcept = default;
-        DataDeleter& operator=(DataDeleter&&) noexcept = default;
-        DataDeleter(const DataDeleter&) = delete;
-        DataDeleter& operator=(const DataDeleter&) = delete;
+        /**
+         * @brief Move a preserved deleter.
+         * @param other Deleter to move from.
+         */
+        DataDeleter(DataDeleter&& other) noexcept = default;
+        /**
+         * @brief Replace this deleter by moving another preserved deleter.
+         * @param other Deleter to move from.
+         * @return This deleter.
+         */
+        DataDeleter& operator=(DataDeleter&& other) noexcept = default;
+        /**
+         * @brief Copying is disabled because preserved deleters may be move-only.
+         * @param other Deleter that would otherwise be copied.
+         */
+        DataDeleter(const DataDeleter& other) = delete;
+        /**
+         * @brief Copy assignment is disabled.
+         * @param other Deleter that would otherwise be copied.
+         * @return This deleter.
+         */
+        DataDeleter& operator=(const DataDeleter& other) = delete;
 
+        /**
+         * @brief Destroy an array with the preserved deleter.
+         * @param pointer Array to destroy; may be null.
+         */
         void operator()(T* pointer) noexcept
         {
-            if(deleter)
-                deleter->destroy(pointer);
+            if(deleter_)
+                deleter_(pointer);
             else
-                std::default_delete<T[]>{}(pointer);
+                delete[] pointer;
         }
     };
 
+    /**
+     * @brief Owning VField array pointer that retains its original deleter.
+     * @tparam T Stored scalar type (`float` or `double`).
+     */
     template<typename T>
     using OwnedData = std::unique_ptr<T[], DataDeleter<T>>;
 
+    /** @brief Scalar types supported by VField storage and views. */
+    template<typename T>
+    concept FieldScalar = std::same_as<T, float> || std::same_as<T, double>;
+
+    /**
+     * @brief Vector-field data and its associated OVF metadata.
+     *
+     * A field stores one contiguous array of either `float` or `double` values.
+     * The associated header describes how that flat array is interpreted as points
+     * or as a rectangular grid. Views never own the data and remain valid only
+     * until the field is destroyed, assigned, converted, cleared, or given new
+     * data.
+     */
     class OVFPARSER_EXPORT VField
     {
         private:
             //details of data storage thingie defined outside
             //data is stored internally as a single array of homogenious-type values
             struct StorageArray;
-            std::unique_ptr<StorageArray> data{};
+            std::unique_ptr<StorageArray> storage_{};
+            OVFHeader header_{};
 
             void adoptFloatData(OwnedData<float>, std::size_t);
             void adoptDoubleData(OwnedData<double>, std::size_t);
 
         public:
-            //constructors and other general utility
-            //*every* can throw iff out of memory (std::bad_alloc)
+            /** @brief Construct an empty OVF 2 field. */
             VField();
+            /**
+             * @brief Construct an empty field with a version string.
+             * @param version OVF version string stored in Header.
+             */
             explicit VField(const associatedType_t<pType::String>& version): VField()
-            { Header.set(OVFParameter::VersionString, version); }
+            { header_.set(OVFParameter::VersionString, version); }
+            /**
+             * @brief Construct an empty field for an OVF version.
+             * @param version Version used to initialize Header.
+             */
             explicit VField(OVFVersion version): VField()
-            { Header = OVFHeader{version}; }
+            { header_ = OVFHeader{version}; }
+            /**
+             * @brief Construct an empty field by copying metadata.
+             * @param head Header to copy.
+             */
             explicit VField(const OVFHeader& head) : VField()
-            { Header = head; }
-            //constructors for fully populating the internals
-            template<typename T>
+            { header_ = head; }
+            /**
+             * @brief Construct a field by copying a flat data array.
+             * @tparam T `float` or `double`.
+             * @param head Header to copy.
+             * @param size Number of scalar values at @p ref.
+             * @param ref Source array; a null pointer leaves the field empty.
+             */
+            template<FieldScalar T>
             explicit VField(const OVFHeader& head, std::size_t size, const T* ref) : VField()
-            { Header = head; if(ref!=nullptr) setData(ref, size); }
+            { header_ = head; if(ref!=nullptr) setData(ref, size); }
+            /** @brief Destroy the field and its owned data. */
             ~VField();
-            //copy and move c-tors
-            VField(const VField&);
-            VField& operator=(const VField&);
-            //I would like to move it move it lol
-            VField(VField&& ref) noexcept;
-            VField& operator=(VField&& ref) noexcept;
+            /**
+             * @brief Deep-copy another field, including its data.
+             * @param other Field to copy.
+             */
+            VField(const VField& other);
+            /**
+             * @brief Deep-copy another field, including its data.
+             * @param other Field to copy.
+             * @return This field.
+             */
+            VField& operator=(const VField& other);
+            /**
+             * @brief Move a field without copying its data.
+             * @param other Field to move from.
+             */
+            VField(VField&& other) noexcept;
+            /**
+             * @brief Replace this field by moving another field.
+             * @param other Field to move from.
+             * @return This field.
+             */
+            VField& operator=(VField&& other) noexcept;
 
-            //comparison operations
-            bool isSameDataAs(const VField&) const noexcept;
-            bool operator==(const VField&) const noexcept;
+            /**
+             * @brief Compare stored values while ignoring Header metadata.
+             * @param other Field whose values are compared.
+             * @return `true` when both arrays contain equivalent values.
+             */
+            bool isSameDataAs(const VField& other) const noexcept;
+            /**
+             * @brief Compare both Header metadata and stored values.
+             * @param other Field to compare.
+             * @return `true` when metadata and values are equivalent.
+             */
+            bool operator==(const VField& other) const noexcept;
             
-            //Header storing all the metadata
-            OVFHeader Header{};
+            /** @return Mutable metadata describing the stored field data. */
+            [[nodiscard]] OVFHeader& header() noexcept { return header_; }
+            /** @return Immutable metadata describing the stored field data. */
+            [[nodiscard]] const OVFHeader& header() const noexcept { return header_; }
 
-            //Access to internal data array
-            //and number of data points
-            std::size_t curDataPoints() const noexcept;
-            //is data present
+            /** @return Number of scalar values in the flat data array. */
+            std::size_t scalarCount() const noexcept;
+            /** @return `true` when a non-empty data array is stored. */
             bool isDataPresent() const noexcept; 
-            //Delete the stored array and reset the field to an empty state.
+            /** @brief Delete the stored array and make the field empty. */
             void clearData() noexcept;
-            //initialize it empty
-            template<typename T>
-            inline void initData( std::size_t );
+            /**
+             * @brief Allocate a value-initialized array and adopt it.
+             * @tparam T `float` or `double`.
+             * @param size Number of scalar values to allocate.
+             */
+            template<FieldScalar T>
+            void initData(std::size_t size)
+            { adoptData(std::make_unique<T[]>(size), size); }
             
-            //data access methods
-            //Adopt an owned array, preserving its deleter, and clear previous data.
-            template<typename T, typename Deleter>
+            /**
+             * @brief Adopt an array and preserve its original deleter.
+             * @tparam T `float` or `double`.
+             * @tparam Deleter Callable array-deleter type.
+             * @param owner Array whose ownership is transferred to this field.
+             * @param size Number of scalar values in the array.
+             *
+             * Existing data is destroyed. A null pointer or zero size produces
+             * an empty field. The original deleter is used when the data is
+             * cleared, destroyed, or released and subsequently destroyed.
+             */
+            template<FieldScalar T, typename Deleter>
             void adoptData(std::unique_ptr<T[], Deleter> owner, std::size_t size)
             {
-                static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>,
-                    "VField only stores float or double arrays");
-
-                DataDeleter<T> erasedDeleter{std::move(owner.get_deleter())};
+                auto erasedDeleter = [&]() -> DataDeleter<T>
+                {
+                    using DeleterType = std::remove_cvref_t<Deleter>;
+                    if constexpr(std::same_as<DeleterType, std::default_delete<T[]>>)
+                        return {};
+                    else
+                        return DataDeleter<T>{std::move(owner.get_deleter())};
+                }();
                 OwnedData<T> erasedOwner{owner.release(), std::move(erasedDeleter)};
                 if constexpr(std::is_same_v<T, float>)
                     adoptFloatData(std::move(erasedOwner), size);
                 else
                     adoptDoubleData(std::move(erasedOwner), size);
             }
-            //same but with a copy, indicated by pointer being constant
-            //throw when out of memory
-            template<typename T>
-            void setData(const T*, std::size_t);
+            /**
+             * @brief Replace the field data with a copy of a flat array.
+             * @tparam T `float` or `double`.
+             * @param values Source array.
+             * @param size Number of scalar values to copy.
+             * @pre @p values addresses at least @p size elements, unless size is zero.
+             * @throws std::bad_alloc if allocation fails.
+             */
+            template<FieldScalar T>
+            void setData(const T* values, std::size_t size);
             /**
              * @brief Copy data from a contiguous, sized range.
              *
              * Float and double ranges preserve their scalar type. Other element
              * types convertible to double are copied and stored as double. The
              * source range retains ownership of its data.
+             *
+             * @tparam Range Contiguous, sized range with elements convertible
+             * to `double`.
+             * @param values Range to copy.
+             * @throws std::bad_alloc if allocation fails.
              */
             template<std::ranges::contiguous_range Range>
               requires std::ranges::sized_range<Range> &&
@@ -186,10 +283,15 @@ namespace VField{
             /**
              * @brief Consume an owning contiguous container.
              *
-             * Float and double storage is retained without copying and remains
-             * owned by its original container and allocator. Other convertible
-             * element types are copied and converted to double. Views and
-             * borrowed ranges use the copying overload instead.
+             * Float and double containers are moved into field-owned lifetime
+             * storage, retaining their allocator. Containers such as vector
+             * whose move preserves their backing allocation incur no data copy.
+             * Other convertible element types are copied and converted to
+             * double. Views and borrowed ranges use the copying overload instead.
+             *
+             * @tparam Range Owning, movable, contiguous, sized range.
+             * @param values Rvalue container to consume.
+             * @throws std::bad_alloc if allocation fails.
              */
             template<std::ranges::contiguous_range Range>
               requires std::ranges::sized_range<Range> &&
@@ -222,188 +324,320 @@ namespace VField{
                     adoptData(std::move(buffer), size);
                 }
             }
-            //get data, throw if trying to get wrong type
-            template <typename T>
-            T* getData();
-            template <typename T>
-            const T* getData() const;
-            //Transfer ownership of the stored array to the caller. Throws when
-            //T does not match the stored scalar type; an empty field returns null.
-            template <typename T>
+            /**
+             * @brief Access the mutable flat array without copying.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Data pointer, or `nullptr` for an empty field.
+             * @throws std::bad_variant_access if non-empty data has another type.
+             */
+            template <FieldScalar T>
+            T* data();
+            /**
+             * @brief Access the immutable flat array without copying.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Data pointer, or `nullptr` for an empty field.
+             * @throws std::bad_variant_access if non-empty data has another type.
+             */
+            template <FieldScalar T>
+            const T* data() const;
+            /**
+             * @brief Transfer ownership of the flat array to the caller.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Owned array retaining its original deleter, or a null
+             * owner when this field is empty.
+             * @throws std::bad_variant_access if non-empty data has another type.
+             *
+             * On success this field becomes empty; Header is unchanged.
+             */
+            template <FieldScalar T>
             [[nodiscard]] OwnedData<T> releaseData();
-            //Get an independently owned copy, converting scalar type if needed.
-            template <typename T>
-            [[nodiscard]] std::vector<T> getDataCopy() const;
-            //convert to specified type 
-            template <typename T>
+            /**
+             * @brief Copy the flat array, converting scalar type if necessary.
+             * @tparam T Destination type (`float` or `double`).
+             * @return Independent vector; empty when this field has no data.
+             * @throws std::bad_alloc if allocation fails.
+             */
+            template <FieldScalar T>
+            [[nodiscard]] std::vector<T> dataCopy() const;
+            /**
+             * @brief Convert the stored array in place.
+             * @tparam T Destination type (`float` or `double`).
+             *
+             * This is a no-op for empty fields and fields already storing T.
+             * Existing views and pointers are invalidated when conversion occurs.
+             * @throws std::bad_alloc if allocation fails.
+             */
+            template <FieldScalar T>
             void convert();
-            //checking dimensions of internal data
-            std::size_t pntCount() const noexcept;
-            std::size_t pntDimension() const noexcept;
-            //type deduction
+            /**
+             * @return Number of logical field points, or zero when the array
+             * cannot be grouped into points from the available metadata.
+             */
+            std::size_t pointCount() const noexcept;
+            /**
+             * @return Number of scalar values per logical point, including
+             * coordinates for irregular meshes, or zero if indeterminate.
+             */
+            std::size_t pointDimension() const noexcept;
+            /** @brief Runtime scalar representation of the flat array. */
             enum class ScalarType {
-              None,
-              Float32,
-              Float64
+              None,    ///< No data is stored.
+              Float32, ///< Data is stored as `float`.
+              Float64  ///< Data is stored as `double`.
             };
+            /** @return Runtime scalar type of the stored array. */
             [[nodiscard]]
               ScalarType scalarType() const noexcept;
-            template<typename T>
+            /**
+             * @tparam T `float` or `double`.
+             * @return `true` exactly when the field stores T.
+             */
+            template<FieldScalar T>
               [[nodiscard]]
               bool stores() const noexcept;
-            //number of bytes of current internally stored data
-            //return 0 if for some reason cannot be calculated
-            std::size_t curDataInternalSize() const noexcept;
+            /**
+             * @return Bytes per stored scalar value, or zero for an empty field.
+             * @note Despite its historical name, this is not the total array size.
+             */
+            std::size_t scalarSizeBytes() const noexcept;
+            /** @return Total number of bytes described by the stored array. */
+            std::size_t dataSizeBytes() const noexcept;
 
-            //interfaces for validation and deduction
-            //defined and realized in OVFGrammar.cpp!
-            bool isAddressable() const noexcept;                                     //validate if there is enough information to traverse internal array
-            bool isWeaklyAddressable() const noexcept;                               //validate if there is *just* enough information to traverse internal array
-            [[nodiscard]] ValidationResult validate() const;                //validate the header and stored field data
-            bool DeduceField(const OVFParameter&, bool UseDefault = true);  //try to deduce a field from data already known, use defaults for insignificant data if needed
-            std::string DeduceRecursively(const std::size_t& max_iter = 5); //try to deduce out all of the missing required fields
-            void Strip() noexcept;                                          //remove optional parameters
+            /**
+             * @return `true` when complete Header metadata determines an expected
+             * scalar count equal to the stored array size.
+             */
+            bool isAddressable() const noexcept;
+            /**
+             * @return `true` when the available metadata is sufficient to group
+             * every stored scalar into equally sized logical points.
+             */
+            bool isWeaklyAddressable() const noexcept;
+            /**
+             * @return `true` when gridView() can derive a rectangular grid with
+             * consistent, nonzero X, Y, and Z node counts.
+             */
+            bool isGridAddressable() const noexcept;
+            /**
+             * @brief Validate Header and its agreement with stored data.
+             * @return Successful result, or a diagnostic report identifying
+             * invalid parameters and data/header inconsistencies.
+             */
+            [[nodiscard]] ValidationResult validate() const;
+            /**
+             * @brief Attempt to deduce one Header parameter from known state.
+             * @param parameter Parameter to replace when deduction succeeds.
+             * @param useDefault Permit a standard default when deduction from
+             * existing state fails.
+             * @return `true` if the parameter was set or deliberately cleared.
+             */
+            bool deduceField(const OVFParameter& parameter, bool useDefault = true);
+            /**
+             * @brief Repeatedly deduce parameters reported by Header validation.
+             * @param maxIterations Maximum number of deduction passes.
+             * @return Human-readable report of each pass and stopping condition.
+             */
+            std::string deduceRecursively(const std::size_t& maxIterations = 5);
+            /** @brief Remove optional Header parameters supported by strip. */
+            void strip() noexcept;
 
-            //data views for disseminating the data
-            //raw view outputting raw sequence of values
-            //will return on non-empty data and correct type requested
-            template< typename T>
+            /**
+             * @brief Return a mutable one-dimensional view of the flat array.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Empty span for an empty field.
+             * @throws std::logic_error if non-empty data has another type.
+             */
+            template<FieldScalar T>
               std::span<T> rawView()
               {
                 if( isDataPresent() && !stores<T>() )
                   throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling rawView(), or convert the field.");
 
-                return std::span<T>{getData<T>(), curDataPoints()};
+                return std::span<T>{data<T>(), scalarCount()};
               }
-            template< typename T>
+            /**
+             * @brief Return an immutable one-dimensional view of the flat array.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Empty span for an empty field.
+             * @throws std::logic_error if non-empty data has another type.
+             */
+            template<FieldScalar T>
               std::span<const T> rawView() const
               {
                 if( isDataPresent() && !stores<T>() )
                   throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling rawView(), or convert the field.");
 
-                return std::span<const T>{getData<T>(), curDataPoints()};
+                return std::span<const T>{data<T>(), scalarCount()};
               }
-            //Convert this field when necessary, then return the requested view.
-            template<typename T>
+            /**
+             * @brief Convert this field if needed and return a mutable raw view.
+             * @tparam T Requested type (`float` or `double`).
+             * @return One-dimensional view of the converted storage.
+             * @note This operation is unavailable on const fields because it may
+             * replace the stored array.
+             */
+            template<FieldScalar T>
               std::span<T> rawViewAs()
               {
                 convert<T>();
                 return rawView<T>();
               }
-            template<typename T>
+            /**
+             * @brief Const conversion-on-access is disabled because it mutates data.
+             * @tparam T Requested type (`float` or `double`).
+             */
+            template<FieldScalar T>
               std::span<const T> rawViewAs() const = delete;
 
-            //point-vise view, output sequence of vectors from vector field
-            //best view one can get for unstructured datasets
-            //but also compatible with structured grids
-            //dynamic rank 2 span
+            /**
+             * @brief Rank-two point view type with `[point, component]` indexing.
+             * @tparam T Element type, optionally const-qualified.
+             */
             template<typename T>
               using vecspan = md::mdspan<T, md::dextents<std::size_t, 2>, md::layout_right>;
-            template<typename T>
-              vecspan<T> pntView()
+            /**
+             * @brief Return a mutable `[point, component]` view.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Rank-two non-owning view of the field data.
+             * @throws std::logic_error if the type differs or point dimensions
+             * cannot be derived from Header.
+             */
+            template<FieldScalar T>
+              vecspan<T> pointView()
               {
                 if( isDataPresent() && !stores<T>() )
-                  throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling pntView(), or convert the field.");
+                  throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling pointView(), or convert the field.");
                 if( !isWeaklyAddressable() )
                   throw std::logic_error("The metadata in the Header doesn't permit addressing the array as points.");
 
-                const auto vecLen = pntDimension();
-                return vecspan<T>{getData<T>(), pntCount(), vecLen};
+                const auto vecLen = pointDimension();
+                return vecspan<T>{data<T>(), pointCount(), vecLen};
               }
-            template<typename T>
-              vecspan<const T> pntView() const
+            /**
+             * @brief Return an immutable `[point, component]` view.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Rank-two non-owning view of the field data.
+             * @throws std::logic_error if the type differs or point dimensions
+             * cannot be derived from Header.
+             */
+            template<FieldScalar T>
+              vecspan<const T> pointView() const
               {
                 if( isDataPresent() && !stores<T>() )
-                  throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling pntView(), or convert the field.");
+                  throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling pointView(), or convert the field.");
                 if( !isWeaklyAddressable() )
                   throw std::logic_error("The metadata in the Header doesn't permit addressing the array as points.");
 
-                const auto vecLen = pntDimension();
-                return vecspan<const T>{getData<T>(), pntCount(), vecLen};
+                const auto vecLen = pointDimension();
+                return vecspan<const T>{data<T>(), pointCount(), vecLen};
               }
-            template<typename T>
-              vecspan<T> pntViewAs()
+            /**
+             * @brief Convert this field if needed and return a mutable point view.
+             * @tparam T Requested type (`float` or `double`).
+             * @return Rank-two view of the converted storage.
+             * @note Unavailable on const fields because conversion may mutate data.
+             */
+            template<FieldScalar T>
+              vecspan<T> pointViewAs()
               {
                 convert<T>();
-                return pntView<T>();
+                return pointView<T>();
               }
-            template<typename T>
-              vecspan<const T> pntViewAs() const = delete;
-            //grid view for structured 3d data
-            //dynamic rank 4 span
+            /**
+             * @brief Const conversion-on-access is disabled because it mutates data.
+             * @tparam T Requested type (`float` or `double`).
+             */
+            template<FieldScalar T>
+              vecspan<const T> pointViewAs() const = delete;
+            /**
+             * @brief Rank-four rectangular-grid view type.
+             *
+             * Indices are ordered `[z, y, x, component]`.
+             * @tparam T Element type, optionally const-qualified.
+             */
             template<typename T>
               using gridspan = md::mdspan<T, md::dextents<std::size_t, 4>>;
-            template<typename T>
+            /**
+             * @brief Return a mutable `[z, y, x, component]` grid view.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Rank-four non-owning view of the field data.
+             * @throws std::logic_error if the type differs or
+             * isGridAddressable() is false.
+             */
+            template<FieldScalar T>
               gridspan<T> gridView()
               {
                 if( isDataPresent() && !stores<T>() )
                   throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling gridView(), or convert the field.");
-                if( !isWeaklyAddressable() || Header.getMeshType() != OVFHeader::MeshType::rectangular ||
-                    !Header.isSet(OVFParameter::Xnodes) || !Header.isSet(OVFParameter::Ynodes) ||
-                    !Header.isSet(OVFParameter::Znodes) ||
-                    pntCount() != Header.getUint(OVFParameter::Xnodes) *
-                                  Header.getUint(OVFParameter::Ynodes) *
-                                  Header.getUint(OVFParameter::Znodes) )
+                if( !isGridAddressable() )
                   throw std::logic_error("A grid view requires rectangular field data with consistent node counts.");
 
-                return gridspan<T>{getData<T>(),
-                    Header.getUint(OVFParameter::Znodes),
-                    Header.getUint(OVFParameter::Ynodes),
-                    Header.getUint(OVFParameter::Xnodes),
-                    pntDimension()};
+                return gridspan<T>{data<T>(),
+                    header_.getUint(OVFParameter::Znodes),
+                    header_.getUint(OVFParameter::Ynodes),
+                    header_.getUint(OVFParameter::Xnodes),
+                    pointDimension()};
               }
-            template<typename T>
+            /**
+             * @brief Return an immutable `[z, y, x, component]` grid view.
+             * @tparam T Requested stored type (`float` or `double`).
+             * @return Rank-four non-owning view of the field data.
+             * @throws std::logic_error if the type differs or
+             * isGridAddressable() is false.
+             */
+            template<FieldScalar T>
               gridspan<const T> gridView() const
               {
                 if( isDataPresent() && !stores<T>() )
                   throw std::logic_error("Trying to access wrong stored field array; please check stores<T>() before calling gridView(), or convert the field.");
-                if( !isWeaklyAddressable() || Header.getMeshType() != OVFHeader::MeshType::rectangular ||
-                    !Header.isSet(OVFParameter::Xnodes) || !Header.isSet(OVFParameter::Ynodes) ||
-                    !Header.isSet(OVFParameter::Znodes) ||
-                    pntCount() != Header.getUint(OVFParameter::Xnodes) *
-                                  Header.getUint(OVFParameter::Ynodes) *
-                                  Header.getUint(OVFParameter::Znodes) )
+                if( !isGridAddressable() )
                   throw std::logic_error("A grid view requires rectangular field data with consistent node counts.");
 
-                return gridspan<const T>{getData<T>(),
-                    Header.getUint(OVFParameter::Znodes),
-                    Header.getUint(OVFParameter::Ynodes),
-                    Header.getUint(OVFParameter::Xnodes),
-                    pntDimension()};
+                return gridspan<const T>{data<T>(),
+                    header_.getUint(OVFParameter::Znodes),
+                    header_.getUint(OVFParameter::Ynodes),
+                    header_.getUint(OVFParameter::Xnodes),
+                    pointDimension()};
               }
-            template<typename T>
+            /**
+             * @brief Convert this field if needed and return a mutable grid view.
+             * @tparam T Requested type (`float` or `double`).
+             * @return Rank-four view of the converted storage.
+             * @note Unavailable on const fields because conversion may mutate data.
+             */
+            template<FieldScalar T>
               gridspan<T> gridViewAs()
               {
                 convert<T>();
                 return gridView<T>();
               }
-            template<typename T>
+            /**
+             * @brief Const conversion-on-access is disabled because it mutates data.
+             * @tparam T Requested type (`float` or `double`).
+             */
+            template<FieldScalar T>
               gridspan<const T> gridViewAs() const = delete;
     };
-    
+
+    /** @cond */
     //available specializations
     //templates for getting the internal array
     extern template
-    OVFPARSER_EXPORT float* VField::getData<float>();
+    OVFPARSER_EXPORT float* VField::data<float>();
     extern template
-    OVFPARSER_EXPORT double* VField::getData<double>();
+    OVFPARSER_EXPORT double* VField::data<double>();
     extern template
-    OVFPARSER_EXPORT const float* VField::getData<float>() const;
+    OVFPARSER_EXPORT const float* VField::data<float>() const;
     extern template
-    OVFPARSER_EXPORT const double* VField::getData<double>() const;
+    OVFPARSER_EXPORT const double* VField::data<double>() const;
     extern template
     OVFPARSER_EXPORT OwnedData<float> VField::releaseData<float>();
     extern template
     OVFPARSER_EXPORT OwnedData<double> VField::releaseData<double>();
 
     //template for getting a copy of internal array, changes to it will be not regarded
-    extern template OVFPARSER_EXPORT std::vector<float>  VField::getDataCopy<float>  () const;
-    extern template OVFPARSER_EXPORT std::vector<double> VField::getDataCopy<double> () const;
-    //instantiation of empty data setter
-    template<> inline OVFPARSER_EXPORT void VField::initData<float>(std::size_t size)
-    { adoptData(std::make_unique<float[]>(size), size); }
-    template<> inline OVFPARSER_EXPORT void VField::initData<double>(std::size_t size)
-    { adoptData(std::make_unique<double[]>(size), size); }
+    extern template OVFPARSER_EXPORT std::vector<float>  VField::dataCopy<float>  () const;
+    extern template OVFPARSER_EXPORT std::vector<double> VField::dataCopy<double> () const;
     //instantiation of conversions
     extern template OVFPARSER_EXPORT void VField::convert<float>();
     extern template OVFPARSER_EXPORT void VField::convert<double>();
@@ -413,4 +647,5 @@ namespace VField{
     //instantiation of store check
     extern template OVFPARSER_EXPORT bool VField::stores<float>() const noexcept;
     extern template OVFPARSER_EXPORT bool VField::stores<double>() const noexcept;
+    /** @endcond */
 }

@@ -8,6 +8,16 @@
 #include<VField.h>
 #include<limits>
 
+template<typename T>
+concept InitializableFieldScalar = requires(VField::VField& field)
+{
+    field.initData<T>(1);
+};
+
+static_assert(InitializableFieldScalar<float>);
+static_assert(InitializableFieldScalar<double>);
+static_assert(!InitializableFieldScalar<int>);
+
 int main()
 {
     struct CountingDeleter
@@ -37,7 +47,7 @@ int main()
         owned.adoptData(std::move(source), 3);
 
         auto released = owned.releaseData<double>();
-        if(released.get() != original || owned.isDataPresent() || owned.curDataPoints() != 0 ||
+        if(released.get() != original || owned.isDataPresent() || owned.scalarCount() != 0 ||
            released[0] != 1.0 || released[2] != 3.0)
         {
             std::cerr << "Releasing field data did not transfer ownership correctly!\n";
@@ -46,7 +56,7 @@ int main()
 
         owned.adoptData(std::move(released), 3);
         owned.clearData();
-        if(owned.isDataPresent() || owned.curDataPoints() != 0)
+        if(owned.isDataPresent() || owned.scalarCount() != 0)
         {
             std::cerr << "Clearing field data did not reset its storage!\n";
             return 18;
@@ -78,8 +88,10 @@ int main()
         VField::VField copied;
         const std::array<float, 3> floatValues{1.0F, 2.0F, 3.0F};
         copied.setData(floatValues);
-        if(!copied.stores<float>() || copied.curDataPoints() != floatValues.size() ||
-           copied.getData<float>()[1] != 2.0F)
+        if(!copied.stores<float>() || copied.scalarCount() != floatValues.size() ||
+           copied.scalarSizeBytes() != sizeof(float) ||
+           copied.dataSizeBytes() != sizeof(float) * floatValues.size() ||
+           copied.data<float>()[1] != 2.0F)
         {
             std::cerr << "Copying a float container did not preserve its scalar type!\n";
             return 21;
@@ -87,8 +99,8 @@ int main()
 
         const std::vector<int> integerValues{4, 5, 6, 7};
         copied.setData(integerValues);
-        if(!copied.stores<double>() || copied.curDataPoints() != integerValues.size() ||
-           copied.getData<double>()[0] != 4.0 || copied.getData<double>()[3] != 7.0)
+        if(!copied.stores<double>() || copied.scalarCount() != integerValues.size() ||
+           copied.data<double>()[0] != 4.0 || copied.data<double>()[3] != 7.0)
         {
             std::cerr << "Copying a convertible container did not produce double data!\n";
             return 22;
@@ -97,8 +109,8 @@ int main()
         std::vector<double> consumedValues{8.0, 9.0, 10.0};
         auto* originalStorage = consumedValues.data();
         copied.setData(std::move(consumedValues));
-        if(!copied.stores<double>() || copied.getData<double>() != originalStorage ||
-           copied.curDataPoints() != 3 || copied.getData<double>()[2] != 10.0)
+        if(!copied.stores<double>() || copied.data<double>() != originalStorage ||
+           copied.scalarCount() != 3 || copied.data<double>()[2] != 10.0)
         {
             std::cerr << "Consuming a double container copied or corrupted its storage!\n";
             return 23;
@@ -107,8 +119,8 @@ int main()
         const std::array<float, 2> spanValues{11.0F, 12.0F};
         auto view = std::span{spanValues};
         copied.setData(std::move(view));
-        if(!copied.stores<float>() || copied.getData<float>() == spanValues.data() ||
-           copied.curDataPoints() != spanValues.size() || copied.getData<float>()[1] != 12.0F)
+        if(!copied.stores<float>() || copied.data<float>() == spanValues.data() ||
+           copied.scalarCount() != spanValues.size() || copied.data<float>()[1] != 12.0F)
         {
             std::cerr << "An rvalue span was consumed instead of copied!\n";
             return 24;
@@ -170,27 +182,47 @@ int main()
         //make copies and keep originals of fields for later
         VField::VField tmpRegular(commonHeader, pCount * Pdim, data);
         VField::VField tmpIrregular(commonHeader, pCount * (Pdim + 3), irrData);
-        tmpRegular.Header.setMesh(VField::OVFHeader::MeshType::rectangular);
-        tmpIrregular.Header.setMesh(VField::OVFHeader::MeshType::irregular);
+        tmpRegular.header().setMesh(VField::OVFHeader::MeshType::rectangular);
+        tmpIrregular.header().setMesh(VField::OVFHeader::MeshType::irregular);
         //this should be enough to make both weakly addressable!
         if(!tmpRegular.isWeaklyAddressable() || !tmpIrregular.isWeaklyAddressable())
         {
             std::cerr << "Arrays unexpectedly not weakly addressable!\n";
             return 1;
         }
+        if(!tmpRegular.isGridAddressable() || tmpIrregular.isGridAddressable())
+        {
+            std::cerr << "Grid addressability was detected incorrectly!\n";
+            return 27;
+        }
+        auto inconsistentGrid = tmpRegular;
+        inconsistentGrid.header().set(VField::OVFParameter::Xnodes, Xstep + 1);
+        if(inconsistentGrid.isGridAddressable())
+        {
+            std::cerr << "A grid with inconsistent node counts was addressable!\n";
+            return 28;
+        }
+        try
+        {
+            static_cast<void>(inconsistentGrid.gridView<double>());
+            std::cerr << "gridView accepted a field rejected by isGridAddressable!\n";
+            return 29;
+        }
+        catch(const std::logic_error&)
+        {}
         //now check how well can point count be determined
-        if(tmpRegular.pntDimension() != Pdim || tmpIrregular.pntDimension() != (Pdim + 3))
+        if(tmpRegular.pointDimension() != Pdim || tmpIrregular.pointDimension() != (Pdim + 3))
         {
             std::cerr << "Got unexpected point dimensions!\n";
             return 2;
         }
-        if(tmpRegular.pntCount() != pCount || tmpIrregular.pntCount() != pCount)
+        if(tmpRegular.pointCount() != pCount || tmpIrregular.pointCount() != pCount)
         {
             std::cerr << "Got incorrent number of points!\n";
             return 3;
         }
-        const auto constPoints = std::as_const(tmpRegular).pntView<double>();
-        auto mutablePoints = tmpRegular.pntView<double>();
+        const auto constPoints = std::as_const(tmpRegular).pointView<double>();
+        auto mutablePoints = tmpRegular.pointView<double>();
         if( constPoints.extent(0) != pCount || mutablePoints.extent(0) != pCount ||
             constPoints.extent(1) != Pdim || mutablePoints.extent(1) != Pdim )
         {
@@ -201,7 +233,7 @@ int main()
         auto tmpCopy {tmpRegular};
         tmpCopy.convert<float>();
         //check if after conversion numbers are still within rounding error!
-        const auto convertedPoints = std::as_const(tmpCopy).pntView<float>();
+        const auto convertedPoints = std::as_const(tmpCopy).pointView<float>();
         bool conversionMatches = true;
         for (std::size_t point = 0; point < pCount && conversionMatches; ++point)
             for (std::size_t component = 0; component < Pdim; ++component)
@@ -219,14 +251,14 @@ int main()
         auto convertedOnAccess = tmpRegular;
         const auto convertedRaw = convertedOnAccess.rawViewAs<float>();
         if(!convertedOnAccess.stores<float>() || convertedRaw.size() != pCount * Pdim ||
-           convertedRaw[1] != static_cast<float>(tmpRegular.getData<double>()[1]))
+           convertedRaw[1] != static_cast<float>(tmpRegular.data<double>()[1]))
         {
             std::cerr << "Conversion-on-access view failed!\n";
             return 25;
         }
-        const auto copiedVector = tmpCopy.getDataCopy<double>();
-        if(copiedVector.size() != tmpCopy.curDataPoints() ||
-           copiedVector.front() != static_cast<double>(tmpCopy.getData<float>()[0]))
+        const auto copiedVector = tmpCopy.dataCopy<double>();
+        if(copiedVector.size() != tmpCopy.scalarCount() ||
+           copiedVector.front() != static_cast<double>(tmpCopy.data<float>()[0]))
         {
             std::cerr << "Dressed converted data copy failed!\n";
             return 26;
@@ -238,7 +270,7 @@ int main()
             return 6;
         }
         //check if it also detects inconsistencies
-        tmpCopy.pntView<float>()[0, 0] = 42.0f;
+        tmpCopy.pointView<float>()[0, 0] = 42.0f;
         if(tmpCopy == tmpRegular)
         {
             std::cerr << "Failure to set a point/or failure in comparison!\n";
@@ -247,7 +279,7 @@ int main()
 
         auto raw = tmpRegular.rawView<double>();
         raw[0] = 24.0;
-        if (tmpRegular.getData<double>()[0] != 24.0)
+        if (tmpRegular.data<double>()[0] != 24.0)
         {
             std::cerr << "Mutable raw data access failed!\n";
             return 8;

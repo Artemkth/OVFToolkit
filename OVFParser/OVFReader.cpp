@@ -316,7 +316,7 @@ namespace VField{
                     //rewind back 1 line
                     file.seekg(pos);
                     //and read the header
-                    auto log = readHeader(file, line_cnt, data->fields.back().Header);
+                    auto log = readHeader(file, line_cnt, data->fields.back().header());
                     if(log != "")
                         logMessage("VFieldFile::read: Errors encountered while reading a Header ending at line #" +
                                 std::to_string(line_cnt) + ":\n" + log);
@@ -584,8 +584,8 @@ namespace VField{
     std::string readData(std::istream& file, VField& out, std::optional<PointRange> range,
                          std::size_t& cnt, bool prefetch)
     {
-        auto version = (out.Header.isSet(OVFParameter::VersionString))? 
-            matchVersionString(out.Header.getString(OVFParameter::VersionString)) : OVFVersion::Unknown; 
+        auto version = (out.header().isSet(OVFParameter::VersionString))?
+            matchVersionString(out.header().getString(OVFParameter::VersionString)) : OVFVersion::Unknown;
         std::string dataHeader {""};
         std::getline(file, dataHeader);
         if(!file)
@@ -603,14 +603,14 @@ namespace VField{
         std::size_t advertisedCnt {0};
         {
             //try setting previous 2 parameters
-            if(version != OVFVersion::Unknown && out.Header.isSet(OVFParameter::Mtype) && (version != OVFVersion::OVF2 || out.Header.isSet(OVFParameter::Vdim)))
-                advertisedDim = (out.Header.getMeshType() == OVFHeader::MeshType::rectangular? 0:3)+(version == OVFVersion::OVF2? out.Header.getUint(OVFParameter::Vdim) : 3);
+            if(version != OVFVersion::Unknown && out.header().isSet(OVFParameter::Mtype) && (version != OVFVersion::OVF2 || out.header().isSet(OVFParameter::Vdim)))
+                advertisedDim = (out.header().getMeshType() == OVFHeader::MeshType::rectangular? 0:3)+(version == OVFVersion::OVF2? out.header().getUint(OVFParameter::Vdim) : 3);
             if(cnt!=0 && advertisedDim!=0)
                 advertisedCnt = cnt / advertisedDim;
-            else if( out.Header.isSet(OVFParameter::Mtype) && (out.Header.getMeshType() != OVFHeader::MeshType::irregular || out.Header.isSet(OVFParameter::Pcount)) && 
-                     out.Header.isSet(OVFParameter::Xnodes) && out.Header.isSet(OVFParameter::Ynodes) && out.Header.isSet(OVFParameter::Znodes) )
-                advertisedCnt = out.Header.getMeshType() == OVFHeader::MeshType::irregular ? out.Header.getUint(OVFParameter::Pcount) :
-                                    out.Header.getUint(OVFParameter::Xnodes) * out.Header.getUint(OVFParameter::Ynodes) * out.Header.getUint(OVFParameter::Znodes);
+            else if( out.header().isSet(OVFParameter::Mtype) && (out.header().getMeshType() != OVFHeader::MeshType::irregular || out.header().isSet(OVFParameter::Pcount)) &&
+                     out.header().isSet(OVFParameter::Xnodes) && out.header().isSet(OVFParameter::Ynodes) && out.header().isSet(OVFParameter::Znodes) )
+                advertisedCnt = out.header().getMeshType() == OVFHeader::MeshType::irregular ? out.header().getUint(OVFParameter::Pcount) :
+                                    out.header().getUint(OVFParameter::Xnodes) * out.header().getUint(OVFParameter::Ynodes) * out.header().getUint(OVFParameter::Znodes);
             if(advertisedDim == 0 || advertisedCnt == 0)
                 log += "readData: Couldn't read the array dimensions from the header provided!";
         }
@@ -893,7 +893,7 @@ namespace VField{
         if(index >= data->fields.size())
             throw std::out_of_range("Segment access out of range!");
         //else go and fetch the damm data
-        return data->fields[index].Header;
+        return data->fields[index].header();
     }
     VField VFieldFile::readSlice(std::size_t index, std::size_t firstPoint,
                                  std::size_t pointCount) const noexcept

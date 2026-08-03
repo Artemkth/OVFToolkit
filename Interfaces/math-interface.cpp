@@ -247,29 +247,29 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
 bool OutputData(const VField::VField& field) //output data to mathematica
 {
     //output data methods
-    const bool isRect { field.Header.getMeshType() == VField::OVFHeader::MeshType::rectangular };
+    const bool isRect { field.header().getMeshType() == VField::OVFHeader::MeshType::rectangular };
     const int depth {isRect? 4 : 2};
     std::vector<int> dims;
     //static casts, explicitly converting to smaller type :'(
     //TODO: add an error throw for when some argument is larger than INT_MAX
     if(isRect)
         dims = { 
-            static_cast<int>(field.Header.getUint(VField::OVFParameter::Znodes)),
-            static_cast<int>(field.Header.getUint(VField::OVFParameter::Ynodes)),
-            static_cast<int>(field.Header.getUint(VField::OVFParameter::Xnodes)),
-            static_cast<int>(field.pntDimension())
+            static_cast<int>(field.header().getUint(VField::OVFParameter::Znodes)),
+            static_cast<int>(field.header().getUint(VField::OVFParameter::Ynodes)),
+            static_cast<int>(field.header().getUint(VField::OVFParameter::Xnodes)),
+            static_cast<int>(field.pointDimension())
         };
     else
         dims = {
-            static_cast<int>(field.pntCount()),
-            static_cast<int>(field.pntDimension())
+            static_cast<int>(field.pointCount()),
+            static_cast<int>(field.pointDimension())
         };
 
     bool result;
-    if(field.curDataInternalSize() == 4)
-        result = WSPutReal32Array(stdlink, field.getData<float>(), dims.data(), nullptr, depth);
+    if(field.scalarSizeBytes() == 4)
+        result = WSPutReal32Array(stdlink, field.data<float>(), dims.data(), nullptr, depth);
     else
-        result = WSPutReal64Array(stdlink, field.getData<double>(), dims.data(), nullptr, depth);
+        result = WSPutReal64Array(stdlink, field.data<double>(), dims.data(), nullptr, depth);
 
     return result;
 }
@@ -829,7 +829,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
         {
             if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
             //Output Header
-            if (sendHeader.value_or(true)) OutputHeader(field.Header);
+            if (sendHeader.value_or(true)) OutputHeader(field.header());
 
             //Output Data
             if (sendData.value_or(true)) 
@@ -979,7 +979,7 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
                 real32Data, std::move(releaseWSTPData)};
             field.adoptData(std::move(owner), dataPts);
     }
-    VField::OVFHeader& head {field.Header};
+    VField::OVFHeader& head {field.header()};
     //first deduce mesh type
     if(depth == 2)
     {
@@ -1303,18 +1303,18 @@ void ParseWSTPHeader(const Expression& expr, VField::VField& field)
     {
         if(x.second == nullptr)
         {
-            if(!field.DeduceField(x.first, true))
+            if(!field.deduceField(x.first, true))
                 defParams.push_back(x.first);
         }
         else
-            SetField(field.Header, x.first, *x.second);
+            SetField(field.header(), x.first, *x.second);
     }
     std::size_t itCounter {0};
     while(!defParams.empty() && itCounter++ < 3)//makes up for 5 total passes
     {
         std::vector<VField::OVFParameter> left{};
         for(const auto& x: defParams)
-            if(!field.DeduceField(x, true))
+            if(!field.deduceField(x, true))
                 left.push_back(x);
         if(left.size() == defParams.size())
             break;

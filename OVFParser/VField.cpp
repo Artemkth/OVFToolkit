@@ -191,17 +191,17 @@ namespace VField{
 
     
     //outside conversion
-    template<typename T>
+    template<FieldScalar T>
       void VField::convert()
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        if( data->isEmpty() || std::holds_alternative<OwnedData<T>> (data -> array) )
+        if(storage_->isEmpty() || std::holds_alternative<OwnedData<T>>(storage_->array))
           return;
-        data->convert();
+        storage_->convert();
       }
 
-    std::size_t VField::curDataInternalSize() const noexcept
+    std::size_t VField::scalarSizeBytes() const noexcept
     {
       return std::visit(
           [](const auto& token) ->std::size_t {
@@ -210,7 +210,16 @@ namespace VField{
               return 0;
             else
               return sizeof(typename TokenType::element_type);
-          }, data->array );
+          }, storage_->array );
+    }
+
+    std::size_t VField::dataSizeBytes() const noexcept
+    {
+      const auto count = scalarCount();
+      const auto scalarSize = scalarSizeBytes();
+      if(scalarSize != 0 && count > std::numeric_limits<std::size_t>::max() / scalarSize)
+        return 0;
+      return count * scalarSize;
     }
     [[nodiscard]]
       VField::ScalarType VField::scalarType() const noexcept
@@ -226,83 +235,83 @@ namespace VField{
               else
                 return VField::ScalarType::Float64;
             },
-            data->array );
+            storage_->array );
       }
 
-    template<typename T>
+    template<FieldScalar T>
       [[nodiscard]]
       bool VField::stores() const noexcept
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        return std::holds_alternative<OwnedData<T>>(data->array);
+        return std::holds_alternative<OwnedData<T>>(storage_->array);
       }
 
-    std::size_t VField::curDataPoints() const noexcept
+    std::size_t VField::scalarCount() const noexcept
     { 
-      assert( (data ->storSize == 0) == data->isEmpty() );
-      return data -> storSize; 
+      assert((storage_->storSize == 0) == storage_->isEmpty());
+      return storage_->storSize;
     }
 
     bool VField::isDataPresent() const noexcept
-    { return !( data -> isEmpty() ); }
+    { return !storage_->isEmpty(); }
 
     //ctors
-    VField::VField(): data( std::make_unique<StorageArray>() ) {}
+    VField::VField(): storage_(std::make_unique<StorageArray>()) {}
     VField::~VField() = default;
 
     VField::VField(VField&&) noexcept = default;
     VField& VField::operator=(VField&&) noexcept = default;
     
     void VField::clearData() noexcept
-    { data -> clear(); }
+    { storage_->clear(); }
 
-    template<typename T>
+    template<FieldScalar T>
       OwnedData<T> VField::releaseData()
-      { return data->release<T>(); }
+      { return storage_->release<T>(); }
     
     //data access methods
-    template<typename T>
-      std::vector<T> VField::getDataCopy() const
+    template<FieldScalar T>
+      std::vector<T> VField::dataCopy() const
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        if(data->isEmpty())
+        if(storage_->isEmpty())
           return {};
 
-        auto copy = data->makeCopy<T>();
-        return {copy.get(), copy.get() + data->storSize};
+        auto copy = storage_->makeCopy<T>();
+        return {copy.get(), copy.get() + storage_->storSize};
       }
     
     //and then getting the internal fields
-    template<typename T>
-      T* VField::getData()
+    template<FieldScalar T>
+      T* VField::data()
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        if (data->isEmpty())
+        if (storage_->isEmpty())
           return nullptr;
-        return std::get<OwnedData<T>>(data->array).get();
+        return std::get<OwnedData<T>>(storage_->array).get();
       }
 
-    template<typename T>
-      const T* VField::getData() const
+    template<FieldScalar T>
+      const T* VField::data() const
       { 
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        if (data->isEmpty())
+        if (storage_->isEmpty())
           return nullptr;
-        return std::get<OwnedData<T>>(data->array).get();
+        return std::get<OwnedData<T>>(storage_->array).get();
       }
     
     //setters
     void VField::adoptFloatData(OwnedData<float> owner, std::size_t size)
-    { data = std::make_unique<StorageArray>(std::move(owner), size); }
+    { storage_ = std::make_unique<StorageArray>(std::move(owner), size); }
 
     void VField::adoptDoubleData(OwnedData<double> owner, std::size_t size)
-    { data = std::make_unique<StorageArray>(std::move(owner), size); }
+    { storage_ = std::make_unique<StorageArray>(std::move(owner), size); }
 
-    template <typename T>
+    template <FieldScalar T>
     void VField::setData(const T* arr, std::size_t size)
     {
         auto buffer = std::make_unique<T[]>(size);
@@ -311,30 +320,31 @@ namespace VField{
     }
     
     //constructors and such again
-    VField::VField(const VField& ref): data( std::make_unique<StorageArray>() ), Header(ref.Header)
-    { *data = *ref.data; }
+    VField::VField(const VField& ref):
+      storage_(std::make_unique<StorageArray>()), header_(ref.header_)
+    { *storage_ = *ref.storage_; }
     VField& VField::operator= (const VField& ref)
     {
-      Header = ref.Header;
-      *data = *ref.data;
+      header_ = ref.header_;
+      *storage_ = *ref.storage_;
 
       return *this;
     }
 
     //comparison operations
     bool VField::isSameDataAs(const VField& ref) const noexcept
-    { return *data == *ref.data; }
+    { return *storage_ == *ref.storage_; }
     bool VField::operator==(const VField& ref) const noexcept
-    { return Header == ref.Header && isSameDataAs(ref); }
+    { return header_ == ref.header_ && isSameDataAs(ref); }
 
-    template OVFPARSER_EXPORT float* VField::getData<float>();
-    template OVFPARSER_EXPORT double* VField::getData<double>();
-    template OVFPARSER_EXPORT const float* VField::getData<float>() const;
-    template OVFPARSER_EXPORT const double* VField::getData<double>() const;
+    template OVFPARSER_EXPORT float* VField::data<float>();
+    template OVFPARSER_EXPORT double* VField::data<double>();
+    template OVFPARSER_EXPORT const float* VField::data<float>() const;
+    template OVFPARSER_EXPORT const double* VField::data<double>() const;
     template OVFPARSER_EXPORT OwnedData<float> VField::releaseData<float>();
     template OVFPARSER_EXPORT OwnedData<double> VField::releaseData<double>();
-    template OVFPARSER_EXPORT std::vector<float> VField::getDataCopy<float>() const;
-    template OVFPARSER_EXPORT std::vector<double> VField::getDataCopy<double>() const;
+    template OVFPARSER_EXPORT std::vector<float> VField::dataCopy<float>() const;
+    template OVFPARSER_EXPORT std::vector<double> VField::dataCopy<double>() const;
     template OVFPARSER_EXPORT void VField::convert<float>();
     template OVFPARSER_EXPORT void VField::convert<double>();
     template OVFPARSER_EXPORT void VField::setData<float>(const float*, std::size_t);

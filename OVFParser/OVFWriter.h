@@ -16,12 +16,12 @@ namespace VField
     //writing a file with a single field, binary only
     inline OVFPARSER_NO_EXPORT WriteResult WriteOVF(const std::string& fName, const VField& ref) noexcept
     {
-        if(!ref.Header.isSet(OVFParameter::VersionString))
+        if(!ref.header().isSet(OVFParameter::VersionString))
             return std::unexpected("WriteOVF: Version string was not set, aborting!");
         std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())
             return std::unexpected(std::format("WriteOVF: Unable to open '{}'!", fName));
-        file << ref.Header.getString(OVFParameter::VersionString) << "\n";
+        file << ref.header().getString(OVFParameter::VersionString) << "\n";
         file << "# Segment count: 1" << "\n";
         auto result = WriteSegment(file, ref);
         if(!file.good())
@@ -51,7 +51,7 @@ namespace VField
         std::ofstream file(fName, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
         if(!file.good())
             return std::unexpected(std::format("WriteOVF: Unable to open '{}'!", fName));
-        file << begin -> Header.getString(OVFParameter::VersionString) << "\n";
+        file << begin ->header().getString(OVFParameter::VersionString) << "\n";
         file << "# Segment count: "<< size << "\n";
         for(auto it = begin; it != end; ++it)
         {
