@@ -23,6 +23,15 @@ header["zstepsize"] = 1.0
 assert "meshtype" in header
 assert header["Meshtype"] == ovf.MeshType.Rectangular
 header[ovf.OVFParameter.Title] = "binding test"
+keys = list(header)
+assert keys == header.keys()
+assert ovf.OVFParameter.Title in keys
+assert dict(header.items())[ovf.OVFParameter.Title] == "binding test"
+assert len(header.values()) == len(header) == len(header.items())
+assert header.get(ovf.OVFParameter.Title) == "binding test"
+assert header.get("Desc") is None
+sentinel = object()
+assert header.get("Desc", sentinel) is sentinel
 header["Title"] = None
 assert ovf.OVFParameter.Title not in header
 

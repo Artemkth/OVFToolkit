@@ -208,6 +208,42 @@ namespace VField {
         [[nodiscard]] HeaderValueResult<ParameterValue>
           lookup(OVFParameter parameter) const noexcept;
 
+        /** @brief Borrowed value element returned by values() and items(). */
+        using ValueReference = std::reference_wrapper<const ParameterValue>;
+        /** @brief Key-value element returned by items(). */
+        using Item = std::pair<OVFParameter, ValueReference>;
+
+        /**
+         * @brief Collect parameters that currently have stored values.
+         * @return Snapshot in OVFParameter declaration order.
+         *
+         * The returned keys are independent of this header and remain valid
+         * after it is mutated or destroyed.
+         */
+        [[nodiscard]] std::vector<OVFParameter> keys() const;
+
+        /**
+         * @brief Collect immutable references to all currently stored values.
+         * @return Snapshot in the same order as keys().
+         *
+         * The vector owns only reference wrappers. Its elements remain valid
+         * only until this header is mutated or destroyed.
+         */
+        [[nodiscard]] std::vector<ValueReference> values() const;
+
+        /**
+         * @brief Collect currently stored parameters and their values.
+         * @return Snapshot suitable for structured-binding iteration.
+         *
+         * Typical use is `for (auto [parameter, value] : header.items())`.
+         * Keys are copied; values are borrowed and remain valid only until
+         * this header is mutated or destroyed.
+         */
+        [[nodiscard]] std::vector<Item> items() const;
+
+        /** @return Number of parameters that currently have stored values. */
+        [[nodiscard]] std::size_t size() const noexcept;
+
         /**
          * @brief Look up a runtime-selected parameter as a requested value type.
          * @tparam T One of the alternatives in ParameterValue.

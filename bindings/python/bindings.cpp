@@ -79,6 +79,35 @@ using VField::OVFParameter;
     return std::visit([](const auto& item) { return nb::cast(item); }, value->get());
 }
 
+[[nodiscard]] nb::object pythonValue(const VField::ParameterValue& value)
+{
+    return std::visit([](const auto& item) { return nb::cast(item); }, value);
+}
+
+[[nodiscard]] nb::list headerKeys(const VField::OVFHeader& header)
+{
+    nb::list result;
+    for(const auto parameter : header.keys())
+        result.append(nb::cast(parameter));
+    return result;
+}
+
+[[nodiscard]] nb::list headerValues(const VField::OVFHeader& header)
+{
+    nb::list result;
+    for(const auto value : header.values())
+        result.append(pythonValue(value.get()));
+    return result;
+}
+
+[[nodiscard]] nb::list headerItems(const VField::OVFHeader& header)
+{
+    nb::list result;
+    for(const auto& [parameter, value] : header.items())
+        result.append(nb::make_tuple(nb::cast(parameter), pythonValue(value.get())));
+    return result;
+}
+
 void setHeaderValue(VField::OVFHeader& header, nb::handle identifier,
                     nb::object value)
 {
@@ -228,6 +257,10 @@ NB_MODULE(ovftoolkit, module)
                 throw;
             }
         })
+        .def("__len__", &VField::OVFHeader::size)
+        .def("__iter__", [](const VField::OVFHeader& header) {
+            return nb::iter(headerKeys(header));
+        })
         .def("__getitem__", &headerValue)
         .def("__setitem__", &setHeaderValue,
             nb::arg("key"), nb::arg("value").none())
@@ -237,6 +270,15 @@ NB_MODULE(ovftoolkit, module)
                 throw nb::key_error("OVF header field is not set");
             header.clear(value);
         })
+        .def("keys", &headerKeys)
+        .def("values", &headerValues)
+        .def("items", &headerItems)
+        .def("get", [](const VField::OVFHeader& header, nb::handle key,
+                       nb::object fallback) {
+            const auto parameter = parameterFromObject(key);
+            const auto value = header.lookup(parameter);
+            return value ? pythonValue(value->get()) : std::move(fallback);
+        }, nb::arg("key"), nb::arg("default").none() = nb::none())
         .def("validate", &validateHeader)
         .def_prop_ro("version", &VField::OVFHeader::version)
         .def_prop_ro("point_count", &VField::OVFHeader::pointCount)
