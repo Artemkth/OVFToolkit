@@ -187,22 +187,22 @@ namespace VField
     inline void WriteBinaryData(std::ostream& out, const OVFVersion& version, const VField& field)
     {
         auto tVal {TestVal<T>};
-        T* buff {nullptr};
+        std::vector<T> buff;
+        const T* outData = field.getData<T>();
         if( (boost::endian::order::native == boost::endian::order::little && version == OVFVersion::OVF1) ||
                 boost::endian::order::native == boost::endian::order::big )
         {
             buff = field.getDataCopy<T>();
+            outData = buff.data();
             boost::endian::endian_reverse_inplace( *reinterpret_cast<typename UintAnalogue<T>::type*>(&tVal) );
         }
         out.write(reinterpret_cast<const std::ostream::char_type*>(&tVal), 
                 sizeof(T)/sizeof(std::ostream::char_type));
-        if(buff != nullptr)
-            for( std::size_t i = 0; i < field.curDataPoints(); i++)
-                boost::endian::endian_reverse_inplace( *reinterpret_cast<typename UintAnalogue<T>::type*>(buff + i) );
-        const char* outBuff = reinterpret_cast<const std::ostream::char_type*>(
-                (buff != nullptr)? buff : field.getData<T>());  
+        for(T& value: buff)
+            boost::endian::endian_reverse_inplace(
+                *reinterpret_cast<typename UintAnalogue<T>::type*>(&value));
+        const char* outBuff = reinterpret_cast<const std::ostream::char_type*>(outData);
         out.write(outBuff, field.curDataPoints() * sizeof(T)/sizeof(char));
-        delete[] buff;
     }
 
     WriteResult WriteSegment(std::ostream& out, const VField& field) noexcept

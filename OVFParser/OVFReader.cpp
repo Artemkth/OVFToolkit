@@ -734,7 +734,7 @@ namespace VField{
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         for(std::size_t i =0; i < importDepth; i++)
                             boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint32_t*>(buffer.get() + i));
-                    out.insertData(std::move(buffer), importDepth);
+                    out.adoptData(std::move(buffer), importDepth);
                     return log; 
                 }
                 if(internalSize == 8)
@@ -765,7 +765,7 @@ namespace VField{
                         (version == OVFVersion::OVF2 && boost::endian::order::native == boost::endian::order::big) )
                         for(std::size_t i =0; i < importDepth; i++)
                             boost::endian::endian_reverse_inplace(*reinterpret_cast<std::uint64_t*>(buffer.get() + i));
-                    out.insertData(std::move(buffer), importDepth);
+                    out.adoptData(std::move(buffer), importDepth);
                     return log; 
                 }
             }
@@ -813,7 +813,7 @@ namespace VField{
                         return log;
                     }
                 }
-                out.insertData(std::move(buffer), importDepth);
+                out.adoptData(std::move(buffer), importDepth);
                 return log; 
             }
         }

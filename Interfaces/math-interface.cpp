@@ -954,12 +954,11 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
                 for(std::size_t i = 0; i < depth; i++)
                     dataPts *= dims[i];
 
-                try { field.setData(real64Data, dataPts); }
-                catch(...)
-                {
-                    WSReleaseReal64Array(stdlink, real64Data, dims, headers, depth);
-                    throw;
-                }
+                auto releaseWSTPData = [link = stdlink, dims, headers, depth](double* pointer) noexcept
+                { WSReleaseReal64Array(link, pointer, dims, headers, depth); };
+                std::unique_ptr<double[], decltype(releaseWSTPData)> owner{
+                    real64Data, std::move(releaseWSTPData)};
+                field.adoptData(std::move(owner), dataPts);
                 break;
             }
         default:
@@ -974,12 +973,11 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
             for(std::size_t i = 0; i < depth; i++)
                 dataPts *= dims[i];
 
-            try { field.setData(real32Data, dataPts); }
-            catch(...)
-            {
-                WSReleaseReal32Array(stdlink, real32Data, dims, headers, depth);
-                throw;
-            }
+            auto releaseWSTPData = [link = stdlink, dims, headers, depth](float* pointer) noexcept
+            { WSReleaseReal32Array(link, pointer, dims, headers, depth); };
+            std::unique_ptr<float[], decltype(releaseWSTPData)> owner{
+                real32Data, std::move(releaseWSTPData)};
+            field.adoptData(std::move(owner), dataPts);
     }
     VField::OVFHeader& head {field.Header};
     //first deduce mesh type
@@ -1001,10 +999,6 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
         head.at<VField::pType::Uint>(VField::OVFParameter::Vdim)   = dims[3];
     }
 
-    if(real64Data != nullptr)
-        WSReleaseReal64Array(stdlink, real64Data, dims, headers, depth);
-    else
-        WSReleaseReal32Array(stdlink, real32Data, dims, headers, depth);
     return field;
 }
 

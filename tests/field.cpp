@@ -4,11 +4,29 @@
 #include<algorithm>
 #include<cmath>
 #include<array>
+#include<vector>
 #include<VField.h>
 #include<limits>
 
 int main()
 {
+    struct CountingDeleter
+    {
+        std::size_t* calls;
+
+        explicit CountingDeleter(std::size_t& count) noexcept: calls(&count) {}
+        CountingDeleter(const CountingDeleter&) = delete;
+        CountingDeleter& operator=(const CountingDeleter&) = delete;
+        CountingDeleter(CountingDeleter&&) noexcept = default;
+        CountingDeleter& operator=(CountingDeleter&&) noexcept = default;
+
+        void operator()(double* pointer) noexcept
+        {
+            ++*calls;
+            delete[] pointer;
+        }
+    };
+
     {
         VField::VField owned;
         auto source = std::make_unique<double[]>(3);
@@ -16,7 +34,7 @@ int main()
         source[1] = 2.0;
         source[2] = 3.0;
         auto* original = source.get();
-        owned.insertData(std::move(source), 3);
+        owned.adoptData(std::move(source), 3);
 
         auto released = owned.releaseData<double>();
         if(released.get() != original || owned.isDataPresent() || owned.curDataPoints() != 0 ||
@@ -26,12 +44,74 @@ int main()
             return 17;
         }
 
-        owned.insertData(std::move(released), 3);
+        owned.adoptData(std::move(released), 3);
         owned.clearData();
         if(owned.isDataPresent() || owned.curDataPoints() != 0)
         {
             std::cerr << "Clearing field data did not reset its storage!\n";
             return 18;
+        }
+    }
+
+    {
+        std::size_t deleteCalls{};
+        VField::VField adopted;
+        std::unique_ptr<double[], CountingDeleter> source{
+            new double[2]{4.0, 5.0}, CountingDeleter{deleteCalls}};
+        adopted.adoptData(std::move(source), 2);
+
+        auto released = adopted.releaseData<double>();
+        if(deleteCalls != 0 || released[0] != 4.0 || released[1] != 5.0)
+        {
+            std::cerr << "Releasing adopted data lost its custom deleter or values!\n";
+            return 19;
+        }
+        released.reset();
+        if(deleteCalls != 1)
+        {
+            std::cerr << "Adopted data was not returned to its original allocator!\n";
+            return 20;
+        }
+    }
+
+    {
+        VField::VField copied;
+        const std::array<float, 3> floatValues{1.0F, 2.0F, 3.0F};
+        copied.setData(floatValues);
+        if(!copied.stores<float>() || copied.curDataPoints() != floatValues.size() ||
+           copied.getData<float>()[1] != 2.0F)
+        {
+            std::cerr << "Copying a float container did not preserve its scalar type!\n";
+            return 21;
+        }
+
+        const std::vector<int> integerValues{4, 5, 6, 7};
+        copied.setData(integerValues);
+        if(!copied.stores<double>() || copied.curDataPoints() != integerValues.size() ||
+           copied.getData<double>()[0] != 4.0 || copied.getData<double>()[3] != 7.0)
+        {
+            std::cerr << "Copying a convertible container did not produce double data!\n";
+            return 22;
+        }
+
+        std::vector<double> consumedValues{8.0, 9.0, 10.0};
+        auto* originalStorage = consumedValues.data();
+        copied.setData(std::move(consumedValues));
+        if(!copied.stores<double>() || copied.getData<double>() != originalStorage ||
+           copied.curDataPoints() != 3 || copied.getData<double>()[2] != 10.0)
+        {
+            std::cerr << "Consuming a double container copied or corrupted its storage!\n";
+            return 23;
+        }
+
+        const std::array<float, 2> spanValues{11.0F, 12.0F};
+        auto view = std::span{spanValues};
+        copied.setData(std::move(view));
+        if(!copied.stores<float>() || copied.getData<float>() == spanValues.data() ||
+           copied.curDataPoints() != spanValues.size() || copied.getData<float>()[1] != 12.0F)
+        {
+            std::cerr << "An rvalue span was consumed instead of copied!\n";
+            return 24;
         }
     }
 
@@ -135,6 +215,21 @@ int main()
         {
             std::cerr << "Conversion and/or copy failed!\n";
             return 5;
+        }
+        auto convertedOnAccess = tmpRegular;
+        const auto convertedRaw = convertedOnAccess.rawViewAs<float>();
+        if(!convertedOnAccess.stores<float>() || convertedRaw.size() != pCount * Pdim ||
+           convertedRaw[1] != static_cast<float>(tmpRegular.getData<double>()[1]))
+        {
+            std::cerr << "Conversion-on-access view failed!\n";
+            return 25;
+        }
+        const auto copiedVector = tmpCopy.getDataCopy<double>();
+        if(copiedVector.size() != tmpCopy.curDataPoints() ||
+           copiedVector.front() != static_cast<double>(tmpCopy.getData<float>()[0]))
+        {
+            std::cerr << "Dressed converted data copy failed!\n";
+            return 26;
         }
         //now to check the exported comparison operations
         if( !tmpCopy.isSameDataAs(tmpRegular) )

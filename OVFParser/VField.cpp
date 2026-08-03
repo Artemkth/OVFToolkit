@@ -19,22 +19,6 @@ namespace VField{
     static_assert(sizeof(double) == 8, "Incompatible double type");
     
     template<typename T, typename U>
-    inline void emplace_copy(T** dest, const U* data, const std::size_t size)
-    {
-        //if copy size is 0 cleanup destination and set pointer to nullptr
-        if(size == 0)
-        {
-            *dest = nullptr;
-            return;
-        }
-        static_assert(std::is_convertible<U,T>::value, "Trying to do the conversion of incompatible types!");
-        T* buffer = new T[size];
-        std::copy_n(data, size, buffer);
-
-        *dest = buffer;
-    }
-
-    template<typename T, typename U>
     inline bool cmpFloatArr(const T* arr1, const U* arr2, std::size_t size)
     {
         static_assert( std::is_floating_point<T>::value && std::is_floating_point<U>::value,
@@ -59,8 +43,8 @@ namespace VField{
         //data storage
         std::variant<
           std::monostate,
-          std::unique_ptr<float[]>, 
-          std::unique_ptr<double[]> > array{};
+          OwnedData<float>,
+          OwnedData<double> > array{};
         //purgin the data
         inline void clear()
         {
@@ -102,7 +86,7 @@ namespace VField{
         }
         //conversion constructors, eat up the pointer
         template<typename T>
-        explicit StorageArray(std::unique_ptr<T[]> data, const std::size_t& length): StorageArray()
+        explicit StorageArray(OwnedData<T> data, const std::size_t& length): StorageArray()
         {
             static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>,
                           "StorageArray only stores float or double arrays");
@@ -111,7 +95,7 @@ namespace VField{
             if(length == 0)
                 return;
             storSize = length;
-            array.emplace<std::unique_ptr<T[]>>(std::move(data));
+            array.emplace<OwnedData<T>>(std::move(data));
         }
 
         StorageArray(StorageArray&& ref) noexcept = default;
@@ -162,9 +146,9 @@ namespace VField{
                 if constexpr(!std::is_same_v<TokenType, std::monostate>) 
                 {
                   if constexpr(std::is_same_v<typename TokenType::element_type, float>)
-                    this->array.emplace<std::unique_ptr<double[]>>( this->makeCopy<double>() );
+                    this->array.emplace<OwnedData<double>>( this->makeCopy<double>() );
                   else if constexpr(std::is_same_v<typename TokenType::element_type, double>)
-                    this->array.emplace<std::unique_ptr<float[]>>( this->makeCopy<float>() );
+                    this->array.emplace<OwnedData<float>>( this->makeCopy<float>() );
                   else
                     std::unreachable();
                 }
@@ -173,32 +157,32 @@ namespace VField{
 
         //data copy template
         template<typename T>
-        T* makeCopy() const
+        OwnedData<T> makeCopy() const
           {
             static_assert(std::is_floating_point<T>::value, "StorageArray::makeCopy is only compatible with floating point type");
             if(isEmpty())
-              return nullptr;
-            T* buffer = new T[storSize];
+              return {};
+            OwnedData<T> buffer{new T[storSize]};
 
             std::visit(
-                [buffer, this](const auto& token)
+                [destination = buffer.get(), this](const auto& token)
                 {
                   using TokenType = std::remove_cvref_t<decltype(token)>;
                   if constexpr( !std::is_same_v<TokenType, std::monostate> )
-                    std::copy_n( token.get(), this->storSize, buffer );
+                    std::copy_n(token.get(), this->storSize, destination);
                 }, array );
 
             return buffer;
           }
 
         template<typename T>
-        std::unique_ptr<T[]> release()
+        OwnedData<T> release()
         {
           static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
           if(isEmpty())
             return {};
 
-          auto released = std::move(std::get<std::unique_ptr<T[]>>(array));
+          auto released = std::move(std::get<OwnedData<T>>(array));
           array.emplace<std::monostate>();
           storSize = 0;
           return released;
@@ -212,7 +196,7 @@ namespace VField{
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        if( data->isEmpty() || std::holds_alternative<std::unique_ptr<T[]>> (data -> array) )
+        if( data->isEmpty() || std::holds_alternative<OwnedData<T>> (data -> array) )
           return;
         data->convert();
       }
@@ -237,7 +221,7 @@ namespace VField{
               using  TokenType = std::remove_cvref_t<decltype(token)>;
               if constexpr ( std::is_same_v<TokenType, std::monostate> )
                 return VField::ScalarType::None;
-              else if constexpr ( std::is_same_v<TokenType, std::unique_ptr<float[]>> )
+              else if constexpr ( std::is_same_v<TokenType, OwnedData<float>> )
                 return VField::ScalarType::Float32;
               else
                 return VField::ScalarType::Float64;
@@ -251,7 +235,7 @@ namespace VField{
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        return std::holds_alternative<std::unique_ptr<T[]>>(data->array);
+        return std::holds_alternative<OwnedData<T>>(data->array);
       }
 
     std::size_t VField::curDataPoints() const noexcept
@@ -274,16 +258,20 @@ namespace VField{
     { data -> clear(); }
 
     template<typename T>
-      std::unique_ptr<T[]> VField::releaseData()
+      OwnedData<T> VField::releaseData()
       { return data->release<T>(); }
     
     //data access methods
     template<typename T>
-      T* VField::getDataCopy() const
+      std::vector<T> VField::getDataCopy() const
       {
         static_assert( std::is_same_v<T, float> || std::is_same_v<T, double> ,
             "instantiation is only supported for float or double!");
-        return data -> makeCopy<T>(); 
+        if(data->isEmpty())
+          return {};
+
+        auto copy = data->makeCopy<T>();
+        return {copy.get(), copy.get() + data->storSize};
       }
     
     //and then getting the internal fields
@@ -294,7 +282,7 @@ namespace VField{
             "instantiation is only supported for float or double!");
         if (data->isEmpty())
           return nullptr;
-        return std::get<std::unique_ptr<T[]>>(data->array).get();
+        return std::get<OwnedData<T>>(data->array).get();
       }
 
     template<typename T>
@@ -304,48 +292,24 @@ namespace VField{
             "instantiation is only supported for float or double!");
         if (data->isEmpty())
           return nullptr;
-        return std::get<std::unique_ptr<T[]>>(data->array).get();
+        return std::get<OwnedData<T>>(data->array).get();
       }
     
     //setters
-    template <typename T>
-    void VField::insertData(std::unique_ptr<T[]> arr, std::size_t size) noexcept
-    { data = std::make_unique<StorageArray>(std::move(arr), size); }
+    void VField::adoptFloatData(OwnedData<float> owner, std::size_t size)
+    { data = std::make_unique<StorageArray>(std::move(owner), size); }
+
+    void VField::adoptDoubleData(OwnedData<double> owner, std::size_t size)
+    { data = std::make_unique<StorageArray>(std::move(owner), size); }
+
     template <typename T>
     void VField::setData(const T* arr, std::size_t size)
     {
         auto buffer = std::make_unique<T[]>(size);
         std::copy_n(arr, size, buffer.get());
-        insertData(std::move(buffer), size);
+        adoptData(std::move(buffer), size);
     }
     
-    //point set methods
-    template<typename T, typename U>
-    constexpr void conv_assign(T* arr, const std::size_t& pos, const U& val)
-    {
-        static_assert(std::is_convertible<U, T>::value, "conv_assign called with a non-convertible argument");
-        arr[pos] = static_cast<T>(val);
-    }
-    //here we go
-    //look into templating this stuff
-    template<typename T>
-    bool VField::setPoint(std::size_t pos, const T& val)
-    {
-        if( data -> isEmpty() || pos >= data -> storSize )
-            return false;
-        
-        std::visit( 
-            [pos, &val](auto& token) -> void
-            {
-              if constexpr( !std::is_same_v<std::remove_reference_t<decltype(token)>, std::monostate> )
-              {
-                static_assert(std::is_convertible_v<T, typename std::remove_reference_t<decltype(token)>::element_type>,
-                    "setter must provide values convertible to float");
-                token.get()[pos] = val;
-              }
-            }, data->array );
-    }
-
     //constructors and such again
     VField::VField(const VField& ref): data( std::make_unique<StorageArray>() ), Header(ref.Header)
     { *data = *ref.data; }
@@ -367,14 +331,12 @@ namespace VField{
     template OVFPARSER_EXPORT double* VField::getData<double>();
     template OVFPARSER_EXPORT const float* VField::getData<float>() const;
     template OVFPARSER_EXPORT const double* VField::getData<double>() const;
-    template OVFPARSER_EXPORT std::unique_ptr<float[]> VField::releaseData<float>();
-    template OVFPARSER_EXPORT std::unique_ptr<double[]> VField::releaseData<double>();
-    template OVFPARSER_EXPORT float* VField::getDataCopy<float>() const;
-    template OVFPARSER_EXPORT double* VField::getDataCopy<double>() const;
+    template OVFPARSER_EXPORT OwnedData<float> VField::releaseData<float>();
+    template OVFPARSER_EXPORT OwnedData<double> VField::releaseData<double>();
+    template OVFPARSER_EXPORT std::vector<float> VField::getDataCopy<float>() const;
+    template OVFPARSER_EXPORT std::vector<double> VField::getDataCopy<double>() const;
     template OVFPARSER_EXPORT void VField::convert<float>();
     template OVFPARSER_EXPORT void VField::convert<double>();
-    template OVFPARSER_EXPORT void VField::insertData<float>(std::unique_ptr<float[]>, std::size_t) noexcept;
-    template OVFPARSER_EXPORT void VField::insertData<double>(std::unique_ptr<double[]>, std::size_t) noexcept;
     template OVFPARSER_EXPORT void VField::setData<float>(const float*, std::size_t);
     template OVFPARSER_EXPORT void VField::setData<double>(const double*, std::size_t);
     template OVFPARSER_EXPORT bool VField::stores<float>() const noexcept;

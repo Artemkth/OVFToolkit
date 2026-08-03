@@ -387,7 +387,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     }
 
     VField::VField field ( commonHeader );
-    field.insertData(std::move(data), commonHeader.expectedPoints() * commonHeader.expectedDimension());
+    field.adoptData(std::move(data), commonHeader.expectedPoints() * commonHeader.expectedDimension());
     output << commonHeader.getString( VField::OVFParameter::VersionString ) << "\n" << "# Segment count: " << cnt;
 
     std::string desc{};
