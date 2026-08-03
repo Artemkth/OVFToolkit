@@ -95,15 +95,15 @@ endif()
 
 #find fftw frameworks and other components for time fourier of magnetization files
 if(OVFTOOLKIT_BUILD_TOOLS)
-set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake/findFFTW" ${CMAKE_MODULE_PATH})
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/findFFTW" ${CMAKE_MODULE_PATH})
 # Try to find either CPU FFTW or CUDA/cuFFT for Fourier analysis.  The
 # threaded FFTW companion library is optional; the serial float library is
 # sufficient for the CPU backend.
 find_package(FFTW COMPONENTS FLOAT_LIB OPTIONAL_COMPONENTS FLOAT_THREADS_LIB)
-if(PKG_FFTW_VERSION)
-    set(OVFTOOLKIT_FFTW_VERSION "${PKG_FFTW_VERSION}")
+if(FFTW_VERSION)
+    set(OVFTOOLKIT_FFTW_VERSION "${FFTW_VERSION}")
 endif()
-if(FFTW_FLOAT_LIB_FOUND AND FFTW_INCLUDE_DIRS)
+if(NOT OVFTOOLKIT_FFTW_VERSION AND FFTW_FLOAT_LIB_FOUND AND FFTW_INCLUDE_DIRS)
     file(STRINGS "${FFTW_INCLUDE_DIRS}/fftw3.h" OVFTOOLKIT_FFTW_VERSION_LINE
         REGEX "^#define[ \t]+FFTW_VERSION[ \t]+\"")
     if(OVFTOOLKIT_FFTW_VERSION_LINE)

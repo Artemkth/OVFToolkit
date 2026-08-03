@@ -27,8 +27,8 @@ simple Python interface built around real NumPy arrays.
   header from a cell size.
 - **Wolfram integration:** the WSTP binding exposes OVFToolkit directly to the
   Wolfram Language and installs into the user's Wolfram application directory.
-- **Useful companion tools:** FFTW/cuFFT spectral analysis, VTK/HDF5
-  conversion, and an authenticated socket controller for mumax3.
+- **Useful companion tools:** [FFTW/cuFFT spectral analysis](tools/batchfft/README.md),
+  VTK/HDF5 conversion, and an authenticated socket controller for mumax3.
 - **Small runtime surface:** the Python wheel needs only NumPy; CUDA, Boost,
   Go, Mathematica, VTK, and HDF5 remain optional build/tool dependencies.
 

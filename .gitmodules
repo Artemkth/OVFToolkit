@@ -1,3 +1,6 @@
 [submodule "external/FindMathematica"]
 	path = external/FindMathematica
 	url = https://github.com/sakra/FindMathematica.git
+[submodule "externals/findFFTW"]
+	path = externals/findFFTW
+	url = https://github.com/egpbos/findFFTW.git
