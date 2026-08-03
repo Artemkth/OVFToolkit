@@ -2,6 +2,7 @@
 #include<stdexcept>
 #include<filesystem> //using for checking file stuff
 #include<algorithm>
+#include<numeric>
 #include<string>
 #include<type_traits>
 #include<vector>
@@ -12,12 +13,8 @@
 //for mapping types
 #include<memory>
 #include<stdexcept>
+#include<cstdint>
 //small convinience on *nix systems
-//TODO: replace with cmake detection later, CheckIncludeFile
-#if defined(__unix__) || defined(__LINUX__) || defined(__APPLE__)
-#define EXPANDPATH
-#endif
-
 #ifdef EXPANDPATH
 #include<wordexp.h>
 #endif
@@ -27,11 +24,28 @@
 #include<OVFWriter.h>
 #include<OVFDictionary.h>
 
-
 //glue code for mathematica's library
 //handles the connection to mathematica kernel
+#if defined(_WIN32) || defined(WIN32)
+#include<Windows.h>
+int __stdcall WinMain( HINSTANCE hinstCurrent, HINSTANCE hinstPrevious, LPSTR lpszCmdLine, int nCmdShow)
+{
+        char  buff[512];
+        char FAR * buff_start = buff;
+        char FAR * argv[32];
+        char FAR * FAR * argv_end = argv + 32;
+
+        hinstPrevious = hinstPrevious; /* suppress warning */
+
+        //next one is only usable if link is specified manually, and can be skipped
+        //if( !WSInitializeIcon( hinstCurrent, nCmdShow)) return 1;
+        WSScanString( argv, &argv_end, &lpszCmdLine, &buff_start);
+        return WSMain( (int)(argv_end - argv), argv);
+}
+#else
 int main(int argc, char** argv)
 { return WSMain(argc, argv); }
+#endif
 
 //global counter for expected return packets
 std::size_t skip_cnt{0};
@@ -111,7 +125,7 @@ inline std::enable_if_t<std::is_integral_v<typename T::value_type> || std::is_fl
 {
     //TODO: futureproof by spliting the load by INT_MAX
     //(hack with putting Sequence functions with INT_MAX size)
-    int size { val.size() }; //has to be int for the array input function
+    int size { static_cast<int>(val.size()) }; //has to be int for the array input function
     auto ptr { val.data() };
     if constexpr(std::is_integral_v<typename T::value_type>)
     {
@@ -175,6 +189,7 @@ inline void PostErrorMessage(
 
     //increment ignored expression count
     skip_cnt++;
+    WSFlush(stdlink);
 }
 //template for signiling failure
 inline bool PostFailure()
@@ -232,29 +247,29 @@ std::optional<std::filesystem::path> checkFileName(const char* fileName)
 bool OutputData(const VField::VField& field) //output data to mathematica
 {
     //output data methods
-    const bool isRect { field.Header.getMeshType() == VField::OVFHeader::MeshType::rectangular };
+    const bool isRect { field.header().meshType() == VField::MeshType::Rectangular };
     const int depth {isRect? 4 : 2};
     std::vector<int> dims;
     //static casts, explicitly converting to smaller type :'(
     //TODO: add an error throw for when some argument is larger than INT_MAX
     if(isRect)
         dims = { 
-            static_cast<int>(field.Header.getUint(VField::OVFParameter::Znodes)),
-            static_cast<int>(field.Header.getUint(VField::OVFParameter::Ynodes)),
-            static_cast<int>(field.Header.getUint(VField::OVFParameter::Xnodes)),
-            static_cast<int>(field.pntDimension())
+            static_cast<int>(field.header().requireAs<std::size_t>(VField::OVFParameter::Znodes)),
+            static_cast<int>(field.header().requireAs<std::size_t>(VField::OVFParameter::Ynodes)),
+            static_cast<int>(field.header().requireAs<std::size_t>(VField::OVFParameter::Xnodes)),
+            static_cast<int>(field.pointDimension())
         };
     else
         dims = {
-            static_cast<int>(field.pntCount()),
-            static_cast<int>(field.pntDimension())
+            static_cast<int>(field.pointCount()),
+            static_cast<int>(field.pointDimension())
         };
 
     bool result;
-    if(field.curDataInternalSize() == 4)
-        result = WSPutReal32Array(stdlink, field.getData<float>(), dims.data(), nullptr, depth);
+    if(field.scalarSizeBytes() == 4)
+        result = WSPutReal32Array(stdlink, field.data<float>(), dims.data(), nullptr, depth);
     else
-        result = WSPutReal64Array(stdlink, field.getData<double>(), dims.data(), nullptr, depth);
+        result = WSPutReal64Array(stdlink, field.data<double>(), dims.data(), nullptr, depth);
 
     return result;
 }
@@ -282,11 +297,11 @@ const std::map<
     {VField::OVFParameter::Vmin, "MinVal"},
     {VField::OVFParameter::Vmax, "MaxVal"},
     {VField::OVFParameter::Xmin, "MinX"},
-    {VField::OVFParameter::Xmin, "MinY"},
-    {VField::OVFParameter::Xmin, "MinZ"},
-    {VField::OVFParameter::Xmin, "MaxX"},
-    {VField::OVFParameter::Xmin, "MaxY"},
-    {VField::OVFParameter::Xmin, "MaxZ"}
+    {VField::OVFParameter::Ymin, "MinY"},
+    {VField::OVFParameter::Zmin, "MinZ"},
+    {VField::OVFParameter::Xmax, "MaxX"},
+    {VField::OVFParameter::Ymax, "MaxY"},
+    {VField::OVFParameter::Zmax, "MaxZ"}
 };
 
 //putting a value from header
@@ -297,12 +312,12 @@ constexpr bool putVal(const VField::OVFHeader& head)
     bool result{WSPutFunction(stdlink, "Rule", 2) != 0};
     result = result && PutValue(ParamKeys.at(p));
 
-    if constexpr(paramIndex(p) == VField::pType::Uint)
-        return result && PutValue(head.getUint(p));
-    else if constexpr(paramIndex(p) == VField::pType::Float)
-        return result && PutValue(head.getFloat(p));
-    else if constexpr(paramIndex(p) == VField::pType::String)
-        return result && PutValue(head.getString(p));
+    if constexpr(paramType(p) == VField::ParameterType::Unsigned)
+        return result && PutValue(head.requireAs<std::size_t>(p));
+    else if constexpr(paramType(p) == VField::ParameterType::Floating)
+        return result && PutValue(head.requireAs<double>(p));
+    else if constexpr(paramType(p) == VField::ParameterType::String)
+        return result && PutValue(head.requireAs<std::string>(p));
     //if everything else fails
     static_assert(true, "Wrong, unhandled type of parameter!");
 }
@@ -312,7 +327,7 @@ template<typename T, T v>
 constexpr bool isOutputted(const VField::OVFHeader& head)
 {
     if constexpr(std::is_same<T, VField::OVFParameter>::value)
-        return head.isSet(v);
+        return head.contains(v);
     else
         //assuming first element is a predicate taking a header
         return v(head, false);
@@ -321,7 +336,7 @@ template<typename T, T v>
 constexpr bool Output(const VField::OVFHeader& head)
 {
     if constexpr(std::is_same<T, VField::OVFParameter>::value)
-        return !head.isSet(v) || putVal<v>(head);
+        return !head.contains(v) || putVal<v>(head);
     else if(v(head, false))
         return v(head, true);
     return false;
@@ -344,7 +359,7 @@ struct Wrapper{
     };
 };
 
-#define OUTPUT_HEADER(head, args...) decltype(Wrapper{args})::Wrapping<args>::OutputAll(head)
+#define OUTPUT_HEADER(head, ...) decltype(Wrapper{__VA_ARGS__})::Wrapping<__VA_ARGS__>::OutputAll(head)
 
 inline bool OutputMeshType(const VField::OVFHeader& head, bool write = false)
 {
@@ -353,9 +368,9 @@ inline bool OutputMeshType(const VField::OVFHeader& head, bool write = false)
 
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue(ParamKeys.at(VField::OVFParameter::Mtype));
-    if(!head.isSet(VField::OVFParameter::Mtype))
+    if(!head.contains(VField::OVFParameter::Mtype))
         return res && WSPutSymbol(stdlink, "Undefined") != 0;
-    return res && PutValue(head.getMeshType() == VField::OVFHeader::MeshType::rectangular? "Rectangular" : "Irregular");
+    return res && PutValue(head.meshType() == VField::MeshType::Rectangular? "Rectangular" : "Irregular");
 }
 
 inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = false)
@@ -369,12 +384,12 @@ inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = fal
     };
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue("CellSize");
-    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);}))
+    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.contains(p);}))
     {
-        std::array<VField::associatedType_t<VField::pType::Float>,3> val {
-            head.getFloat(VField::OVFParameter::Xstep),
-            head.getFloat(VField::OVFParameter::Ystep),
-            head.getFloat(VField::OVFParameter::Zstep)
+        std::array<VField::parameter_cpp_type_t<VField::ParameterType::Floating>,3> val {
+            head.requireAs<double>(VField::OVFParameter::Xstep),
+            head.requireAs<double>(VField::OVFParameter::Ystep),
+            head.requireAs<double>(VField::OVFParameter::Zstep)
         };
         res = res && PutValue(val);
     }
@@ -383,7 +398,7 @@ inline bool OutputCoordIncrement(const VField::OVFHeader& head, bool write = fal
     {
         res = res && WSPutFunction(stdlink, "List", 3) != 0;
         for(const auto& p: args)
-            res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+            res = res && (head.contains(p) ? PutValue(head.requireAs<double>(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
     }
 
     return res;
@@ -399,12 +414,12 @@ inline bool OutputCoordOrigin(const VField::OVFHeader& head, bool write = false)
     };
     bool res {WSPutFunction(stdlink, "Rule", 2) != 0};
     res = res && PutValue("Origin");
-    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);}))
+    if(std::all_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.contains(p);}))
     {
-        std::array<VField::associatedType_t<VField::pType::Float>,3> val {
-            head.getFloat(VField::OVFParameter::Xbase),
-            head.getFloat(VField::OVFParameter::Ybase),
-            head.getFloat(VField::OVFParameter::Zbase)
+        std::array<VField::parameter_cpp_type_t<VField::ParameterType::Floating>,3> val {
+            head.requireAs<double>(VField::OVFParameter::Xbase),
+            head.requireAs<double>(VField::OVFParameter::Ybase),
+            head.requireAs<double>(VField::OVFParameter::Zbase)
         };
         res = res && PutValue(val);
     }
@@ -413,7 +428,7 @@ inline bool OutputCoordOrigin(const VField::OVFHeader& head, bool write = false)
     {
         res = res && WSPutFunction(stdlink, "List", 3) != 0;
         for(const auto& p: args)
-            res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+            res = res && (head.contains(p) ? PutValue(head.requireAs<double>(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
     }
 
     return res;
@@ -428,7 +443,7 @@ inline bool OutputBBox(const VField::OVFHeader& head, bool write = false)
         VField::OVFParameter::Zmin,
         VField::OVFParameter::Zmax,
     };
-    const bool any_present{std::any_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.isSet(p);})};
+    const bool any_present{std::any_of(args.begin(), args.end(), [&](const VField::OVFParameter& p){return head.contains(p);})};
     if(!write)
         return any_present;
 
@@ -443,7 +458,7 @@ inline bool OutputBBox(const VField::OVFHeader& head, bool write = false)
     {
         if(i++%2 == 0)
             res = res && WSPutFunction(stdlink, "List", 2);
-        res = res && (head.isSet(p) ? PutValue(head.getFloat(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
+        res = res && (head.contains(p) ? PutValue(head.requireAs<double>(p)) : WSPutSymbol(stdlink, "Undefined") != 0);
     }
 
     return res;
@@ -470,7 +485,7 @@ bool OutputHeader(const VField::OVFHeader& head)
 
 //wrappers to interfaces for importing data from mathematica
 //                                               string for symbol types
-using math_atom = std::variant<long, double, std::string>;
+using math_atom = std::variant<std::int64_t, double, std::string>;
 //ohboi
 class Expression;
 class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Expression>>> {
@@ -500,11 +515,12 @@ class Expression : public std::vector<std::variant<math_atom, std::unique_ptr<Ex
         //find iterator to a first 'Rule' expression in the current expression with a specified pattern
         auto getRule(const std::string& rule) const
         {
+            if (size() <= 1)
+                return cend();
+
             const std::string ruleHead {"Rule"}; 
             //target expression root to match
-            auto begin = ++cbegin(); //skip the header of root expression
-            auto end = cend();
-            auto srch_res = std::find_if(begin, end, 
+            auto srch_res = std::find_if(++cbegin(), cend(), 
                     [&](const std::variant<math_atom, std::unique_ptr<Expression>>& var)
                     {
                         if(var.index() != 1 || std::get<std::unique_ptr<Expression>>(var)->size() != 3) return false;
@@ -571,8 +587,8 @@ Expression ParseWSTPExpression(int optc = 0)
                 break;
 
             case WSTKINT:
-                workStack.top().first -> emplace_back(long{});
-                WSGetInteger64(stdlink, &std::get<long>(std::get<math_atom>(workStack.top().first -> back())));
+                workStack.top().first -> emplace_back(std::int64_t{});
+                WSGetInteger64(stdlink, &std::get<std::int64_t>(std::get<math_atom>(workStack.top().first -> back())));
                 break;
 
             case WSTKREAL:
@@ -661,20 +677,116 @@ void deinit()
         throw std::runtime_error("Didn't find all of the return packets!");
 }
 
-extern "C" void import(const char* fileName, int optc)
+std::optional<std::vector<std::size_t>> parseSpan(const std::variant<math_atom, std::unique_ptr<Expression>>& span, const std::size_t size)
+{
+    if( span.index() == 0 )
+    {
+        auto val = std::get<std::int64_t>(std::get<0>(span));
+        if( std::abs(val) > size || val == 0 )
+        {
+            PostErrorMessage("ImportOVF", "oob", val);
+            return std::nullopt;
+        }
+
+        if( val > 0 )
+            return {{static_cast<std::size_t>(val - 1)}};
+        else
+            return {{static_cast<std::size_t>(size + val)}};
+    }
+    else
+    {
+        const auto& expr = std::get<1>(span);
+        if( expr -> testHeader("All") )
+        {
+            std::vector<std::size_t> res(size);
+            std::iota(res.begin(), res.end(), 0);
+            return std::move(res);
+        }
+        if( expr -> testHeader("List") )
+        {
+            std::vector<std::size_t> res;
+            auto begin = ++expr -> begin();
+            auto end   = expr -> end();
+            for(; begin!=end; ++begin)
+            {
+                auto val = std::get<std::int64_t>(std::get<0>(*begin));
+                if( std::abs(val) > size || val == 0 )
+                {
+                    PostErrorMessage("ImportOVF", "oob", val);
+                    return std::nullopt;
+                }
+
+                if( val > 0 )
+                    res.push_back(val - 1);
+                else
+                    res.push_back(size + val);
+            }
+            return std::move(res);
+        }
+        if( expr -> testHeader("Span") )
+        {
+            const std::size_t spanDepth = expr -> size() - 1;
+            if( spanDepth < 2 && spanDepth > 3)
+                return std::nullopt;
+            std::array<std::size_t, 3> spanSpec = {0, size-1, 1};
+            for( int i = 0; i < spanDepth; i++) 
+            {
+                if( expr -> at(i+1).index() != 0 )
+                {
+                    if(std::get<1>(expr -> at(i+1)) -> testHeader("All"))
+                        continue;
+                    else
+                    {
+                        PostErrorMessage("ImportOVF", "bspan");
+                        return std::nullopt;
+                    }
+                }
+
+                auto val = std::get<std::int64_t>(std::get<0>( expr -> at(i+1) ));
+                if( std::abs(val) > size || val == 0 )
+                {
+                    PostErrorMessage("ImportOVF", "oob", val);
+                    return std::nullopt;
+                }
+
+                if( i == 2 && val < 0 ) //negative stride is disallowed
+                {
+                    PostErrorMessage("ImportOVF", "bspan");
+                    return std::nullopt;
+                }
+
+                if( val > 0 )
+                    spanSpec[i] = val - 1;
+                else
+                    spanSpec[i] = size + val;
+            }
+            if( spanSpec[0] > spanSpec[1] )
+                return {};
+
+            std::vector<std::size_t> res{};
+            for( std::size_t i = spanSpec[0]; i <= spanSpec[1]; i += spanSpec[2] )
+                res.push_back(i);
+
+            return std::move(res);
+        }
+    }
+    return std::nullopt;
+}
+
+//file caching
+std::vector<VField::VFieldFile> ovfImportCache{};
+
+extern "C" void import(const char* fileName, int optc, int spanc)
 {
     const auto fPath { checkFileName(fileName) };
-    if(!fPath.has_value()) 
+    if(!fPath.has_value())
     {
         deinit();
         return; //all output is done by checkFileName when it cannot recover
     }
-    //next open the file finally
-    const VField::VFieldFile fileHandle(fPath.value().c_str());
-    if(!fileHandle.WorkLog().empty())
-        PostErrorMessage("ImportOVF", "prserr", fileHandle.WorkLog());
     
     //parse other parameters
+    auto Spans{ParseWSTPExpression(spanc)};
     auto OtherParams{ParseWSTPExpression(optc)};
     if( WSReady(stdlink) )
     {/*TODO implement error throw */}
@@ -683,33 +795,112 @@ extern "C" void import(const char* fileName, int optc)
     const auto sendData { ParseFlag(OtherParams, "GetData") };
     const int segment_dim {  (sendHeader.value_or(true) ? 1 : 0) +
                              (sendData.value_or(true)   ? 1 : 0)   };
+    const auto IgnoreCache { ParseFlag(OtherParams, "IgnoreCache") };
+
+    //next open the file finally
+    auto cacheEntry = std::find_if( ovfImportCache.begin(), ovfImportCache.end(), 
+            [&fPath] (const VField::VFieldFile& handle) {return handle.path() == *fPath;});
+    if( IgnoreCache.value_or(false) || cacheEntry == ovfImportCache.end() )
+    {
+        if(cacheEntry == ovfImportCache.end())
+        {
+            auto opened = VField::VFieldFile::open(*fPath);
+            if(!opened)
+            {
+                PostErrorMessage("ImportOVF", "prserr", opened.error().message);
+                deinit();
+                return;
+            }
+            ovfImportCache.push_back(std::move(*opened));
+
+            cacheEntry = --ovfImportCache.end();//last element
+        }
+        else
+        {
+            if(auto result = cacheEntry->read(*fPath); !result)
+            {
+                PostErrorMessage("ImportOVF", "prserr", result.error().message);
+                deinit();
+                return;
+            }
+        }
+    }
+
+    auto& fileHandle = *cacheEntry;
 
     //and start outputting data
-    WSPutFunction(stdlink, "List", fileHandle.cntSegments() );
-    auto begin = fileHandle.begin();
-    auto end   = fileHandle.end();
-    std::size_t seg_cnt{0};
-    for(; begin != end; ++begin)
+    if(spanc == 0)
     {
-        if(segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
-        //Output Header
-        if (sendHeader.value_or(true)) OutputHeader(begin.getHeader());
-
-        //Output Data
-        if (sendData.value_or(true)) 
+        if (fileHandle.segmentCount() != 1) WSPutFunction(stdlink, "List", fileHandle.segmentCount());
+        std::size_t seg_cnt{0};
+        auto allFields = fileHandle.fields();
+        if(!allFields)
         {
-            const auto field = *begin;
-
-            //Output data
-            if(!field.isAddressable())
-            {
-                PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
-                WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
-            }
-            else
-                OutputData(field);
+            PostErrorMessage("ImportOVF", "prserr", allFields.error().message);
+            deinit();
+            return;
         }
-        seg_cnt++;
+        for(const auto& field: *allFields)
+        {
+            if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
+            //Output Header
+            if (sendHeader.value_or(true)) OutputHeader(field.header());
+
+            //Output Data
+            if (sendData.value_or(true)) 
+            {
+                //Output data
+                if(!field.isAddressable())
+                {
+                    PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.path().string());
+                    WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+                }
+                else
+                    OutputData(field);
+            }
+            seg_cnt++;
+        }
+    }
+    else
+    {
+        const auto segments = parseSpan(Spans[1], fileHandle.segmentCount());
+        if (!segments.has_value())
+        {
+            WSPutSymbol(stdlink, "$Failed");
+            deinit();
+            return;
+        }
+
+
+        if(segments.value().size() != 1) WSPutFunction(stdlink, "List", segments.value().size());
+        for(const auto& seg: segments.value())
+        {
+            if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
+            //Output Header
+            if (sendHeader.value_or(true)) OutputHeader(fileHandle.header(seg).value().get());
+
+            //Output Data
+            if (sendData.value_or(true)) 
+            {
+                auto loaded = fileHandle.load(seg);
+                if(!loaded)
+                {
+                    PostErrorMessage("ImportOVF", "prserr", loaded.error().message);
+                    WSPutFunction(stdlink, "List", 0);
+                    continue;
+                }
+                const auto& field = loaded->get();
+
+                //Output data
+                if(!field.isAddressable())
+                {
+                    PostErrorMessage("ImportOVF", "naddr", seg, fileHandle.path().string());
+                    WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
+                }
+                else
+                    OutputData(field);
+            }
+        }
     }
 
     //clean up after ourselfs
@@ -736,7 +927,7 @@ std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
 
     //get some constants for later in compiletime
     constexpr auto T_index { isVariantMember<T, math_atom>::index };
-    constexpr auto Int_index { isVariantMember<long, math_atom>::index };
+    constexpr auto Int_index { isVariantMember<std::int64_t, math_atom>::index };
 
     //if no value was found throw empty value instead
     if(srch_res == expr.end())
@@ -750,7 +941,7 @@ std::enable_if_t<isVariantMember<T, math_atom>::value, std::optional<T>>
         return std::get<T>(val);
     //else only in one case can we succeed
     if constexpr (std::is_floating_point_v<T>)
-        if(val.index() == math_atom{long{}}.index() )
+        if(val.index() == math_atom{std::int64_t{}}.index() )
             return std::get< Int_index > (val);
 
     //else return nothing
@@ -764,6 +955,8 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
     int* dims {nullptr};
     int depth {0};
     char** headers {nullptr};
+    double* real64Data {nullptr};
+    float* real32Data {nullptr};
 
     //and create a VField header for future dumping, empty for now
     VField::VField field{}; //and import the data into it
@@ -772,58 +965,71 @@ VField::VField ParseWSTPData(std::size_t ByteSize)
         //switch is for later if I decide to add long double
         case 8:
             {
-                double* data {nullptr};
-                
-                if(WSGetReal64Array(stdlink, &data, &dims, &headers, &depth) == 0 || (depth != 2 && depth != 4))
+                if(WSGetReal64Array(stdlink, &real64Data, &dims, &headers, &depth) == 0)
                     throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+                if(depth != 2 && depth != 4)
+                {
+                    WSReleaseReal64Array(stdlink, real64Data, dims, headers, depth);
+                    throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+                }
                 std::size_t dataPts {1};
                 for(std::size_t i = 0; i < depth; i++)
                     dataPts *= dims[i];
 
-                //put data into VField
-                field.insertData(data, dataPts);
+                auto releaseWSTPData = [link = stdlink, dims, headers, depth](double* pointer) noexcept
+                { WSReleaseReal64Array(link, pointer, dims, headers, depth); };
+                std::unique_ptr<double[], decltype(releaseWSTPData)> owner{
+                    real64Data, std::move(releaseWSTPData)};
+                field.adoptData(std::move(owner), dataPts);
                 break;
             }
         default:
-            float* data {nullptr};
-            if(WSGetReal32Array(stdlink, &data, &dims, &headers, &depth) == 0 || (depth != 2 && depth != 4))
+            if(WSGetReal32Array(stdlink, &real32Data, &dims, &headers, &depth) == 0)
                 throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+            if(depth != 2 && depth != 4)
+            {
+                WSReleaseReal32Array(stdlink, real32Data, dims, headers, depth);
+                throw std::runtime_error("ParseWSTPData: Unexpected data array specifications on data link!");
+            }
             std::size_t dataPts {1};
             for(std::size_t i = 0; i < depth; i++)
                 dataPts *= dims[i];
 
-            field.insertData(data, dataPts);
+            auto releaseWSTPData = [link = stdlink, dims, headers, depth](float* pointer) noexcept
+            { WSReleaseReal32Array(link, pointer, dims, headers, depth); };
+            std::unique_ptr<float[], decltype(releaseWSTPData)> owner{
+                real32Data, std::move(releaseWSTPData)};
+            field.adoptData(std::move(owner), dataPts);
     }
-    VField::OVFHeader& head {field.Header};
+    VField::OVFHeader& head {field.header()};
     //first deduce mesh type
     if(depth == 2)
     {
-        head.setMesh(VField::OVFHeader::MeshType::irregular);
-        head.at<VField::pType::Uint>(VField::OVFParameter::Pcount) = dims[0];
+        head.setMeshType(VField::MeshType::Irregular);
+        head.set(VField::OVFParameter::Pcount, static_cast<std::size_t>(dims[0]));
         if(dims[1] > 3)
-            head.at<VField::pType::Uint>(VField::OVFParameter::Vdim) = dims[1] - 3;
+            head.set(VField::OVFParameter::Vdim, static_cast<std::size_t>(dims[1] - 3));
         //else skip
     }
     else
     {
-        head.setMesh(VField::OVFHeader::MeshType::rectangular);
+        head.setMeshType(VField::MeshType::Rectangular);
 
-        head.at<VField::pType::Uint>(VField::OVFParameter::Znodes) = dims[0];
-        head.at<VField::pType::Uint>(VField::OVFParameter::Ynodes) = dims[1];
-        head.at<VField::pType::Uint>(VField::OVFParameter::Xnodes) = dims[2];
-        head.at<VField::pType::Uint>(VField::OVFParameter::Vdim)   = dims[3];
+        head.set(VField::OVFParameter::Znodes, static_cast<std::size_t>(dims[0]));
+        head.set(VField::OVFParameter::Ynodes, static_cast<std::size_t>(dims[1]));
+        head.set(VField::OVFParameter::Xnodes, static_cast<std::size_t>(dims[2]));
+        head.set(VField::OVFParameter::Vdim, static_cast<std::size_t>(dims[3]));
     }
 
-    WSReleaseReal64Array(stdlink, nullptr, dims, headers, depth);
     return field;
 }
 
 //set a field p with a math_atom
 void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& atom)
 {
-    switch(paramIndex(p))
+    switch(paramType(p))
     {
-        case VField::pType::String:
+        case VField::ParameterType::String:
             if(atom.index() != 2)
             {
                 PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a string");
@@ -831,24 +1037,24 @@ void SetField(VField::OVFHeader& head, VField::OVFParameter p, const math_atom& 
             }
             head.set(p, std::get<std::string>(atom));
             break;
-        case VField::pType::Float:
+        case VField::ParameterType::Floating:
             if(atom.index() == 2)
             {
                 PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a numeric value");
                 return;
             }
             if(atom.index() == 0)
-                head.set(p, static_cast<VField::associatedType_t<VField::pType::Float>>(std::get<0>(atom)));
+                head.set(p, static_cast<VField::parameter_cpp_type_t<VField::ParameterType::Floating>>(std::get<0>(atom)));
             else if(atom.index() == 1)
-                head.set(p, static_cast<VField::associatedType_t<VField::pType::Float>>(std::get<1>(atom)));
+                head.set(p, static_cast<VField::parameter_cpp_type_t<VField::ParameterType::Floating>>(std::get<1>(atom)));
             break;
-        case VField::pType::Uint:
+        case VField::ParameterType::Unsigned:
             if(atom.index() != 0)
             {
                 PostErrorMessage("ExportOVF", "badexp", ParamKeys.at(p), "a integer");
                 return;
             }
-            head.set(p, static_cast<VField::associatedType_t<VField::pType::Uint>>(std::get<0>(atom)));
+            head.set(p, static_cast<VField::parameter_cpp_type_t<VField::ParameterType::Unsigned>>(std::get<0>(atom)));
             break;
 
         default:
@@ -1119,18 +1325,18 @@ void ParseWSTPHeader(const Expression& expr, VField::VField& field)
     {
         if(x.second == nullptr)
         {
-            if(!field.DeduceField(x.first, true))
+            if(!field.deduceField(x.first, true))
                 defParams.push_back(x.first);
         }
         else
-            SetField(field.Header, x.first, *x.second);
+            SetField(field.header(), x.first, *x.second);
     }
     std::size_t itCounter {0};
     while(!defParams.empty() && itCounter++ < 3)//makes up for 5 total passes
     {
         std::vector<VField::OVFParameter> left{};
         for(const auto& x: defParams)
-            if(!field.DeduceField(x, true))
+            if(!field.deduceField(x, true))
                 left.push_back(x);
         if(left.size() == defParams.size())
             break;
@@ -1144,9 +1350,10 @@ void ParseWSTPHeader(const Expression& expr, VField::VField& field)
         {
             if (it != defParams.begin())
                 col += ", ";
-            col += (ParamKeys.at(*it));
+            auto paramName = ParamKeys.find(*it);
+            col += paramName!=ParamKeys.end()? paramName->second:"Unimplemented Param";
         }
-        PostErrorMessage("ExportOVF", "dedfail", col);
+        PostErrorMessage("ExportOVF", "dedfail", "Following arguments couldn't be filled automatically:" + col);
     }
 }
 
@@ -1171,7 +1378,7 @@ extern "C" void exportOVF(const char* fName, int optc)
     //first get the options
     const auto Options { ParseWSTPExpression(optc) };
     //4 byte floats by default, but allow for double precision fields too 
-    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<long>(Options, "BinarySize").value_or(4)) };
+    const std::size_t ByteSize { static_cast<std::size_t>(ParseValue<std::int64_t>(Options, "BinarySize").value_or(4)) };
     if(ByteSize != 4 && ByteSize != 8)
         PostErrorMessage("ExportOVF", "badsize", ByteSize);
     const bool Validate { ParseFlag(Options, "Validate").value_or(false) };
@@ -1183,24 +1390,22 @@ extern "C" void exportOVF(const char* fName, int optc)
     ParseWSTPHeader( HeaderRules, field );
 
     //check if header is valid
-    if( Validate && !field.isValid() )
+    if(Validate)
     {
-        PostErrorMessage("ExportOVF", "noncomp", field.ValidationReport());
+        if(const auto validation = field.validate(); !validation)
+        {
+            PostErrorMessage("ExportOVF", "noncomp", validation.error().report);
 
-        deinit();
-        WSPutSymbol(stdlink, "$Failed");
-        return; //!
+            deinit();
+            WSPutSymbol(stdlink, "$Failed");
+            return; //!
+        }
     }
-    else
-    {
-        auto log { WriteOVF( output.c_str(), field ) };
 
-        if(!log.empty())
-            PostErrorMessage("ExportOVF", "expfail", log);
-    }
+    if(auto result = writeOVF(output, field); !result)
+        PostErrorMessage("ExportOVF", "expfail", result.error().message);
 
     //on success end by returning a 'Null'
     deinit();
     WSPutSymbol(stdlink, "Null");
 }
-

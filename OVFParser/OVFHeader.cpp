@@ -1,260 +1,210 @@
-//file for implementing interfaces of 'OVFHeader.h'
-#include"OVFDictionary.h"
-#include<map>
-#include<algorithm>
-#include<vector>
-#include<utility>
-#include<variant>
-#include<optional>
+#include "OVFHeader.h"
 
-namespace VField{
-    //a commonly used type here
-    using Field = 
-            std::variant< std::optional<associatedType_t<pType::Uint>>,
-                          std::optional<associatedType_t<pType::Float>>,
-                          std::optional<associatedType_t<pType::String>> >;
+#include <array>
+#include <limits>
+#include <stdexcept>
 
-    const std::map<OVFParameter, Field> defParameters
-    {
-        []() -> auto {
-            std::map<OVFParameter, Field> pmap {}; 
-            constexpr auto valParamList = DictionaryHelpers::makeUnion(FPParamList, UINTParamList, StringParamList);
-            for(const auto& x: valParamList)
-            {
-                switch(paramIndex(x))
-                {
-                    case(pType::Uint):
-                        pmap.emplace(x, std::optional<associatedType_t<pType::Uint>>{});
-                        break;
-                    case(pType::Float):
-                        pmap.emplace(x, std::optional<associatedType_t<pType::Float>>{});
-                        break;
-                    case(pType::String):
-                        pmap.emplace(x, std::optional<associatedType_t<pType::String>>{});
-                        break;
-                    case(pType::Other):
-                        //hope it never reaches here :p
-                        break;
-                }
-            }
-            return pmap;
-        }()
-    };
+#include "OVFDictionary.h"
 
-    struct OVFHeader::HeaderData
-    {
-        //internal storage of variables
-        std::map<OVFParameter, Field> ParameterFields = defParameters ;
-        //mesh type
-        std::optional<MeshType> meshType{};
-        //last check results
-        bool isChecked{false};
-        bool isValid{false};
-        std::string ValidationReport{};
+namespace VField {
+    namespace {
+        constexpr std::size_t parameterCount =
+            static_cast<std::size_t>(OVFParameter::Invalid) + 1;
 
-        //does nothing, but just to insure that there is c-tor
-        HeaderData() = default;
-        HeaderData(const HeaderData&) = default;
-        //method to reset all fields
-        void reset()
+        constexpr bool isDeclaredParameter(OVFParameter parameter) noexcept
         {
-            meshType.reset();
-            for(auto& x: ParameterFields)
-                switch(paramIndex(x.first))
-                {
-                    case(pType::Uint):
-                        std::get<std::optional<associatedType_t<pType::Uint>>>(x.second).reset();
-                        break;
-                    case(pType::Float):
-                        std::get<std::optional<associatedType_t<pType::Float>>>(x.second).reset();
-                        break;
-                    case(pType::String):
-                        std::get<std::optional<associatedType_t<pType::String>>>(x.second).reset();
-                        break;
-                    case(pType::Other):
-                        break;
-                }
+            return static_cast<std::size_t>(parameter) < parameterCount;
         }
+
+        constexpr std::size_t parameterIndex(OVFParameter parameter) noexcept
+        { return static_cast<std::size_t>(parameter); }
+
+        HeaderAccessError missingParameter(
+            OVFParameter parameter, ParameterType expected) noexcept
+        {
+            return {parameter, HeaderAccessErrorCode::MissingParameter, expected};
+        }
+
+        HeaderAccessError unsupportedParameter(OVFParameter parameter) noexcept
+        {
+            return {parameter, HeaderAccessErrorCode::UnsupportedParameter};
+        }
+    }
+
+    struct OVFHeader::HeaderData {
+        std::array<std::optional<ParameterValue>, parameterCount> values{};
+        OVFVersion parsedVersion{OVFVersion::Unknown};
     };
 
-    //comparison implementation
-    bool OVFHeader::operator==(const OVFHeader& ref) const noexcept
-    {
-        if(data -> meshType != ref.data -> meshType)
-            return false;
-        return data -> ParameterFields == ref.data -> ParameterFields;
-    }
+    OVFHeader::OVFHeader(): OVFHeader(OVFVersion::OVF2) {}
 
-    //validation stuff
-    //Implemented in OVFGrammar.cpp!
-    extern std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref);
-    //and interfaces declared
-    bool OVFHeader::validate()
-    {
-        if(data->isChecked)
-            return data->isValid;
-        //else do a legit check
-        const auto result = ValidateHeader(*this);
-        data->isValid = std::get<0>(result);
-        data->ValidationReport = std::get<1>(result);
-        data->isChecked = true;
-        return data->isValid;
-    }
-    const associatedType_t<pType::String> OVFHeader::ValidationReport()
-    {
-        if(!data->isChecked)
-            validate();
-        return data->ValidationReport;
-    }
+    OVFHeader::OVFHeader(OVFVersion revision): data_(std::make_unique<HeaderData>())
+    { setVersion(revision); }
 
-    //Header storage default c-tor
-    OVFHeader::OVFHeader()
-    {
-        data = new HeaderData();
-    }
-    //d-tor
-    OVFHeader::~OVFHeader() noexcept
-    {
-        delete data;
-    }
-    //copy c-tor
-    OVFHeader::OVFHeader(const OVFHeader& ref)
-    {
-        data = new HeaderData();
-        *data = *(ref.data);
-    }
-    OVFHeader& OVFHeader::operator= (const OVFHeader& ref)
-    {
-        auto data_copy = new HeaderData(*ref.data);
-        std::swap(data, data_copy);
-        delete data_copy;
+    OVFHeader::OVFHeader(std::string_view signature):
+      data_(std::make_unique<HeaderData>())
+    { set(OVFParameter::VersionString, signature); }
 
+    OVFHeader::~OVFHeader() noexcept = default;
+    OVFHeader::OVFHeader(OVFHeader&&) noexcept = default;
+    OVFHeader& OVFHeader::operator=(OVFHeader&&) noexcept = default;
+
+    OVFHeader::OVFHeader(const OVFHeader& other):
+      data_(std::make_unique<HeaderData>(*other.data_)) {}
+
+    OVFHeader& OVFHeader::operator=(const OVFHeader& other)
+    {
+        if(this != &other)
+            *data_ = *other.data_;
         return *this;
     }
-    //parameter type checker, courtesy of constexpr magic in the dictionary
-    pType OVFHeader::paramType ( OVFParameter p) noexcept
-    { return paramIndex(p); }
-    //setters
-    void OVFHeader::set(OVFParameter param, const associatedType_t<pType::String>& val)
+
+    bool OVFHeader::operator==(const OVFHeader& other) const noexcept
+    { return data_->values == other.data_->values; }
+
+    bool OVFHeader::contains(OVFParameter parameter) const noexcept
     {
-        std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[param]) = val;
-        data->isChecked = false;
-    }
-    void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Uint>& val)
-    {
-        if(paramIndex(param) == pType::Float)
-            set(param, static_cast<associatedType_t<pType::Float>>(val));
-        std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[param]) = val;
-        data->isChecked = false;
-    }
-    void OVFHeader::set(OVFParameter param, const associatedType_t<pType::Float>& val)
-    {
-        std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[param]) = val;
-        data->isChecked = false;
-    }
-    //check if a given field is set
-    bool OVFHeader::isSet(OVFParameter refP) const noexcept
-    {
-        switch(paramIndex(refP))
-        {
-            case(pType::String):
-                return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[refP]) != std::nullopt;
-            case(pType::Uint):
-                return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[refP]) != std::nullopt;
-            case(pType::Float):
-                return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[refP]) != std::nullopt;
-            case(pType::Other):
-                if(refP == OVFParameter::Mtype)
-                    return data->meshType != std::nullopt;
-            default:
-                return false;
-        }
-        //just to silence the compiler
-        //lambs are silent now
-        return false;
-    }
-    //getters
-    const associatedType_t<pType::String>& OVFHeader::getString(OVFParameter param) const &
-    {
-        return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[param]).value();
-    }
-    const associatedType_t<pType::Uint>& OVFHeader::getUint(OVFParameter param) const &
-    {
-        return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[param]).value();
-    }
-    const associatedType_t<pType::Float>& OVFHeader::getFloat(OVFParameter param) const &
-    {
-        return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[param]).value();
+        return isDeclaredParameter(parameter) &&
+            data_->values[parameterIndex(parameter)].has_value();
     }
 
-    //mesh type functions
-    OVFHeader::MeshType OVFHeader::getMeshType() const noexcept
+    HeaderValueResult<ParameterValue>
+      OVFHeader::lookup(OVFParameter parameter) const noexcept
     {
-        return data->meshType.value();
+        if(!isDeclaredParameter(parameter) ||
+           parameterDescriptor(parameter).type == ParameterType::Other)
+            return std::unexpected(unsupportedParameter(parameter));
+        if(!contains(parameter))
+            return std::unexpected(missingParameter(
+                parameter, parameterDescriptor(parameter).type));
+        return std::cref(*data_->values[parameterIndex(parameter)]);
     }
-    void OVFHeader::setMesh(MeshType ref) noexcept
-    {
-        data->meshType = ref;
-        //invalidating a checked status
-        data->isChecked = false;
-    }
-    //reset function
-    void OVFHeader::reset()
-    {data->reset();data->isChecked = false;};
 
-    //unset a parameter
-    void OVFHeader::unset(OVFParameter p) noexcept
+    void OVFHeader::set(OVFParameter parameter, ParameterValue value)
     {
-        switch(paramIndex(p))
-        {
-            case(pType::Float):
-                std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).reset();
-                data->isChecked = false;
-                break;
-            case(pType::Uint):
-                std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[p]).reset();
-                data->isChecked = false;
-                break;
-            case(pType::String):
-                std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[p]).reset();
-                data->isChecked = false;
-                break;
-            case(pType::Other):
-                if(p == OVFParameter::Mtype)
-                {
-                    data->meshType.reset();
-                    data->isChecked = false;
-                    break;
-                }
-        }
-    }
-    //interfaces through bracket operator
-    template<> associatedType_t<pType::Uint>& OVFHeader::at<pType::Uint> (OVFParameter p) & 
-    {
-        if(!isSet(p))
-        {
-            associatedType_t<pType::Uint> defValue{};
-            set(p, defValue);
-        }
-        return std::get<std::optional<associatedType_t<pType::Uint>>>(data->ParameterFields[p]).value();
-    }
-    template<> associatedType_t<pType::Float>& OVFHeader::at<pType::Float> (OVFParameter p) &
-    {
-        if(!isSet(p))
-        {
-            associatedType_t<pType::Float> defValue{};
-            set(p, defValue);
-        }
-        return std::get<std::optional<associatedType_t<pType::Float>>>(data->ParameterFields[p]).value();
-    }
-    template<> associatedType_t<pType::String>& OVFHeader::at<pType::String> (OVFParameter p) &
-    {
-        if(!isSet(p))
-        {
-            associatedType_t<pType::String> defValue{};
-            set(p, defValue);
-        }
-        return std::get<std::optional<associatedType_t<pType::String>>>(data->ParameterFields[p]).value();
-    }
-}
+        if(!isDeclaredParameter(parameter))
+            throw std::invalid_argument("Cannot set an undeclared OVF parameter");
 
+        const auto expected = parameterDescriptor(parameter).type;
+        if(expected == ParameterType::Other)
+            throw std::invalid_argument("Cannot assign a value to an OVF service parameter");
+
+        const auto actual = parameterTypeOf(value);
+        if(expected != actual)
+            throw std::invalid_argument("OVF parameter value has the wrong runtime type");
+
+        if(parameter == OVFParameter::VersionString)
+            data_->parsedVersion = matchVersionString(std::get<std::string>(value));
+        data_->values[parameterIndex(parameter)] = std::move(value);
+    }
+
+    void OVFHeader::set(OVFParameter parameter, std::string_view value)
+    { set(parameter, ParameterValue{std::in_place_type<std::string>, value}); }
+
+    void OVFHeader::set(OVFParameter parameter, const char* value)
+    { set(parameter, std::string_view{value}); }
+
+    void OVFHeader::set(OVFParameter parameter, const std::string& value)
+    { set(parameter, ParameterValue{value}); }
+
+    void OVFHeader::set(OVFParameter parameter, std::string&& value)
+    { set(parameter, ParameterValue{std::move(value)}); }
+
+    void OVFHeader::set(OVFParameter parameter, std::size_t value)
+    {
+        if(isDeclaredParameter(parameter) &&
+           parameterDescriptor(parameter).type == ParameterType::Floating)
+            set(parameter, ParameterValue{static_cast<double>(value)});
+        else
+            set(parameter, ParameterValue{value});
+    }
+
+    void OVFHeader::set(OVFParameter parameter, double value)
+    { set(parameter, ParameterValue{value}); }
+
+    void OVFHeader::set(OVFParameter parameter, MeshType value)
+    { set(parameter, ParameterValue{value}); }
+
+    void OVFHeader::clear(OVFParameter parameter) noexcept
+    {
+        if(!isDeclaredParameter(parameter))
+            return;
+        data_->values[parameterIndex(parameter)].reset();
+        if(parameter == OVFParameter::VersionString)
+            data_->parsedVersion = OVFVersion::Unknown;
+    }
+
+    OVFVersion OVFHeader::version() const noexcept
+    { return data_->parsedVersion; }
+
+    void OVFHeader::setVersion(OVFVersion revision)
+    { set(OVFParameter::VersionString, canonicalVersionString(revision)); }
+
+    std::optional<MeshType> OVFHeader::meshType() const noexcept
+    {
+        auto result = lookupAs<MeshType>(OVFParameter::Mtype);
+        if(!result)
+            return std::nullopt;
+        return result->get();
+    }
+
+    void OVFHeader::setMeshType(MeshType type)
+    { set(OVFParameter::Mtype, type); }
+
+    void OVFHeader::clearMeshType() noexcept
+    { clear(OVFParameter::Mtype); }
+
+    void OVFHeader::reset(OVFVersion revision)
+    {
+        data_->values.fill(std::nullopt);
+        data_->parsedVersion = OVFVersion::Unknown;
+        setVersion(revision);
+    }
+
+    extern ValidationResult ValidateHeader(const OVFHeader& header);
+    ValidationResult OVFHeader::validate() const
+    { return ValidateHeader(*this); }
+
+    std::optional<std::size_t> OVFHeader::pointDimension() const noexcept
+    {
+        const auto mesh = meshType();
+        if(version() == OVFVersion::Unknown || !mesh)
+            return std::nullopt;
+        if(version() != OVFVersion::OVF2)
+            return *mesh == MeshType::Rectangular ? 3 : 6;
+
+        auto dimension = lookupAs<std::size_t>(OVFParameter::Vdim);
+        if(!dimension || dimension->get() == 0)
+            return std::nullopt;
+        if(*mesh == MeshType::Rectangular)
+            return dimension->get();
+        if(dimension->get() > std::numeric_limits<std::size_t>::max() - 3)
+            return std::nullopt;
+        return dimension->get() + 3;
+    }
+
+    std::optional<std::size_t> OVFHeader::pointCount() const noexcept
+    {
+        const auto mesh = meshType();
+        if(version() == OVFVersion::Unknown || !mesh)
+            return std::nullopt;
+        if(*mesh == MeshType::Irregular) {
+            auto count = lookupAs<std::size_t>(OVFParameter::Pcount);
+            if(!count || count->get() == 0)
+                return std::nullopt;
+            return count->get();
+        }
+
+        auto x = lookupAs<std::size_t>(OVFParameter::Xnodes);
+        auto y = lookupAs<std::size_t>(OVFParameter::Ynodes);
+        auto z = lookupAs<std::size_t>(OVFParameter::Znodes);
+        if(!x || !y || !z || x->get() == 0 || y->get() == 0 || z->get() == 0)
+            return std::nullopt;
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        if(x->get() > maximum / y->get() ||
+           x->get() * y->get() > maximum / z->get())
+            return std::nullopt;
+        return x->get() * y->get() * z->get();
+    }
+
+} // namespace VField

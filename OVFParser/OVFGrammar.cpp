@@ -1,11 +1,14 @@
 //validation stuff for OVFs
+#include <algorithm>
 #include<regex>
 #include<map>
+#include <type_traits>
 #include<vector>
 #include<cmath>
+#include<format>
+#include<limits>
 #include"OVFDictionary.h"
 #include"VField.h"
-#include"OVFVersion.h"
 
 namespace VField{
     //shared flags
@@ -32,28 +35,33 @@ namespace VField{
         return count;
     }
     
+    ValidationResult failure(std::string report, std::vector<OVFParameter> parameters)
+    {
+        return std::unexpected(ValidationError{std::move(report), std::move(parameters)});
+    }
+
     //and then version rulesets
-    using validator = std::tuple<bool, std::string, std::vector<OVFParameter>> (*)(const OVFHeader&);
+    using validator = ValidationResult (*)(const OVFHeader&);
     //and a method to check if grid is defined
-    std::tuple<bool, std::string, std::vector<OVFParameter>> isGridDefined(const OVFHeader& ref)
+    ValidationResult isGridDefined(const OVFHeader& ref)
     {
         const std::string prefix = "Checking if grid was defined: ";
         std::vector<OVFParameter> problemParams{};
-        
-        if(!ref.isSet(OVFParameter::Mtype))
-            return {false, prefix+"Mesh type was not defined!", {OVFParameter::Mtype}};
-        
-        if(ref.getMeshType() == OVFHeader::MeshType::irregular)
+
+        if(!ref.contains(OVFParameter::Mtype))
+            return failure(std::format("{}Mesh type was not defined!", prefix), {OVFParameter::Mtype});
+
+        if(ref.meshType() == MeshType::Irregular)
         {
-            if(!ref.isSet(OVFParameter::Pcount))
-                return {false, prefix+"In a file with with irregular mesh point count was not specified", {OVFParameter::Pcount}};
-            if(ref.getUint(OVFParameter::Pcount) <= 0)
-                return {false, prefix+"Non-positive point count was specified for a irregular mesh", {OVFParameter::Pcount}};
-            return {true, prefix + "SUCCESS", problemParams};
+            if(!ref.contains(OVFParameter::Pcount))
+                return failure(std::format("{}In a file with irregular mesh point count was not specified", prefix), {OVFParameter::Pcount});
+            if(ref.requireAs<std::size_t>(OVFParameter::Pcount) <= 0)
+                return failure(std::format("{}Non-positive point count was specified for an irregular mesh", prefix), {OVFParameter::Pcount});
+            return {};
         }
         
         //next check is for regular mesh parameters only
-        const auto rectGridParameters = DictionaryHelpers::make_array(
+        const auto rectGridParameters = std::array{
             OVFParameter::Xbase,
             OVFParameter::Ybase,
             OVFParameter::Zbase,
@@ -63,36 +71,35 @@ namespace VField{
             OVFParameter::Xnodes,
             OVFParameter::Ynodes,
             OVFParameter::Znodes
-        );
+        };
         
         for(const auto& x: rectGridParameters)
         {
-            if(!ref.isSet(x))
+            if(!ref.contains(x))
                 problemParams.push_back(x);
         }
-        if(!ref.isSet(OVFParameter::VersionString))
+        if(!ref.contains(OVFParameter::VersionString))
             problemParams.push_back(OVFParameter::VersionString);
         else
         {
-            if(matchVersionString(ref.at<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF2)
-                if(!ref.isSet(OVFParameter::Vdim))
+            if(ref.version() == OVFVersion::OVF2)
+                if(!ref.contains(OVFParameter::Vdim))
                     problemParams.push_back(OVFParameter::Vdim);
         }
         
         if(problemParams.size() == 0)
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         
         //else form error message
-        std::string errMessage{prefix + "Following required parameters to define rectangular grid were not found:"};
+        std::string errMessage{std::format("{}Following required parameters to define rectangular grid were not found:", prefix)};
         for(const auto& x: problemParams)
         {
-            errMessage += "\n\t";
-            errMessage += ParameterName(x);
+            std::format_to(std::back_inserter(errMessage), "\n\t{}", paramName(x));
         }
-        return {false, errMessage, problemParams};
+        return failure(std::move(errMessage), std::move(problemParams));
     }
     //checking if strings are single line
-    std::tuple<bool, std::string, std::vector<OVFParameter>> CheckStrings(const OVFHeader& ref)
+    ValidationResult CheckStrings(const OVFHeader& ref)
     {
         std::string log = "Checking if string parameters are compliant: ";
         std::vector<OVFParameter> faultyStrings{};
@@ -100,102 +107,100 @@ namespace VField{
         {
             if(x == OVFParameter::Desc) //skip the only parameter allowed to have multiple lines
                 continue;
-            if(!ref.isSet(x))           //ditto if parameter was not set == nothing to check
+            if(!ref.contains(x))           //ditto if parameter was not set == nothing to check
                 continue;
-            const auto& param = ref.at<pType::String>(x);
+            const auto& param = ref.requireAs<std::string>(x);
             if(param.find('\n') != std::string::npos)
                 faultyStrings.push_back(x);
         }
         if(faultyStrings.empty())
-            return {true, log + "SUCCESS", faultyStrings};
+            return {};
 
-        log +=  "\nThe following string parameters have a newline in them: ";
+        log = std::format("{}\nThe following string parameters have a newline in them:", log);
         for(const auto& x: faultyStrings)
         {
-            log += "\n";
-            log += ParameterName(x);
+            std::format_to(std::back_inserter(log), "\n{}", paramName(x));
         }
-        return { false, log, faultyStrings };
+        return failure(std::move(log), std::move(faultyStrings));
     }
     //checking physical constrains, i.e. if values are sane
-    std::tuple<bool, std::string, std::vector<OVFParameter>> checkPhysicalConstraints(const OVFHeader& ref)
+    ValidationResult checkPhysicalConstraints(const OVFHeader& ref)
     {
         const std::string prefix = "Checking a sanity of physical values: ";
         std::vector<OVFParameter> problemParams{};
         std::vector<std::string> problems {};
         //TODO: check into nuking 2 reduntant checks here, those are done before ruleset is called in order to get the version
-        if(!ref.isSet(OVFParameter::VersionString))
-            return{false, prefix+"\n\tVersion string was not set", {OVFParameter::VersionString}};
+        if(!ref.contains(OVFParameter::VersionString))
+            return failure(std::format("{}\n\tVersion string was not set", prefix), {OVFParameter::VersionString});
         //nothing to check for OVF v0.0
-        if(matchVersionString(ref.at<pType::String>(OVFParameter::VersionString)) == OVFVersion::OVF0)
-            return {true, prefix + "SUCCESS", {}};
+        if(ref.version() == OVFVersion::OVF0)
+            return {};
         //otherwise checking all the parameters
         //first check is for parameters being limited
-        if constexpr(std::numeric_limits<associatedType<pType::Float>>::has_infinity ||
-                     std::numeric_limits<associatedType<pType::Float>>::has_quiet_NaN )
+        if constexpr(std::numeric_limits<parameter_cpp_type_t<ParameterType::Floating>>::has_infinity ||
+                     std::numeric_limits<parameter_cpp_type_t<ParameterType::Floating>>::has_quiet_NaN )
         {
             for(const auto& x: FPParamList)
-                if(ref.isSet(x))
+                if(ref.contains(x))
                 {
-                    auto val = ref.getFloat(x);
+                    auto val = ref.requireAs<double>(x);
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + ParameterName(x) + "' = " +
-                        std::to_string(val) + "\n");
+                        problems.push_back(std::format("Encountered a non-finite value '{}' = {}\n", paramName(x), val));
                     }
                 }
         }
-        if constexpr(std::numeric_limits<associatedType<pType::Uint>>::has_infinity ||
-                     std::numeric_limits<associatedType<pType::Uint>>::has_quiet_NaN )
+        if constexpr(std::numeric_limits<parameter_cpp_type_t<ParameterType::Unsigned>>::has_infinity ||
+                     std::numeric_limits<parameter_cpp_type_t<ParameterType::Unsigned>>::has_quiet_NaN )
         {
             for(const auto& x: UINTParamList)
-                if(ref.isSet(x))
+                if(ref.contains(x))
                 {
-                    auto val = ref.getFloat(x);
+                    auto val = ref.requireAs<double>(x);
                     if(!std::isfinite(val))
                     {
                         problemParams.push_back(x);
-                        problems.push_back(std::string("Encountered a non-finite value '") + ParameterName(x) + "' = " +
-                        std::to_string(val) + "\n");
+                        problems.push_back(std::format("Encountered a non-finite value '{}' = {}\n", paramName(x), val));
                     }
                 }
         }
         auto gridProblems = isGridDefined(ref);
-        if( std::get<0>(gridProblems) )
+        if(!gridProblems)
         {
             problems.push_back("Grid parameters were not defined!!");
-            for(const auto& x: std::get<2>(gridProblems))
+            for(const auto& x: gridProblems.error().parameters)
                 problemParams.push_back(x);
         }
         else 
         {
-            constexpr auto posDefined = DictionaryHelpers::make_array(
+            constexpr auto posDefined = std::array{
                 OVFParameter::Xnodes,
                 OVFParameter::Ynodes,
                 OVFParameter::Znodes,
                 OVFParameter::Xstep,
                 OVFParameter::Ystep,
-                OVFParameter::Zstep);
-            static_assert(!DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::makeUnion(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
+                OVFParameter::Zstep
+            };
+            static_assert(DictionaryHelpers::isSubset(posDefined, DictionaryHelpers::makeUnion(FPParamList, UINTParamList)), "Only floating point and UINT params are allowed");
             //check if required params are positively defined
             for(const auto& x: posDefined)
             {
-                if(paramIndex(x) == pType::Uint)
+                if(paramType(x) == ParameterType::Unsigned)
                 {
-                    auto val = ref.getUint(x);
+                    auto val = ref.requireAs<std::size_t>(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + ParameterName(x) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::format("The value '{}' = {}, was not positively defined!", paramName(x), val));
                         problemParams.push_back(x);
                     }
                 }
-                else if(paramIndex(x) == pType::Float)
+                else if(paramType(x) == ParameterType::Floating)
                 {
-                    auto val = ref.getFloat(x);
+                    auto val = ref.requireAs<double>(x);
                     if(val <= 0)
                     {
-                        problems.push_back(std::string("The value '") + ParameterName(x) + "' =" + std::to_string(val) + ", was not positively defined!");
+                        problems.push_back(std::format("The value '{}' = {}, was not positively defined!", paramName(x), val));
                         problemParams.push_back(x);
                     }
                 }
@@ -203,7 +208,7 @@ namespace VField{
         }
         
         if(problems.size() == 0)
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         
         std::string accum { prefix};
         for(const auto& x: problems)
@@ -212,19 +217,19 @@ namespace VField{
             accum += x;
         }
         
-        return {false, accum, problemParams};
+        return failure(std::move(accum), std::move(problemParams));
     }
     
     //nothing is disallowed lol
     const auto OVF0Rules = std::vector<validator> {};
     //then rules for OVF1
     const auto OVF1Rules = std::vector<validator>{
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if all required fields were filled: ";
             std::vector<OVFParameter> problemParams{};
             //check if all required field are present
-            const auto RequiredParameters = DictionaryHelpers::make_array(
+            const auto RequiredParameters = std::array {
                 OVFParameter::Title,
                 OVFParameter::Munit,
                 OVFParameter::Vunit,
@@ -235,56 +240,53 @@ namespace VField{
                 OVFParameter::Ymax,
                 OVFParameter::Zmin,
                 OVFParameter::Zmax
-            );
+            };
             for(const auto& x: RequiredParameters)
-                if(!ref.isSet(x))
+                if(!ref.contains(x))
                     problemParams.push_back(x);
                 
             if(problemParams.size() == 0)
-                return {true, prefix + "SUCCESS", {}};
+                return {};
             
             //else form error message
             std::string errMessage{"Following required parameters(for OVF 1.0) were not found:"};
             for(const auto& x: problemParams)
             {
-                errMessage += "\n\t";
-                errMessage += ParameterName(x) ;
+                std::format_to(std::back_inserter(errMessage), "\n\t{}", paramName(x));
             }
-            return {false, errMessage, problemParams};
+            return failure(std::move(errMessage), std::move(problemParams));
         },
         CheckStrings,
         //check if grid is defined
         isGridDefined,
         //check that the boundary list, if present, is a list of tripples of points
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>> 
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if 'boundarylist' is ill-formed:\n";
-            if(!ref.isSet(OVFParameter::Bound))
-                return {true, prefix + "SUCCESS", {}}; //nothing to check
+            if(!ref.contains(OVFParameter::Bound))
+                return {}; //nothing to check
             //get the boundary vertex list
-            const std::string boundaryList { ref.at<pType::String>(OVFParameter::Bound)};
+            const std::string boundaryList { ref.requireAs<std::string>(OVFParameter::Bound)};
             //count how many tokens there are, validating if they are convertible to double
             auto cnt = countTokens(boundaryList, [](const std::string& ref){try{std::stod(ref);}catch(const std::logic_error&){return false;} return true;});
             if( cnt == 0)
-                return{false, prefix + "A string in 'boundarylist' contains invalid tokens: \n\t" + boundaryList, {OVFParameter::Bound}};
+                return failure(std::format("{}A string in 'boundarylist' contains invalid tokens: \n\t{}", prefix, boundaryList), {OVFParameter::Bound});
             if( cnt % 3 != 0)
-                return{false, prefix + "Bounding box vortex list should have tripplets of coordinates, " + std::to_string(cnt) + 
-                    " values were read in 'boundarylist': \n\t" + boundaryList, {OVFParameter::Bound}};
+                return failure(std::format("{}Bounding box vortex list should have triplets of coordinates, {} values were read in 'boundarylist': \n\t{}", prefix, cnt, boundaryList), {OVFParameter::Bound});
             if( cnt < 12 )
-                return{false, prefix + "Not enough points to set a bounding volume, at least 4 vertices needed, got" + std::to_string(cnt/3) + 
-                    " vortexes in 'boundarylist': \n\t" + boundaryList, {OVFParameter::Bound}};
+                return failure(std::format("{}Not enough points to set a bounding volume; at least 4 vertices are needed, got {} vertices in 'boundarylist': \n\t{}", prefix, cnt / 3, boundaryList), {OVFParameter::Bound});
             
-            return {true, prefix + "SUCCESS", {}};
+            return {};
         }
         //TODO: implement checking for version string having same mesh type specified!
     };
     //then rules for OVF2
     const auto OVF2Rules = std::vector<validator>{
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>> 
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if all required fields were filled: ";
             //check if all required field are present
-            const auto RequiredParameters = DictionaryHelpers::make_array(
+            const auto RequiredParameters = std::array{
                 OVFParameter::Title,
                 OVFParameter::Munit,
                 OVFParameter::Vdim,
@@ -296,53 +298,52 @@ namespace VField{
                 OVFParameter::Ymax,
                 OVFParameter::Zmin,
                 OVFParameter::Zmax
-            );
+            };
             std::vector<OVFParameter> missingList{};
             for(const auto& x: RequiredParameters)
-                if(!ref.isSet(x))
+                if(!ref.contains(x))
                     missingList.push_back(x);
                 
             if(missingList.size() == 0)
-                return {true, prefix + "SUCCESS", {}};
+                return {};
             
             //else form error message
             std::string errMessage{"Following required parameters(for OVF 2.0) were not found:"};
             for(const auto& x: missingList)
             {
-                errMessage += "\n\t";
-                errMessage += ParameterName(x) ;
+                std::format_to(std::back_inserter(errMessage), "\n\t{}", paramName(x));
             }
-            return {false, errMessage, missingList};
+            return failure(std::move(errMessage), std::move(missingList));
         },
         CheckStrings,
         isGridDefined,
         //check if value units has correct number of tokens
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if 'valueunits' are ill-formed:\n";
             //should not reach here normally
-            if(!ref.isSet(OVFParameter::Vunit))
-                return {false, prefix + "Value units are not set yet", {OVFParameter::Vunit}};
-            if(!ref.isSet(OVFParameter::Vdim))
-                return {false, prefix + "Value dimensions are not set yet", {OVFParameter::Vdim}};
+            if(!ref.contains(OVFParameter::Vunit))
+                return failure(std::format("{}Value units are not set yet", prefix), {OVFParameter::Vunit});
+            if(!ref.contains(OVFParameter::Vdim))
+                return failure(std::format("{}Value dimensions are not set yet", prefix), {OVFParameter::Vdim});
             std::size_t num {0};
-            if((num = countTokens(ref.at<pType::String>(OVFParameter::Vunit))) != ref.at<pType::Uint>(OVFParameter::Vdim) && num != 1)
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit), {OVFParameter::Vunit}};
-            return {true, prefix + "SUCCESS", {}};
+            if((num = countTokens(ref.requireAs<std::string>(OVFParameter::Vunit))) != ref.requireAs<std::size_t>(OVFParameter::Vdim) && num != 1)
+                return failure(std::format("{}Unexpected number of tokens: {} while parsing value units:\n\t{}", prefix, num, ref.requireAs<std::string>(OVFParameter::Vunit)), {OVFParameter::Vunit});
+            return {};
         },
         //check if value labels has correct number of tokens
-        [](const OVFHeader& ref) -> std::tuple<bool, std::string, std::vector<OVFParameter>>
+        [](const OVFHeader& ref) -> ValidationResult
         {
             const std::string prefix = "Checking if 'valuelabels' is ill-formed: ";
             //should not reach here normally
-            if(!ref.isSet(OVFParameter::Vlabels))
-                return {false, prefix + "Value labels are not set yet\n", {OVFParameter::Vlabels}};
-            if(!ref.isSet(OVFParameter::Vdim))
-                return {false, prefix + "Value dimensions are not set yet\n", {OVFParameter::Vdim}};
-            std::size_t num {countTokens(ref.at<pType::String>(OVFParameter::Vlabels))};
-            if(num != 1 && num != ref.at<pType::Uint>(OVFParameter::Vdim))
-                return {false, prefix + "Unexpected number of tokens: " + std::to_string(num) + " in parsing value labels: \n\t" + ref.at<pType::String>(OVFParameter::Vunit) + "\n", {OVFParameter::Vlabels}};
-            return {true, prefix + "SUCCESS\n", {}};
+            if(!ref.contains(OVFParameter::Vlabels))
+                return failure(std::format("{}Value labels are not set yet", prefix), {OVFParameter::Vlabels});
+            if(!ref.contains(OVFParameter::Vdim))
+                return failure(std::format("{}Value dimensions are not set yet", prefix), {OVFParameter::Vdim});
+            std::size_t num {countTokens(ref.requireAs<std::string>(OVFParameter::Vlabels))};
+            if(num != 1 && num != ref.requireAs<std::size_t>(OVFParameter::Vdim))
+                return failure(std::format("{}Unexpected number of tokens: {} while parsing value labels:\n\t{}", prefix, num, ref.requireAs<std::string>(OVFParameter::Vlabels)), {OVFParameter::Vlabels});
+            return {};
         }
     };
     //OMEGA map for rulesets
@@ -353,19 +354,16 @@ namespace VField{
     };
     
     //count expected number of points
-    std::size_t expectedValueCount(const OVFHeader& ref)
+    std::optional<std::size_t> expectedValueCount(const OVFHeader& ref)
     {
-        if(!std::get<0>(isGridDefined(ref)))
-            return 0u;
-        auto version = matchVersionString(ref.at<pType::String>(OVFParameter::VersionString));
-        if(version == OVFVersion::OVF0)
-            return 0u;
-        std::size_t dimensionality = ((ref.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
-                                     ((version == OVFVersion::OVF2) ? ref.getUint(OVFParameter::Vdim) : 3);
-        if(ref.getMeshType() == OVFHeader::MeshType::irregular)
-            return dimensionality * ref.getUint(OVFParameter::Pcount);
-        else
-            return dimensionality * ref.getUint(OVFParameter::Xnodes) * ref.getUint(OVFParameter::Ynodes) * ref.getUint(OVFParameter::Znodes);
+        if(ref.version() == OVFVersion::OVF0)
+            return std::nullopt;
+        const auto dimension = ref.pointDimension();
+        const auto points = ref.pointCount();
+        if(!dimension || !points ||
+           *points > std::numeric_limits<std::size_t>::max() / *dimension)
+            return std::nullopt;
+        return *dimension * *points;
     }
     
     //appending and adding unique elements
@@ -389,42 +387,44 @@ namespace VField{
                 u.push_back(x);
     }
     //full header validator
-    std::tuple<bool, std::string, std::vector<OVFParameter>> ValidateHeader(const OVFHeader& ref)
+    ValidationResult ValidateHeader(const OVFHeader& ref)
     {
-        bool valid {true};
-        std::string log{"Checking the header of a file:"};
+        std::string report;
         std::vector<OVFParameter> problematicVars {};
-        if(!ref.isSet(OVFParameter::VersionString))
-            return{ false, log + " version string was not set, aborting!", {OVFParameter::VersionString}};
+        if(!ref.contains(OVFParameter::VersionString))
+            return failure("Header version string was not set, aborting!", {OVFParameter::VersionString});
         //else execute the correct ruleset
-        const auto version = matchVersionString(ref.at<pType::String>(OVFParameter::VersionString));
+        const auto version = ref.version();
         if(Ruleset.find(version) == Ruleset.end())
-            return{ false, log + " version reported does not have a ruleset implemented!", {OVFParameter::VersionString}};
+            return failure("Header version does not have a ruleset implemented!", {OVFParameter::VersionString});
         //otherwise it is safe to execute ruleset
         const auto& rules = Ruleset.at(version);
         for(const auto& rule: rules)
         {
-            auto checkResult = rule(ref);
-            valid &= std::get<0>(checkResult);
-            log = log + '\n' + std::get<1>(checkResult);
-            //no need to check for uniqueness before, initial array satisfies it by being empty
-            appendUnique(problematicVars, std::get<2>(checkResult));
+            if(auto checkResult = rule(ref); !checkResult)
+            {
+                std::format_to(std::back_inserter(report), "{}{}",
+                               report.empty() ? "" : "\n", checkResult.error().report);
+                appendUnique(problematicVars, checkResult.error().parameters);
+            }
         }
         //TODO: add verification that header has the same mesh type as file title for OVF1!
-        return{ valid, log, problematicVars};
+        if(report.empty())
+            return {};
+        return failure(std::move(report), std::move(problematicVars));
     }
     
     //method telling if current data is isAddressable, i.e. if data structure within array is known
     bool VField::isAddressable() const noexcept
     {
         //if it is impossible to calculate number of values we already are in a bust
-        const auto expected = expectedValueCount(Header);
-        if(expected == 0)
+        const auto expected = expectedValueCount(header_);
+        if(!expected)
             return false;
         //else check if expected value count is consistent with internal array
-        if(expected != curDataPoints())
+        if(*expected != scalarCount())
             return false;
-        if(curDataPoints() == 0)
+        if(scalarCount() == 0)
             return false;
         
         return true;
@@ -432,126 +432,171 @@ namespace VField{
     //and same for weekly addressable, i.e. there is enough data to traverse internal array, but it ends abruptly
     bool VField::isWeaklyAddressable() const noexcept
     {
-        if(!Header.isSet(OVFParameter::VersionString))
+        if(!header_.contains(OVFParameter::VersionString))
             return false;
-        auto version = matchVersionString(Header.at<pType::String>(OVFParameter::VersionString));
-        if(curDataPoints() == 0 || version == OVFVersion::Unknown || !Header.isSet(OVFParameter::Mtype) || (version == OVFVersion::OVF2 && !Header.isSet(OVFParameter::Vdim)) )
+        auto version = header_.version();
+        if(scalarCount() == 0 || version == OVFVersion::Unknown || !header_.contains(OVFParameter::Mtype) || (version == OVFVersion::OVF2 && !header_.contains(OVFParameter::Vdim)) )
             return false;
-        const std::size_t dim = ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
-                         ((version == OVFVersion::OVF1) ? 3 : Header.getUint(OVFParameter::Vdim));
-        return curDataPoints() % dim == 0;
+        const auto dimension = header_.pointDimension();
+        return dimension && scalarCount() % *dimension == 0;
+    }
+
+    bool VField::isGridAddressable() const noexcept
+    {
+        if(!isWeaklyAddressable() ||
+           header_.meshType() != MeshType::Rectangular ||
+           !header_.contains(OVFParameter::Xnodes) ||
+           !header_.contains(OVFParameter::Ynodes) ||
+           !header_.contains(OVFParameter::Znodes))
+            return false;
+
+        const auto xnodes = header_.requireAs<std::size_t>(OVFParameter::Xnodes);
+        const auto ynodes = header_.requireAs<std::size_t>(OVFParameter::Ynodes);
+        const auto znodes = header_.requireAs<std::size_t>(OVFParameter::Znodes);
+        constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+        if(xnodes == 0 || ynodes == 0 || znodes == 0 ||
+           xnodes > maximum / ynodes || xnodes * ynodes > maximum / znodes)
+            return false;
+
+        return pointCount() == xnodes * ynodes * znodes;
     }
     //return dimensionality
-    std::size_t VField::pntDimension() const noexcept
+    std::size_t VField::pointDimension() const noexcept
     {
         if(!isWeaklyAddressable())
             return 0u;
-        auto version = matchVersionString(Header.at<pType::String>(OVFParameter::VersionString));
-        return ((Header.getMeshType() == OVFHeader::MeshType::irregular)? 3:0) +
-               ((version == OVFVersion::OVF1) ? 3 : Header.getUint(OVFParameter::Vdim));
+        return header_.pointDimension().value_or(0);
     }
     //return number of points and such
-    std::size_t VField::pntCount() const noexcept
+    std::size_t VField::pointCount() const noexcept
     {
         if(!isWeaklyAddressable())
             return 0u;
-        return curDataPoints() / pntDimension(); //guaranteed to have 0 remainder
+        return scalarCount() / pointDimension(); //guaranteed to have 0 remainder
     }
     
     //implementation of validator from VField itself, checks both header and data
-    bool VField::isValid()
+    ValidationResult VField::validate() const
     {
-        //first check our own header
-        const bool isHeaderValid = Header.validate();
-        //great if it is valid, but also need to check if data is there=
-        return isHeaderValid && isAddressable();
+        if(auto headerValidation = header_.validate(); !headerValidation)
+            return headerValidation;
+        if(!isAddressable())
+            return failure("Field data does not match the describing header", {});
+        return {};
     }
-    
-    //report generator
-    std::string VField::ValidationReport()
-    {
-        return              Header.ValidationReport() +
-               /*+*/        "The data is compliant with describing header: \"" + (isAddressable()? "true":"false") + '\"';
-    }
-    
+
+    template<class View, class Predicate>
+      auto min_over_rows(const View& view, Predicate&& predicate)
+      {
+        static_assert(View::rank() > 0);
+
+        if (view.extent(0) == 0)
+          throw std::invalid_argument("min_over_rows: empty dimension 0");
+
+        using index_type = typename View::index_type;
+
+        return std::ranges::min(
+            std::views::iota(index_type{0}, view.extent(0))
+            | std::views::transform([&](index_type row) {
+              return std::invoke(predicate, view, row);
+              }));
+      }
+
+    template<class View, class Predicate>
+      auto max_over_rows(const View& view, Predicate&& predicate)
+      {
+        static_assert(View::rank() > 0);
+
+        if (view.extent(0) == 0)
+          throw std::invalid_argument("max_over_rows: empty dimension 0");
+
+        using index_type = typename View::index_type;
+
+        return std::ranges::max(
+            std::views::iota(index_type{0}, view.extent(0))
+            | std::views::transform([&](index_type row) {
+              return std::invoke(predicate, view, row);
+              }));
+      }
+
     ///////////////////
     //Deduction rules//
     ///////////////////
     //types for substitution pair generation, first 'bool' is if generation was successfull
-    template<pType p>
-    using sub_pair_t = std::pair<bool, associatedType_t<p>>;
-    template<pType p>
+    template<ParameterType p>
+    using sub_pair_t = std::pair<bool, parameter_cpp_type_t<p>>;
+    template<ParameterType p>
     using sub_func_t = sub_pair_t<p> (*) (const VField&);
     
     //maps with default values
-    const std::map< OVFParameter, sub_func_t<pType::Float> > FPDefaults {
+    const std::map< OVFParameter, sub_func_t<ParameterType::Floating> > FPDefaults {
         {   //default multiplier for value is 1.
             OVFParameter::Vmult,
-            [](const VField&) -> sub_pair_t<pType::Float> {
+            [](const VField&) -> sub_pair_t<ParameterType::Floating> {
                 return {true, 1. };
             }
         },
         //default value for the base are at (Xstep, Ystep, Zstep)/2 
         {
             OVFParameter::Xbase,
-            [](const VField& field) -> sub_pair_t<pType::Float> {
-                if(field.Header.isSet(OVFParameter::Xstep))
-                    return {true, field.Header.getFloat(OVFParameter::Xstep)/2 };
+            [](const VField& field) -> sub_pair_t<ParameterType::Floating> {
+                if(field.header().contains(OVFParameter::Xstep))
+                    return {true, field.header().requireAs<double>(OVFParameter::Xstep)/2 };
                 else return {false, 0};
             }
         },
         {
             OVFParameter::Ybase,
-            [](const VField& field) -> sub_pair_t<pType::Float> {
-                if(field.Header.isSet(OVFParameter::Ystep))
-                    return {true, field.Header.getFloat(OVFParameter::Ystep)/2 };
+            [](const VField& field) -> sub_pair_t<ParameterType::Floating> {
+                if(field.header().contains(OVFParameter::Ystep))
+                    return {true, field.header().requireAs<double>(OVFParameter::Ystep)/2 };
                 else return {false, 0};
             }
         },
         {
             OVFParameter::Zbase,
-            [](const VField& field) -> sub_pair_t<pType::Float> {
-                if(field.Header.isSet(OVFParameter::Zstep))
-                    return {true, field.Header.getFloat(OVFParameter::Zstep)/2 };
+            [](const VField& field) -> sub_pair_t<ParameterType::Floating> {
+                if(field.header().contains(OVFParameter::Zstep))
+                    return {true, field.header().requireAs<double>(OVFParameter::Zstep)/2 };
                 else return {false, 0};
             }
         }
     };
-    const std::map< OVFParameter, sub_func_t<pType::Uint> > UINTDefaults {
+    const std::map< OVFParameter, sub_func_t<ParameterType::Unsigned> > UINTDefaults {
         //nothing to have default values of yet
     };
-    const std::map< OVFParameter, sub_func_t<pType::String> > StringDefaults {
+    const std::map< OVFParameter, sub_func_t<ParameterType::String> > StringDefaults {
         {
             OVFParameter::Title, 
-            [](const VField& ref) -> sub_pair_t<pType::String>{
-                if(!ref.Header.isSet(OVFParameter::VersionString))
+            [](const VField& ref) -> sub_pair_t<ParameterType::String>{
+                if(!ref.header().contains(OVFParameter::VersionString))
                     return {false, ""};
-                auto version = matchVersionString(ref.Header.getString(OVFParameter::VersionString));
+                auto version = ref.header().version();
                 std::size_t dim {3};
-                if(version == OVFVersion::OVF2 && !ref.Header.isSet(OVFParameter::Vdim))
+                if(version == OVFVersion::OVF2 && !ref.header().contains(OVFParameter::Vdim))
                     return {false, ""};
                 else if(version == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
+                    dim = ref.header().requireAs<std::size_t>(OVFParameter::Vdim);
                 return {true, (std::string)"Indescript " + std::to_string( dim) + "-dimensional vector field"};
             }
         },
         {
             OVFParameter::Munit,
-            [](const VField&) -> sub_pair_t<pType::String>{
+            [](const VField&) -> sub_pair_t<ParameterType::String>{
                 return {true, "m m m"};
             }
         },
         {
             OVFParameter::Vlabels,
-            [](const VField& ref) -> sub_pair_t<pType::String>{
-                if(!ref.Header.isSet(OVFParameter::VersionString))
+            [](const VField& ref) -> sub_pair_t<ParameterType::String>{
+                if(!ref.header().contains(OVFParameter::VersionString))
                     return {false, ""};
-                auto version = matchVersionString(ref.Header.getString(OVFParameter::VersionString));
+                auto version = ref.header().version();
                 std::size_t dim {3};
-                if(version == OVFVersion::OVF2 && !ref.Header.isSet(OVFParameter::Vdim))
+                if(version == OVFVersion::OVF2 && !ref.header().contains(OVFParameter::Vdim))
                     return {false, ""};
                 else if(version == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
+                    dim = ref.header().requireAs<std::size_t>(OVFParameter::Vdim);
                 //and now form labels
                 const char tradIndices[] {'x', 'y', 'z'};
                 std::string labels{""};
@@ -580,15 +625,15 @@ namespace VField{
         },
         {
             OVFParameter::Vunit,
-            [](const VField& ref) -> sub_pair_t<pType::String>{
-                if(!ref.Header.isSet(OVFParameter::VersionString))
+            [](const VField& ref) -> sub_pair_t<ParameterType::String>{
+                if(!ref.header().contains(OVFParameter::VersionString))
                     return {false, ""};
-                auto version = matchVersionString(ref.Header.getString(OVFParameter::VersionString));
+                auto version = ref.header().version();
                 std::size_t dim {3};
-                if(version == OVFVersion::OVF2 && !ref.Header.isSet(OVFParameter::Vdim))
+                if(version == OVFVersion::OVF2 && !ref.header().contains(OVFParameter::Vdim))
                     return {false, ""};
                 else if(version == OVFVersion::OVF2)
-                    dim = ref.Header.getUint(OVFParameter::Vdim);
+                    dim = ref.header().requireAs<std::size_t>(OVFParameter::Vdim);
                 //and for units
                 std::string labels{""};
                 for(std::size_t i = 0; i < dim; i++)
@@ -602,7 +647,7 @@ namespace VField{
         },
         {
             OVFParameter::Bound,
-            [](const VField&) -> sub_pair_t<pType::String>{
+            [](const VField&) -> sub_pair_t<ParameterType::String>{
                 return {true, ""};
             }
         }
@@ -618,165 +663,214 @@ namespace VField{
     }
     
     //limits for a point
-    inline sub_pair_t<pType::Float> coordMin( const VField& ref, const std::size_t& coordIndex)
+    inline sub_pair_t<ParameterType::Floating> coordMin( const VField& ref, const std::size_t& coordIndex)
     {
         //first check if data is accessible, rule doesn't work without it
         if(!ref.isAddressable() || coordIndex > 2)
             return {false, 0.};
-        if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
+        if(ref.header().meshType() == MeshType::Rectangular)
         {
             switch(coordIndex){
                 case(0):
-                    return {true, ref.Header.getFloat(OVFParameter::Xbase) - ref.Header.getFloat(OVFParameter::Xstep)/2};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Xbase) - ref.header().requireAs<double>(OVFParameter::Xstep)/2};
                 case(1):
-                    return {true, ref.Header.getFloat(OVFParameter::Ybase) - ref.Header.getFloat(OVFParameter::Ystep)/2};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Ybase) - ref.header().requireAs<double>(OVFParameter::Ystep)/2};
                 case(2):
-                    return {true, ref.Header.getFloat(OVFParameter::Zbase) - ref.Header.getFloat(OVFParameter::Zstep)/2};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Zbase) - ref.header().requireAs<double>(OVFParameter::Zstep)/2};
                 default:
                     return {false, 0.};
             }
         }
 
         //else need to calculate it for non-rectangular grid :'(
-        if(!ref.Header.isSet(OVFParameter::VersionString))
+        //TODO: isAddressable probably already requires this!
+        if(!ref.header().contains(OVFParameter::VersionString))
             return {false, 0};
-        if(ref.curDataInternalSize() == 4)
-            return {true, std::min_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2) {return arr1[coordIndex] < arr2[coordIndex]; })[coordIndex]};
-        else if(ref.curDataInternalSize() == 8)
-            return {true, std::min_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2) {return arr1[coordIndex] < arr2[coordIndex]; })[coordIndex]};
+
+        auto coordPred = [coordIndex] ( const auto& ref, std::size_t i )
+          { return ref[i, coordIndex]; };
+
+        if (ref.stores<float>() )
+          return{true, min_over_rows( ref.pointView<float>(), coordPred) };
+        else if (ref.stores<double>() )
+          return{true, min_over_rows( ref.pointView<double>(), coordPred) };
+        
         return{false, 0};
     }
 
-    inline sub_pair_t<pType::Float> coordMax( const VField& ref, const std::size_t& coordIndex)
+    inline sub_pair_t<ParameterType::Floating> coordMax( const VField& ref, const std::size_t& coordIndex)
     {
         //first check if data is accessible, rule doesn't work without it
         if(!ref.isAddressable() || coordIndex > 2)
             return {false, 0.};
-        if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
+        if(ref.header().meshType() == MeshType::Rectangular)
         {
             switch(coordIndex){
                 case(0):
-                    return {true, ref.Header.getFloat(OVFParameter::Xbase) + ref.Header.getFloat(OVFParameter::Xstep) * (0.5 + ref.Header.getUint(OVFParameter::Xnodes))};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Xbase) + ref.header().requireAs<double>(OVFParameter::Xstep) * (0.5 + ref.header().requireAs<std::size_t>(OVFParameter::Xnodes))};
                 case(1):
-                    return {true, ref.Header.getFloat(OVFParameter::Ybase) + ref.Header.getFloat(OVFParameter::Ystep) * (0.5 + ref.Header.getUint(OVFParameter::Ynodes))};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Ybase) + ref.header().requireAs<double>(OVFParameter::Ystep) * (0.5 + ref.header().requireAs<std::size_t>(OVFParameter::Ynodes))};
                 case(2):
-                    return {true, ref.Header.getFloat(OVFParameter::Zbase) + ref.Header.getFloat(OVFParameter::Zstep) * (0.5 + ref.Header.getUint(OVFParameter::Znodes))};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Zbase) + ref.header().requireAs<double>(OVFParameter::Zstep) * (0.5 + ref.header().requireAs<std::size_t>(OVFParameter::Znodes))};
                 default:
                     return {false, 0.};
             }
         }
 
         //else need to calculate it for non-rectangular grid :'(
-        if(!ref.Header.isSet(OVFParameter::VersionString))
-            return {false, 0};
-        if(ref.curDataInternalSize() == 4)
-            return {true, std::max_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2) {return arr1[coordIndex] > arr2[coordIndex]; })[coordIndex]};
-        else if(ref.curDataInternalSize() == 8)
-            return {true, std::max_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2) {return arr1[coordIndex] > arr2[coordIndex]; })[coordIndex]};
+        auto coordPred = [coordIndex] ( const auto& ref, std::size_t i )
+          { return ref[i, coordIndex]; };
+
+        if (ref.stores<float>() )
+          return{true, max_over_rows( ref.pointView<float>(), coordPred) };
+        else if (ref.stores<double>() )
+          return{true, max_over_rows( ref.pointView<double>(), coordPred) };
+        
         return{false, 0};
     }
     
-    const std::map< OVFParameter, sub_func_t<pType::Float> > FPDeduction{
+    const std::map< OVFParameter, sub_func_t<ParameterType::Floating> > FPDeduction{
         //TODO: look into templating those!
         {
             OVFParameter::Vmin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Float> minVal {};
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{
+                parameter_cpp_type_t<ParameterType::Floating> minVal {};
                 //first check if data is accessible, rule doesn't work without it
                 if(!ref.isAddressable())
                     return {false, minVal};
                 //then check what is a dimension of argument
-                if(!ref.Header.isSet(OVFParameter::VersionString))
+                if(!ref.header().contains(OVFParameter::VersionString))
                     return {false, minVal};
-                auto version = matchVersionString(ref.Header.getString(OVFParameter::VersionString));
+                auto version = ref.header().version();
                 std::size_t val_dim {3};
-                if(version == OVFVersion::OVF2 && !ref.Header.isSet(OVFParameter::Vdim))
+                if(version == OVFVersion::OVF2 && !ref.header().contains(OVFParameter::Vdim))
                     return {false, minVal};
                 else if(version == OVFVersion::OVF2)
-                    val_dim = ref.Header.getUint(OVFParameter::Vdim);
+                    val_dim = ref.header().requireAs<std::size_t>(OVFParameter::Vdim);
                 const std::size_t offset {
-                    static_cast<std::size_t>(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular ? 0 : 3)
+                    static_cast<std::size_t>(ref.header().meshType() == MeshType::Rectangular ? 0 : 3)
                 };
 
-                if(ref.curDataInternalSize() == 4)
-                    return {true, norm(*std::min_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2){return norm(arr1+offset, val_dim) < norm(arr2+offset, val_dim);}) + offset, val_dim)};
-                else if(ref.curDataInternalSize() == 8)
-                    return {true, norm(*std::min_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2){return norm(arr1+offset, val_dim) < norm(arr2+offset, val_dim);}) + offset, val_dim)};
+                auto normPred = [offset, val_dim](const auto& ref, std::size_t row) {
+                  static_assert(std::remove_cvref_t<decltype(ref)>::rank() == 2);
+
+                  // offset + val_dim is the one-past-the-end index.
+                  assert(offset <= ref.extent(1));
+                  assert(offset + val_dim == ref.extent(1));
+
+                  using result_type =
+                    decltype(std::hypot(ref[row, offset], ref[row, offset]));
+
+                  result_type norm{};
+
+                  for (std::size_t column = offset; column < ref.extent(1); ++column)
+                    norm = std::hypot(norm, ref[row, column]);
+
+                  return norm;
+                };
+
+
+                if(ref.stores<float>())
+                  return {true, min_over_rows( ref.pointView<float>(), normPred ) };
+                else if (ref.stores<double>())
+                  return {true, min_over_rows( ref.pointView<double>(), normPred ) };
+
                 return {false, minVal};
             }
         },
         {
             OVFParameter::Vmax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{
-                associatedType_t<pType::Float> maxVal {};
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{
+                parameter_cpp_type_t<ParameterType::Floating> maxVal {};
                 //first check if data is accessible, rule doesn't work without it
                 if(!ref.isAddressable())
                     return {false, maxVal};
                 //then check what is a dimension of argument
-                if(!ref.Header.isSet(OVFParameter::VersionString))
+                if(!ref.header().contains(OVFParameter::VersionString))
                     return {false, maxVal};
-                auto version = matchVersionString(ref.Header.getString(OVFParameter::VersionString));
+                auto version = ref.header().version();
                 std::size_t val_dim {3};
-                if(version == OVFVersion::OVF2 && !ref.Header.isSet(OVFParameter::Vdim))
+                if(version == OVFVersion::OVF2 && !ref.header().contains(OVFParameter::Vdim))
                     return {false, maxVal};
                 else if(version == OVFVersion::OVF2)
-                    val_dim = ref.Header.getUint(OVFParameter::Vdim);
+                    val_dim = ref.header().requireAs<std::size_t>(OVFParameter::Vdim);
                 const std::size_t offset {
-                    static_cast<std::size_t>(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular ? 0 : 3)
+                    static_cast<std::size_t>(ref.header().meshType() == MeshType::Rectangular ? 0 : 3)
                 };
-                if(ref.curDataInternalSize() == 4)
-                    return {true, norm(*std::max_element(ref.cbegin<float>(), ref.cend<float>(), [&](const float* arr1, const float* arr2){return norm(arr1+offset, val_dim) > norm(arr2+offset, val_dim);}) + offset, val_dim)};
-                else if(ref.curDataInternalSize() == 8)
-                    return {true, norm(*std::max_element(ref.cbegin<double>(), ref.cend<double>(), [&](const double* arr1, const double* arr2){return norm(arr1+offset, val_dim) > norm(arr2+offset, val_dim);}) + offset, val_dim)};
+
+                auto normPred = [offset, val_dim](const auto& ref, std::size_t row) {
+                  static_assert(std::remove_cvref_t<decltype(ref)>::rank() == 2);
+
+                  // offset + val_dim is the one-past-the-end index.
+                  assert(offset <= ref.extent(1));
+                  assert(offset + val_dim == ref.extent(1));
+
+                  using result_type =
+                    decltype(std::hypot(ref[row, offset], ref[row, offset]));
+
+                  result_type norm{};
+
+                  for (std::size_t column = offset; column < ref.extent(1); ++column)
+                    norm = std::hypot(norm, ref[row, column]);
+
+                  return norm;
+                };
+
+
+                if(ref.stores<float>())
+                  return {true, max_over_rows( ref.pointView<float>(), normPred ) };
+                else if (ref.stores<double>())
+                  return {true, max_over_rows( ref.pointView<double>(), normPred ) };
+
                 return {false, maxVal};
             }
         },
         {
             OVFParameter::Xmin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMin(ref, 0); }
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{ return coordMin(ref, 0); }
         },
         {
             OVFParameter::Ymin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMin(ref, 1); }
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{ return coordMin(ref, 1); }
         },
         {
             OVFParameter::Zmin,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMin(ref, 2); }
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{ return coordMin(ref, 2); }
         },
         {
             OVFParameter::Xmax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMax(ref, 0); }
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{ return coordMax(ref, 0); }
         },
         {
             OVFParameter::Ymax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMax(ref, 1); }
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{ return coordMax(ref, 1); }
         },
         {
             OVFParameter::Zmax,
-            [](const VField& ref) -> sub_pair_t<pType::Float>{ return coordMax(ref, 2); }
+            [](const VField& ref) -> sub_pair_t<ParameterType::Floating>{ return coordMax(ref, 2); }
         }
     };
-    const std::map< OVFParameter, sub_func_t<pType::Uint> > UINTDeduction{
+    const std::map< OVFParameter, sub_func_t<ParameterType::Unsigned> > UINTDeduction{
         {   //can get the point count for rectangular grid files
             OVFParameter::Pcount,
-            [](const VField& ref) -> sub_pair_t<pType::Uint>{
-                associatedType_t<pType::Uint> val{};
-                if(!ref.Header.isSet(OVFParameter::Mtype))
+            [](const VField& ref) -> sub_pair_t<ParameterType::Unsigned>{
+                parameter_cpp_type_t<ParameterType::Unsigned> val{};
+                if(!ref.header().contains(OVFParameter::Mtype))
                     return {false, val};
-                if(ref.Header.getMeshType() == OVFHeader::MeshType::rectangular)
+                if(ref.header().meshType() == MeshType::Rectangular)
                 {
-                    if(!std::get<0>(isGridDefined(ref.Header)))
+                    if(!isGridDefined(ref.header()))
                         return {false, val};
-                    val = ref.Header.at<pType::Uint>(OVFParameter::Xnodes) *
-                          ref.Header.at<pType::Uint>(OVFParameter::Ynodes) *
-                          ref.Header.at<pType::Uint>(OVFParameter::Znodes);
+                    val = ref.header().requireAs<std::size_t>(OVFParameter::Xnodes) *
+                          ref.header().requireAs<std::size_t>(OVFParameter::Ynodes) *
+                          ref.header().requireAs<std::size_t>(OVFParameter::Znodes);
                     return {true, val};
                 }
                 return {false, val};
             }
         }
     };
-    const std::map< OVFParameter, sub_func_t<pType::String> > StringDeduction{
+    const std::map< OVFParameter, sub_func_t<ParameterType::String> > StringDeduction{
         //nothing to do here
     };
     
@@ -785,11 +879,11 @@ namespace VField{
     //Deduction:    FPDeduction     UINTDeduction       StringDeduction
     //defaults:     FPDefaults      UINTDefaults        StringDefaults
         
-    bool VField::DeduceField(const OVFParameter& p, bool UseDefault)
+    bool VField::deduceField(const OVFParameter& p, bool UseDefault)
     {        
-        switch(paramIndex(p))
+        switch(paramType(p))
         {
-            case(pType::Float):
+            case(ParameterType::Floating):
             {
                 auto sresult = FPDeduction.find(p);
                 if(sresult != FPDeduction.end())
@@ -798,8 +892,8 @@ namespace VField{
                     auto sub = rule(*this);
                     if(sub.first)
                     {
-                        Header.unset(p);
-                        Header.set(p, sub.second);
+                        header_.clear(p);
+                        header_.set(p, sub.second);
                         return true;
                     }
                 }
@@ -812,15 +906,15 @@ namespace VField{
                         auto sub = rule(*this);
                         if(sub.first)
                         {
-                            Header.unset(p);
-                            Header.set(p, sub.second);
+                            header_.clear(p);
+                            header_.set(p, sub.second);
                             return true;
                         }
                     }
                 }
                 break;
             }    
-            case(pType::Uint):
+            case(ParameterType::Unsigned):
             {
                 auto sresult = UINTDeduction.find(p);
                 if(sresult != UINTDeduction.end())
@@ -829,8 +923,8 @@ namespace VField{
                     auto sub = rule(*this);
                     if(sub.first)
                     {
-                        Header.unset(p);
-                        Header.set(p, sub.second);
+                        header_.clear(p);
+                        header_.set(p, sub.second);
                         return true;
                     }
                 }
@@ -843,15 +937,15 @@ namespace VField{
                         auto sub = rule(*this);
                         if(sub.first)
                         {
-                            Header.unset(p);
-                            Header.set(p, sub.second);
+                            header_.clear(p);
+                            header_.set(p, sub.second);
                             return true;
                         }
                     }
                 }
                 break;
             }
-            case(pType::String):
+            case(ParameterType::String):
             {
                 auto sresult = StringDeduction.find(p);
                 if(sresult != StringDeduction.end())
@@ -860,9 +954,9 @@ namespace VField{
                     auto sub = rule(*this);
                     if(sub.first)
                     {
-                        Header.unset(p);
+                        header_.clear(p);
                         if(sub.second != "")
-                            Header.set(p, sub.second);
+                            header_.set(p, sub.second);
                         return true;
                     }
                 }
@@ -875,16 +969,17 @@ namespace VField{
                         auto sub = rule(*this);
                         if(sub.first)
                         {
-                            Header.unset(p);
+                            header_.clear(p);
                             if(sub.second != "")
-                                Header.set(p, sub.second);
+                                header_.set(p, sub.second);
                             return true;
                         }
                     }
                 }
                 break;
             }
-            case(pType::Other):
+            case(ParameterType::Other):
+            case(ParameterType::Mesh):
             {
                 return false;
             }
@@ -901,13 +996,13 @@ namespace VField{
         {
             if (!acc.empty())
                 acc+=", ";
-            acc += ParameterName(x);
+            acc += paramName(x);
         }
         return acc;
     }
     
     //recursive deduction
-    std::string VField::DeduceRecursively(const std::size_t& max_iter)
+    std::string VField::deduceRecursively(const std::size_t& max_iter)
     {
         std::string result = {""};
         std::vector<OVFParameter> missingList{};
@@ -915,18 +1010,20 @@ namespace VField{
         std::size_t lastCnt{};//counter for last step missing parameters
         do{
             lastCnt = missingList.size();
-            auto res = ValidateHeader(this->Header);
-            if(std::get<0>(res))
+            auto res = ValidateHeader(this->header());
+            if(res)
             {
                 result+='\n';
-                result+=(std::string)"Iteration #" + std::to_string(iterCnt)+ "suceeded!";
+                std::format_to(std::back_inserter(result), "Iteration #{} succeeded!", iterCnt);
                 break;
             }
-            missingList = std::move(std::get<2>(res));
+            missingList = std::move(res.error().parameters);
             result+='\n';
-            result+= (std::string)"Iteration #" + std::to_string(iterCnt) + "failed, following arguments tripped the validation: {" + csvParamList(missingList) + " }";
+            std::format_to(std::back_inserter(result),
+                           "Iteration #{} failed, following arguments tripped the validation: {{{} }}",
+                           iterCnt, csvParamList(missingList));
             for(const auto x: missingList)
-                DeduceField(x, true);
+                deduceField(x, true);
             iterCnt++;
         }while(iterCnt < max_iter && lastCnt != missingList.size());
         if(iterCnt == max_iter)
@@ -939,22 +1036,22 @@ namespace VField{
 
     //strip list
     constexpr auto OVFOptional = 
-        DictionaryHelpers::make_array(
+       std::array{
             OVFParameter::Vmin,
             OVFParameter::Vmax,
             OVFParameter::Bound,
             OVFParameter::Desc
-        );
+       };
 
     //strip optional parameters
-    void VField::Strip() noexcept
+    void VField::strip() noexcept
     {
-        if(!Header.isSet(OVFParameter::VersionString))
+        if(!header_.contains(OVFParameter::VersionString))
             return;
-        auto version = matchVersionString(Header.getString(OVFParameter::VersionString));
+        auto version = header_.version();
         if(version == OVFVersion::OVF1 || version == OVFVersion::OVF2)
             for(const auto& par: OVFOptional)
-                Header.unset(par);
+                header_.clear(par);
         return;
     }
 }
