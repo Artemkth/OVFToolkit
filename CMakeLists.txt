@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 
 #versioning
-project(OVFToolkit VERSION 0.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
+project(OVFToolkit VERSION 0.2 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
 
 #TODO: add some more checks
 # C++ standard
@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CheckCXXSourceCompiles)
+include(GNUInstallDirs)
 
 check_cxx_source_compiles([=[
     #include <cstddef>
@@ -124,7 +125,10 @@ ELSE()
     MESSAGE(STATUS "Cuda was not found!")
 ENDIF()
 #TODO: implement backend switching later
-set(BUILD_FFUTIL (FFTW_FOUND AND CUDA_FOUND) AND GSL_FOUND AND Boost_PROGRAM_OPTIONS_FOUND)
+set(BUILD_FFUTIL OFF)
+if(FFTW_FOUND AND CUDA_FOUND AND Boost_PROGRAM_OPTIONS_FOUND)
+    set(BUILD_FFUTIL ON)
+endif()
 IF(BUILD_FFUTIL)
     SET(FFMESSAGE "Building fourier analysis utility with following fftw engines: ")
     IF(FFTW_FOUND)
@@ -166,43 +170,14 @@ target_compile_options(ovfparser PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors -Wno-strict-aliasing>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 
-#build recepy for fft util
-IF(BUILD_FFUTIL)
-    add_executable(ovf-batchfft
-        util/fft-util.cpp
-        util/cuda-backend.cu
-        $<IF:$<BOOL:${WIN32}>,util/win-console.cpp,util/console.cpp>)
-
-    set_property(TARGET ovf-batchfft PROPERTY CUDA_ARCHITECTURES all)
-
-    target_link_libraries(ovf-batchfft PRIVATE ovfparser Threads::Threads Boost::program_options
-        $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:tbb>
-        "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
-
-    target_include_directories(ovf-batchfft PRIVATE 
-        "${PROJECT_SOURCE_DIR}/util"
-        "${PROJECT_BINARY_DIR}"
-        $<$<VERSION_LESS:CMAKE_VERSION,3.17>:${CUDA_INCLUDE_DIRS}>)
-
-    set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 17)
-
-    IF(WIN32)
-        # Wide argv preserves Unicode paths; wsetargv also expands wildcards.
-        set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "wsetargv.obj")
-    ENDIF()
-
-    if(MSVC)
-        #microsoft trolling by misreporting c++ standard
-        #https://learn.microsoft.com/en-us/cpp/build/reference/zc-cplusplus?view=msvc-170&viewFallbackFrom=msvc-190
-        target_compile_options(ovf-batchfft PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
-                                -Xcompiler "/Zc:__cplusplus" 
-                                --std c++17>)
-    ENDIF()
-ENDIF()
+add_subdirectory(tools)
 
 #and install information for library
-set(INCLUDE_INSTALL_DIR "${INSTALL_DIR}/include/OVFParser")
-install(TARGETS ovfparser DESTINATION "${LIBRARY_INSTALL_DIR}")
+set(INCLUDE_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/OVFParser")
+install(TARGETS ovfparser
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES
     OVFParser/OVFHeader.h
     OVFParser/VField.h
@@ -212,6 +187,9 @@ install(FILES
     "${PROJECT_BINARY_DIR}/OVFToolkitConfig.h"
     "${PROJECT_BINARY_DIR}/OVFParser/ovfparser_export.h" DESTINATION "${INCLUDE_INSTALL_DIR}"
 )
+install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+
+add_subdirectory(docs)
 
 #include tests
 IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
@@ -222,5 +200,6 @@ IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_subdirectory(tests)
 ENDIF()
 
-#interfaces CMakeLists.txt
-add_subdirectory(Interfaces)
+option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
+    "Build the Wolfram Language WSTP binding when Mathematica is available" ON)
+add_subdirectory(bindings)

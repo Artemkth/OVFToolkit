@@ -22,13 +22,13 @@ file(TO_NATIVE_PATH "${PROJECT_BINARY_DIR}" native_bin_dir)
 add_test(IOTests io-test "${native_bin_dir}")
 
 add_executable(frequency-test frequency.cpp)
-target_include_directories(frequency-test PRIVATE "${CMAKE_SOURCE_DIR}/util")
+target_include_directories(frequency-test PRIVATE "${CMAKE_SOURCE_DIR}/tools/batchfft")
 add_test(FrequencyArithmeticTest frequency-test)
 
 if(CUDA_FOUND AND FFTW_FLOAT_LIB_FOUND)
     function(add_cuda_fft_test target source test_name)
-        add_executable(${target} ${source} "${CMAKE_SOURCE_DIR}/util/cuda-backend.cu")
-        target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/util")
+        add_executable(${target} ${source} "${CMAKE_SOURCE_DIR}/tools/batchfft/cuda-backend.cu")
+        target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/tools/batchfft")
         target_link_libraries(${target} PRIVATE FFTW::Float
             "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
         set_target_properties(${target} PROPERTIES
