@@ -13,6 +13,7 @@
 
 namespace VField
 {
+    using InternalWriteResult = std::expected<void, std::string>;
     inline std::string_view getName(OVFVersion version, OVFParameter parameter)
     { return paramToken(parameter, version).value(); }
 
@@ -133,7 +134,8 @@ namespace VField
     }
 
     //first defining the rules for writing out a header using make_array helper template
-    inline WriteResult WriteHeader(std::ostream& out, const OVFVersion& version, const OVFHeader& header) noexcept
+    inline InternalWriteResult writeHeader(std::ostream& out, OVFVersion version,
+                                           const OVFHeader& header)
     {
         //start by finding a ruleset if possible
         auto it = recepyIndex.find(version);
@@ -205,18 +207,21 @@ namespace VField
         out.write(outBuff, static_cast<std::streamsize>(field.dataSizeBytes()));
     }
 
-    WriteResult WriteSegment(std::ostream& out, const VField& field) noexcept
+    WriteResult writeSegment(std::ostream& out, const VField& field)
     {
         if( !out.good())
-            return std::unexpected("WriteSegment: Stream given was not good, aborting!");
+            return std::unexpected(WriteError{
+                WriteErrorCode::StreamFailure, "The output stream is not writable"});
         if( !field.isWeaklyAddressable())
-            return std::unexpected("WriteSegment: Vector field should at least be weakly addressable, aborting!");
+            return std::unexpected(WriteError{
+                WriteErrorCode::InvalidField,
+                "The vector field is not weakly addressable"});
         //set modifiers for 'text-mode' values
         out << std::setprecision(8);
         
         auto version = field.header().version();
         out << "# Begin: Segment\n# Begin: Header\n";
-        auto headerResult = WriteHeader(out, version, field.header());
+        auto headerResult = writeHeader(out, version, field.header());
         std::string report = headerResult ? std::string{} : std::move(headerResult.error());
         out << "# End: Header\n# Begin: Data binary "<<field.scalarSizeBytes() << "\n";
         switch(field.scalarSizeBytes())
@@ -229,7 +234,7 @@ namespace VField
                 break;
             default:
                 std::format_to(std::back_inserter(report),
-                    "{}WriteSegment: somehow got invalid internal data size! Please check 'isWeaklyAddressable' for bugs!",
+                    "{}writeSegment: invalid internal scalar size; check isWeaklyAddressable()",
                     report.empty() ? "" : "\n");
         }
         out << "# End: Data binary " <<field.scalarSizeBytes() << "\n" << "# End: Segment";
@@ -237,11 +242,40 @@ namespace VField
         if(!out.good())
         {
             std::format_to(std::back_inserter(report),
-                "{}WriteSegment: filesystem error occurred while writing the segment!",
+                "{}writeSegment: stream failure while writing the segment",
                 report.empty() ? "" : "\n");
         }
         if(!report.empty())
-            return std::unexpected(std::move(report));
+            return std::unexpected(WriteError{
+                WriteErrorCode::InvalidHeader, std::move(report)});
+        return {};
+    }
+
+    WriteResult writeOVF(const std::filesystem::path& path, const VField& field)
+    {
+        if(!field.header().contains(OVFParameter::VersionString))
+            return std::unexpected(WriteError{
+                WriteErrorCode::InvalidHeader,
+                "The segment has no OVF version signature", path, 0});
+
+        std::ofstream output(path, std::ios_base::out | std::ios_base::binary |
+                                   std::ios_base::trunc);
+        if(!output.good())
+            return std::unexpected(WriteError{
+                WriteErrorCode::StreamFailure, "Unable to open output file", path});
+
+        output << field.header().requireAs<std::string>(OVFParameter::VersionString)
+               << "\n# Segment count: 1\n";
+        auto result = writeSegment(output, field);
+        if(!result)
+        {
+            result.error().path = path;
+            result.error().segment = 0;
+            return result;
+        }
+        if(!output.good())
+            return std::unexpected(WriteError{
+                WriteErrorCode::StreamFailure, "Failed while writing output file", path});
         return {};
     }
 }

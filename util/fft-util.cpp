@@ -40,8 +40,24 @@
 //assert macro
 #include<cassert>
 
+#if defined(_WIN32)
+#include<windows.h>
+#endif
+
 using fname_type = std::string;
 using namespace std::string_literals;
+
+std::filesystem::path pathFromUtf8(std::string_view text)
+{
+    const auto* first = reinterpret_cast<const char8_t*>(text.data());
+    return std::filesystem::path{std::u8string(first, first + text.size())};
+}
+
+std::string pathToUtf8(const std::filesystem::path& path)
+{
+    const auto text = path.u8string();
+    return {reinterpret_cast<const char*>(text.data()), text.size()};
+}
 
 //vector of time/handle pairs
 using metaPair = std::pair<std::optional<double>, VField::VFieldFile>;
@@ -310,7 +326,7 @@ void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile
 {
     progress = 0;
     
-    const auto& head = handles.front().second.getSegmentHeader(0);
+    const auto& head = handles.front().second.header(0).value().get();
     const auto mType = head.meshType().value();
     const auto dim   = head.pointDimension().value();
     const auto pts   = head.pointCount().value();
@@ -325,7 +341,7 @@ void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile
 
     auto importer = [&](const std::pair<std::size_t, VField::VFieldFile>& handle)
     {
-        auto slice = handle.second.readSlice(0, adjBegin, adjEnd - adjBegin);
+        auto slice = handle.second.readSlice(0, adjBegin, adjEnd - adjBegin).value();
 
         if (slice.scalarSizeBytes() == 4)
             loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::MeshType::Rectangular ? 0 : 3);
@@ -458,7 +474,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
 
         //output the VField
         output << '\n';
-        WriteSegment(output, field);
+        writeSegment(output, field);
     }
 
     return true;
@@ -582,7 +598,7 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 //TODO: disable monitors when output is redirected to a file
-int main(int argc, char** argv)
+int batchMain(int argc, char** argv)
 {
     std::vector<fname_type> fileList{};
     std::string TimeRegExStr {};
@@ -659,7 +675,7 @@ int main(int argc, char** argv)
         std::vector<fname_type> missingFiles{};
         for(const auto& fname: fileList)
         {
-            std::filesystem::path fPath(fname);
+            const auto fPath = pathFromUtf8(fname);
             if( !std::filesystem::exists(fPath) || !std::filesystem::is_regular_file(fPath) )
                 missingFiles.push_back(fname);
         }
@@ -718,12 +734,20 @@ int main(int argc, char** argv)
     const std::regex timeRegEx(TimeRegExStr, std::regex_constants::ECMAScript | std::regex_constants::optimize);
     auto parseMetaPred = [&lastFile, &progVar, &timeRegEx, &TimeRegExStr](const std::string& fName) -> metaPair
     {
-        VField::VFieldFile file(fName, true); //only fetch the header, TODO: check if I want to output some file errors in here
+        auto opened = VField::VFieldFile::open(pathFromUtf8(fName));
+        if(!opened)
+        {
+            std::cerr << std::format("Failed to read '{}': {}\n", fName, opened.error().message);
+            lastFile = fName.c_str();
+            ++progVar;
+            return {std::nullopt, VField::VFieldFile{}};
+        }
+        auto file = std::move(*opened);
 
         //if file is not single segment, give up LULW
-        if (file.cntSegments() != 1)
+        if (file.segmentCount() != 1)
         {
-            std::cerr << "Encountered bad segment count in file: \"" << fName << "\": " << file.cntSegments() << "\n";
+            std::cerr << "Encountered bad segment count in file: \"" << fName << "\": " << file.segmentCount() << "\n";
             //set last file to the one we processed 
             lastFile = fName.c_str();
             ++progVar;
@@ -732,7 +756,7 @@ int main(int argc, char** argv)
 
         std::optional<double> time{ std::nullopt };
         //and then check if header is oiro
-        const VField::OVFHeader& ref = file.getSegmentHeader(0);
+        const VField::OVFHeader& ref = file.header(0).value().get();
         std::smatch pat_matches{};
         if (ref.contains(VField::OVFParameter::Desc) && std::regex_search(ref.requireAs<std::string>(VField::OVFParameter::Desc), pat_matches, timeRegEx))
         {
@@ -772,7 +796,8 @@ int main(int argc, char** argv)
         std::string noTSFiles{};
         for(const auto& [timeOpt, handle]: filesMeta)
             if( !timeOpt.has_value() )
-                noTSFiles += (noTSFiles.empty() ? ""s : ", "s) + handle.getCurrentPath();
+                std::format_to(std::back_inserter(noTSFiles), "{}{}",
+                    noTSFiles.empty() ? "" : ", ", pathToUtf8(handle.path()));
 
         if (!noTSFiles.empty())
         {
@@ -815,10 +840,13 @@ int main(int argc, char** argv)
                     strStream << std::scientific << std::setprecision(4);
                     strStream << times.front();
 
-                    dupTSFiles += "t="s + strStream.str() + ": " + '\"' + filesMeta.front().second.getCurrentPath() + '\"';
+                    std::format_to(std::back_inserter(dupTSFiles),
+                        "t={}: \"{}\"", strStream.str(),
+                        pathToUtf8(filesMeta.front().second.path()));
                 }
 
-                dupTSFiles += ", \""s + filesMeta[i].second.getCurrentPath() + '\"';
+                std::format_to(std::back_inserter(dupTSFiles), ", \"{}\"",
+                    pathToUtf8(filesMeta[i].second.path()));
             }
         }
 
@@ -845,10 +873,13 @@ int main(int argc, char** argv)
                         strStream << std::scientific << std::setprecision(4);
                         strStream << times[i];
 
-                        dupTSFiles += "t="s + strStream.str() + ": " + '\"' + filesMeta[i].second.getCurrentPath() + '\"';
+                        std::format_to(std::back_inserter(dupTSFiles),
+                            "t={}: \"{}\"", strStream.str(),
+                            pathToUtf8(filesMeta[i].second.path()));
                     }
 
-                    dupTSFiles += ", \""s + filesMeta[j].second.getCurrentPath() + '\"';
+                    std::format_to(std::back_inserter(dupTSFiles), ", \"{}\"",
+                        pathToUtf8(filesMeta[j].second.path()));
                 }
         }
 
@@ -873,8 +904,8 @@ int main(int argc, char** argv)
 
     {
         //check if internal dimensions are compatible
-        const auto expDim = filesMeta.front().second.getSegmentHeader(0).pointDimension();
-        const auto expCnt = filesMeta.front().second.getSegmentHeader(0).pointCount();
+        const auto expDim = filesMeta.front().second.header(0).value().get().pointDimension();
+        const auto expCnt = filesMeta.front().second.header(0).value().get().pointCount();
 
         if(!expDim || !expCnt)
         {
@@ -882,7 +913,7 @@ int main(int argc, char** argv)
             return 1;
         }
         //guaranteed to be set by this point
-        const auto mType = filesMeta.front().second.getSegmentHeader(0).meshType().value();
+        const auto mType = filesMeta.front().second.header(0).value().get().meshType().value();
         VFSize = (*expDim - (mType == VField::MeshType::Rectangular? 0 : 3)) * *expCnt;
         //begin initialization of engines outside main thread once dimensions are known
         engineInit = std::async( std::launch::async, [&] ()
@@ -922,13 +953,14 @@ int main(int argc, char** argv)
         std::string badFiles {};
         for(; it != end; ++it)
         {
-            const auto& head = it -> second.getSegmentHeader(0);
+            const auto& head = it -> second.header(0).value().get();
             if ( head.pointDimension() != expDim ||
                  head.pointCount()    != expCnt ||
                  head.meshType()       != mType    )
             {
                 if(!badFiles.empty()) badFiles += ", ";
-                badFiles += "\""s + it -> second.getCurrentPath() + "\"";
+                std::format_to(std::back_inserter(badFiles), "\"{}\"",
+                    pathToUtf8(it->second.path()));
             }
         }
 
@@ -975,7 +1007,9 @@ int main(int argc, char** argv)
             if( std::abs( *tIt - expectedTime ) > 3 * TstepDisp )
             {
                 if( !outliers.empty() ) outliers += ", ";
-                outliers += "\""s + fIt -> second.getCurrentPath() + "\" (dt/disp=" + std::to_string( (*tIt - expectedTime) / TstepDisp ) + ")";
+                std::format_to(std::back_inserter(outliers),
+                    "\"{}\" (dt/disp={})", pathToUtf8(fIt->second.path()),
+                    (*tIt - expectedTime) / TstepDisp);
             }
 
             ++fIt; expectedTime += trueStep;
@@ -1257,7 +1291,7 @@ int main(int argc, char** argv)
 
     //and close tmp file
     tmpFile.close();
-    auto head = filesMeta.front().second.getSegmentHeader(0);
+    auto head = filesMeta.front().second.header(0).value().get();
     transformHeader( head, TimeRegExStr );
 
     expectProg = (tSeriesLength/2 + 1) * VFSize * 2;
@@ -1278,10 +1312,11 @@ int main(int argc, char** argv)
             }
         });
 
-    if(BatchSize < VFSize) exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
+    const auto outputPath = pathFromUtf8(oFileName);
+    if(BatchSize < VFSize) exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
                         head, tSeriesLength/2 + 1, frequencyIncrement, progVar,
                         CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
-    else exportSpectrum( oFileName, segmentDescriptor, tmpPath, buffers[0] -> data.get(), nullptr, head, tSeriesLength/2 + 1, frequencyIncrement,
+    else exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[0] -> data.get(), nullptr, head, tSeriesLength/2 + 1, frequencyIncrement,
                          progVar, CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
 
     //clean up temp files
@@ -1296,3 +1331,37 @@ int main(int argc, char** argv)
 
     return 0;
 }
+
+#if defined(_WIN32)
+namespace {
+    std::string utf8Argument(const wchar_t* argument)
+    {
+        const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+            argument, -1, nullptr, 0, nullptr, nullptr);
+        if(size == 0)
+            throw std::runtime_error("Unable to decode a Windows command-line argument");
+        std::string result(static_cast<std::size_t>(size), '\0');
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, -1,
+            result.data(), size, nullptr, nullptr);
+        result.pop_back();
+        return result;
+    }
+}
+
+int wmain(int argc, wchar_t** argv)
+{
+    std::vector<std::string> arguments;
+    arguments.reserve(static_cast<std::size_t>(argc));
+    for(int index = 0; index < argc; ++index)
+        arguments.push_back(utf8Argument(argv[index]));
+
+    std::vector<char*> argumentPointers;
+    argumentPointers.reserve(arguments.size());
+    for(auto& argument : arguments)
+        argumentPointers.push_back(argument.data());
+    return batchMain(argc, argumentPointers.data());
+}
+#else
+int main(int argc, char** argv)
+{ return batchMain(argc, argv); }
+#endif

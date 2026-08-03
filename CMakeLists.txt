@@ -187,7 +187,8 @@ IF(BUILD_FFUTIL)
     set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 17)
 
     IF(WIN32)
-        set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "setargv.obj")
+        # Wide argv preserves Unicode paths; wsetargv also expands wildcards.
+        set_target_properties(ovf-batchfft PROPERTIES LINK_FLAGS "wsetargv.obj")
     ENDIF()
 
     if(MSVC)

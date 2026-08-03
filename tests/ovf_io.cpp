@@ -5,6 +5,7 @@
 #include<algorithm>
 #include<cmath>
 #include<array>
+#include<vector>
 
 //main writing interface
 #include<OVFWriter.h>
@@ -103,44 +104,58 @@ int main(int argc, char** argv)
                 points[point, i] /= nrm;
         }
     }
+    //Mixed-version ranges are rejected without rewriting either input header.
+    std::vector<VField::VField> mixedVersions{testOVF, testOVF};
+    mixedVersions[1].header().setVersion(VField::OVFVersion::OVF1);
+    const auto mixedResult = writeOVF(workingDir + "mixed.ovf", mixedVersions);
+    if(mixedResult ||
+       mixedResult.error().code != VField::WriteErrorCode::IncompatibleVersions ||
+       mixedVersions[0].header().version() != VField::OVFVersion::OVF2 ||
+       mixedVersions[1].header().version() != VField::OVFVersion::OVF1)
+    {
+        std::cerr << "Mixed-version range writing modified or accepted its input!\n";
+        return 15;
+    }
+
     //try writing ovf out in file named tmpOVF.ovf
-    auto writeResult {WriteOVF(workingDir + "tmpOVF2.ovf", testOVF)};
+    auto writeResult {writeOVF(workingDir + "tmpOVF2.ovf", testOVF)};
     if(!writeResult)
     {
-        std::cerr << "Got some errors while exporting an ovf2:\n" << writeResult.error();
+        std::cerr << "Got some errors while exporting an ovf2:\n" << writeResult.error().message;
         return 2;
     }
 
     //try reading it back
-    VField::VFieldFile readBack(workingDir + "tmpOVF2.ovf");
-    if(!readBack.WorkLog().empty())
+    auto opened = VField::VFieldFile::open(workingDir + "tmpOVF2.ovf");
+    if(!opened)
     {
-        std::cerr << "Got errors reading the file:\n" << readBack.WorkLog() << "\n";
+        std::cerr << "Got errors reading the file:\n" << opened.error().message << "\n";
         return 3;
     }
-    auto fields = readBack.fieldView();
-    const auto constFields = std::as_const(readBack).fieldView();
-    if(fields.size() != 1 || constFields.size() != 1 ||
-       !fields[0].isDataPresent() || fields.data() != constFields.data())
+    auto readBack = std::move(*opened);
+    auto fieldsResult = readBack.fields();
+    if(!fieldsResult || fieldsResult->size() != 1 ||
+       !fieldsResult->front().isDataPresent())
     {
         std::cerr << "VFieldFile span access failed!\n";
         return 7;
     }
 
-    auto fileCopy = readBack;
-    if(fileCopy.fieldView().size() != fields.size() ||
-       fileCopy.fieldView()[0] != fields[0])
+    const auto fields = *fieldsResult;
+    auto fileCopy = std::as_const(readBack).fieldsCopy();
+    if(!fileCopy || fileCopy->size() != fields.size() ||
+       fileCopy->front() != fields.front())
     {
         std::cerr << "VFieldFile copy with unique ownership failed!\n";
         return 8;
     }
-    if(!readBack.unfetch(0) || readBack.isFetched(0) || !readBack.hasData(0) ||
-       readBack.unfetch(readBack.cntSegments()))
+    if(!readBack.unload(0) || readBack.dataLoaded(0) || !readBack.dataAvailable(0) ||
+       readBack.unload(readBack.segmentCount()))
     {
         std::cerr << "Unfetch did not preserve lazy reload metadata!\n";
         return 13;
     }
-    if(!readBack[0].isDataPresent())
+    if(auto loaded = readBack.load(0); !loaded || !loaded->get().isDataPresent())
     {
         std::cerr << "Unfetched segment could not be fetched again!\n";
         return 14;
@@ -150,8 +165,13 @@ int main(int argc, char** argv)
     constexpr std::size_t sliceCount = 5;
     const auto sliceDimension = testOVF.pointDimension();
     const auto contiguousSlice = readBack.readSlice(0, sliceFirst, sliceCount);
+    if(!contiguousSlice)
+    {
+        std::cerr << "Contiguous slice read failed: " << contiguousSlice.error().message << "\n";
+        return 9;
+    }
     const auto sourcePoints = std::as_const(testOVF).pointView<double>();
-    const auto slicedPoints = std::as_const(contiguousSlice).pointView<double>();
+    const auto slicedPoints = std::as_const(*contiguousSlice).pointView<double>();
     if(slicedPoints.extent(0) != sliceCount || slicedPoints.extent(1) != sliceDimension)
     {
         std::cerr << "Contiguous slice has unexpected dimensions!\n";
@@ -165,35 +185,35 @@ int main(int argc, char** argv)
                 return 10;
             }
     //and compare to original data, by first writing and then reading back
-    auto BareOVF2 { const_cast<const VField::VFieldFile&>(readBack)[0] };
-    if(auto rewriteResult = WriteOVF(workingDir + "tmpOVF2.ovf", testOVF); !rewriteResult)
+    auto BareOVF2 = std::as_const(readBack).copy(0).value();
+    if(auto rewriteResult = writeOVF(workingDir + "tmpOVF2.ovf", testOVF); !rewriteResult)
     {
-        std::cerr << "Got errors rewriting the OVF2 file:\n" << rewriteResult.error();
+        std::cerr << "Got errors rewriting the OVF2 file:\n" << rewriteResult.error().message;
         return 11;
     }
-    readBack.read(workingDir + "tmpOVF2.ovf");
-    if(BareOVF2 != readBack[0])
+    if(!readBack.read(workingDir + "tmpOVF2.ovf") ||
+       BareOVF2 != readBack.load(0).value().get())
     {
         std::cerr << "While testing OVF2 read back different data!\n";
         return 4;
     }
     //success with OVF2 parsing by this point, try OVF1 for kicks too
     testOVF.header().set(VField::OVFParameter::VersionString, "# OOMMF: rectangular mesh v1.0");
-    writeResult = WriteOVF(workingDir + "tmpOVF1.ovf", testOVF);
+    writeResult = writeOVF(workingDir + "tmpOVF1.ovf", testOVF);
     if(!writeResult)
     {
-        std::cerr << "Got some errors while exporting an ovf1:\n" << writeResult.error();
+        std::cerr << "Got some errors while exporting an ovf1:\n" << writeResult.error().message;
         return 5;
     }
-    readBack.read(workingDir + "tmpOVF1.ovf");
-    auto BareOVF1 { const_cast<const VField::VFieldFile&>(readBack)[0] };
-    if(auto rewriteResult = WriteOVF(workingDir + "tmpOVF1.ovf", testOVF); !rewriteResult)
+    if(!readBack.read(workingDir + "tmpOVF1.ovf")) return 5;
+    auto BareOVF1 = std::as_const(readBack).copy(0).value();
+    if(auto rewriteResult = writeOVF(workingDir + "tmpOVF1.ovf", testOVF); !rewriteResult)
     {
-        std::cerr << "Got errors rewriting the OVF1 file:\n" << rewriteResult.error();
+        std::cerr << "Got errors rewriting the OVF1 file:\n" << rewriteResult.error().message;
         return 12;
     }
-    readBack.read(workingDir + "tmpOVF1.ovf");
-    if(BareOVF1 != readBack[0])
+    if(!readBack.read(workingDir + "tmpOVF1.ovf") ||
+       BareOVF1 != readBack.load(0).value().get())
     {
         std::cerr << "While testing OVF1 read back different data!\n";
         return 6;

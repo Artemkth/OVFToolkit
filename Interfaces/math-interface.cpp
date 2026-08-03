@@ -799,33 +799,48 @@ extern "C" void import(const char* fileName, int optc, int spanc)
 
     //next open the file finally
     auto cacheEntry = std::find_if( ovfImportCache.begin(), ovfImportCache.end(), 
-            [&fPath] (const VField::VFieldFile& handle) {return handle.getCurrentPath() == fPath.value().string();});
+            [&fPath] (const VField::VFieldFile& handle) {return handle.path() == *fPath;});
     if( IgnoreCache.value_or(false) || cacheEntry == ovfImportCache.end() )
     {
         if(cacheEntry == ovfImportCache.end())
         {
-            ovfImportCache.emplace_back(fPath.value().string());
-            if(!ovfImportCache.back().WorkLog().empty())
-                PostErrorMessage("ImportOVF", "prserr", ovfImportCache.back().WorkLog());
+            auto opened = VField::VFieldFile::open(*fPath);
+            if(!opened)
+            {
+                PostErrorMessage("ImportOVF", "prserr", opened.error().message);
+                deinit();
+                return;
+            }
+            ovfImportCache.push_back(std::move(*opened));
 
             cacheEntry = --ovfImportCache.end();//last element
         }
         else
         {
-            cacheEntry -> read(fPath.value().string());
-            if( ! cacheEntry -> WorkLog().empty() )
-                PostErrorMessage("ImportOVF", "prserr", cacheEntry -> WorkLog());
+            if(auto result = cacheEntry->read(*fPath); !result)
+            {
+                PostErrorMessage("ImportOVF", "prserr", result.error().message);
+                deinit();
+                return;
+            }
         }
     }
 
-    const auto& fileHandle = *cacheEntry;
+    auto& fileHandle = *cacheEntry;
 
     //and start outputting data
     if(spanc == 0)
     {
-        if (fileHandle.cntSegments() != 1) WSPutFunction(stdlink, "List", fileHandle.cntSegments());
+        if (fileHandle.segmentCount() != 1) WSPutFunction(stdlink, "List", fileHandle.segmentCount());
         std::size_t seg_cnt{0};
-        for(const auto& field: fileHandle.fieldView())
+        auto allFields = fileHandle.fields();
+        if(!allFields)
+        {
+            PostErrorMessage("ImportOVF", "prserr", allFields.error().message);
+            deinit();
+            return;
+        }
+        for(const auto& field: *allFields)
         {
             if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
             //Output Header
@@ -837,7 +852,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
                 //Output data
                 if(!field.isAddressable())
                 {
-                    PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.getCurrentPath());
+                    PostErrorMessage("ImportOVF", "naddr", seg_cnt, fileHandle.path().string());
                     WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
                 }
                 else
@@ -848,7 +863,7 @@ extern "C" void import(const char* fileName, int optc, int spanc)
     }
     else
     {
-        const auto segments = parseSpan(Spans[1], fileHandle.cntSegments());
+        const auto segments = parseSpan(Spans[1], fileHandle.segmentCount());
         if (!segments.has_value())
         {
             WSPutSymbol(stdlink, "$Failed");
@@ -862,17 +877,24 @@ extern "C" void import(const char* fileName, int optc, int spanc)
         {
             if (segment_dim!=1) WSPutFunction(stdlink, "List", segment_dim);
             //Output Header
-            if (sendHeader.value_or(true)) OutputHeader(fileHandle.getSegmentHeader(seg));
+            if (sendHeader.value_or(true)) OutputHeader(fileHandle.header(seg).value().get());
 
             //Output Data
             if (sendData.value_or(true)) 
             {
-                const auto field = fileHandle[seg];
+                auto loaded = fileHandle.load(seg);
+                if(!loaded)
+                {
+                    PostErrorMessage("ImportOVF", "prserr", loaded.error().message);
+                    WSPutFunction(stdlink, "List", 0);
+                    continue;
+                }
+                const auto& field = loaded->get();
 
                 //Output data
                 if(!field.isAddressable())
                 {
-                    PostErrorMessage("ImportOVF", "naddr", seg, fileHandle.getCurrentPath());
+                    PostErrorMessage("ImportOVF", "naddr", seg, fileHandle.path().string());
                     WSPutFunction(stdlink, "List", 0); //and that's all the data you get when field is not addressable :p
                 }
                 else
@@ -1380,8 +1402,8 @@ extern "C" void exportOVF(const char* fName, int optc)
         }
     }
 
-    if(auto result = WriteOVF(output.string(), field); !result)
-        PostErrorMessage("ExportOVF", "expfail", result.error());
+    if(auto result = writeOVF(output, field); !result)
+        PostErrorMessage("ExportOVF", "expfail", result.error().message);
 
     //on success end by returning a 'Null'
     deinit();
