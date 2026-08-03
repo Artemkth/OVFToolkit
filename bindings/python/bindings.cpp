@@ -1,15 +1,24 @@
 #include <OVFDictionary.h>
+#include <OVFParser.h>
+#include <OVFWriter.h>
 #include <VField.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <format>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,6 +38,201 @@ struct FieldHeader {
 
     [[nodiscard]] VField::OVFHeader& header() const noexcept
     { return field->header(); }
+};
+
+[[nodiscard]] std::filesystem::path pythonPath(nb::handle value)
+{
+    nb::object converted = nb::module_::import_("os").attr("fspath")(value);
+    if(!nb::isinstance<nb::str>(converted))
+        throw nb::type_error("filesystem paths must resolve to str, not bytes");
+    const auto text = nb::cast<std::string>(converted);
+    return std::filesystem::path{std::u8string{
+        reinterpret_cast<const char8_t*>(text.data()), text.size()}};
+}
+
+[[noreturn]] void throwOSError(const std::string& message)
+{
+    PyErr_SetString(PyExc_OSError, message.c_str());
+    throw nb::python_error();
+}
+
+[[noreturn]] void throwReadError(const VField::ReadError& error)
+{
+    switch(error.code)
+    {
+      case VField::ReadErrorCode::OpenFailed:
+      case VField::ReadErrorCode::StreamFailure:
+        throwOSError(error.message);
+      case VField::ReadErrorCode::InvalidSegment:
+        throw nb::index_error(error.message.c_str());
+      case VField::ReadErrorCode::InvalidFormat:
+        throw nb::value_error(error.message.c_str());
+      case VField::ReadErrorCode::DataUnavailable:
+        throw std::runtime_error(error.message);
+    }
+    std::unreachable();
+}
+
+[[noreturn]] void throwWriteError(const VField::WriteError& error)
+{
+    if(error.code == VField::WriteErrorCode::StreamFailure)
+        throwOSError(error.message);
+    throw nb::value_error(error.message.c_str());
+}
+
+class PythonReader {
+    std::optional<VField::VFieldFile> file_;
+
+    [[nodiscard]] VField::VFieldFile& openFile()
+    {
+        if(!file_)
+            throw nb::value_error("I/O operation on closed OVF reader");
+        return *file_;
+    }
+
+    [[nodiscard]] const VField::VFieldFile& openFile() const
+    {
+        if(!file_)
+            throw nb::value_error("I/O operation on closed OVF reader");
+        return *file_;
+    }
+
+    [[nodiscard]] std::size_t index(std::ptrdiff_t value) const
+    {
+        const auto count = openFile().segmentCount();
+        if(value < 0)
+            value += static_cast<std::ptrdiff_t>(count);
+        if(value < 0 || static_cast<std::size_t>(value) >= count)
+            throw nb::index_error("OVF segment index is out of range");
+        return static_cast<std::size_t>(value);
+    }
+
+  public:
+    PythonReader(nb::handle path, bool eager)
+    {
+        auto opened = VField::VFieldFile::open(
+            pythonPath(path), eager ? VField::DataLoading::Eager
+                                    : VField::DataLoading::Lazy);
+        if(!opened)
+            throwReadError(opened.error());
+        file_.emplace(std::move(*opened));
+    }
+
+    [[nodiscard]] bool closed() const noexcept { return !file_; }
+    [[nodiscard]] std::size_t size() const { return openFile().segmentCount(); }
+
+    [[nodiscard]] VField::VField read(std::ptrdiff_t segment) const
+    {
+        auto result = openFile().copy(index(segment));
+        if(!result)
+            throwReadError(result.error());
+        return std::move(*result);
+    }
+
+    [[nodiscard]] VField::OVFHeader header(std::ptrdiff_t segment) const
+    {
+        auto result = openFile().header(index(segment));
+        if(!result)
+            throwReadError(result.error());
+        return result->get();
+    }
+
+    void close() noexcept { file_.reset(); }
+};
+
+class PythonWriter {
+    std::filesystem::path path_;
+    std::size_t expected_;
+    std::size_t written_{};
+    std::size_t deductionIterations_;
+    std::unique_ptr<std::ofstream> output_;
+    std::optional<VField::OVFVersion> version_;
+    std::string deductionReport_;
+    bool closed_{};
+
+    void ensureOpen() const
+    {
+        if(closed_)
+            throw nb::value_error("I/O operation on closed OVF writer");
+    }
+
+  public:
+    PythonWriter(nb::handle path, std::size_t segments,
+                 std::size_t deductionIterations)
+      : path_(pythonPath(path)), expected_(segments),
+        deductionIterations_(deductionIterations)
+    {
+        if(expected_ == 0)
+            throw nb::value_error("segments must be greater than zero");
+    }
+
+    [[nodiscard]] bool closed() const noexcept { return closed_; }
+    [[nodiscard]] std::size_t written() const noexcept { return written_; }
+    [[nodiscard]] const std::string& deductionReport() const noexcept
+    { return deductionReport_; }
+
+    void write(const VField::VField& source)
+    {
+        ensureOpen();
+        if(written_ >= expected_)
+            throw nb::value_error("more OVF segments were written than declared");
+
+        VField::VField field{source};
+        deductionReport_ = field.deduceRecursively(deductionIterations_);
+        if(const auto validation = field.validate(); !validation)
+            throw nb::value_error(std::format(
+                "header deduction did not produce a valid field:{}\n{}",
+                deductionReport_, validation.error().report).c_str());
+
+        if(!output_)
+        {
+            version_ = field.header().version();
+            output_ = std::make_unique<std::ofstream>(
+                path_, std::ios_base::out | std::ios_base::binary |
+                       std::ios_base::trunc);
+            if(!output_->good())
+                throwOSError("unable to open OVF output file");
+            *output_ << field.header().requireAs<std::string>(OVFParameter::VersionString)
+                     << "\n# Segment count: " << expected_ << '\n';
+        }
+        else if(field.header().version() != *version_)
+            throw nb::value_error("all OVF segments must use the same version");
+
+        if(written_ != 0)
+            *output_ << '\n';
+        if(auto result = VField::writeSegment(*output_, field); !result)
+            throwWriteError(result.error());
+        ++written_;
+    }
+
+    void close()
+    {
+        if(closed_)
+            return;
+        closed_ = true;
+        if(written_ != expected_)
+        {
+            output_.reset();
+            throw nb::value_error(std::format(
+                "writer expected {} segments but received {}", expected_, written_).c_str());
+        }
+        if(output_)
+        {
+            output_->flush();
+            if(!output_->good())
+            {
+                output_.reset();
+                throwOSError("failed while writing OVF output file");
+            }
+            output_.reset();
+        }
+    }
+
+    void abort() noexcept
+    {
+        closed_ = true;
+        output_.reset();
+    }
 };
 
 [[nodiscard]] constexpr bool isShapeDerived(OVFParameter parameter) noexcept
@@ -276,6 +480,62 @@ void setFieldData(VField::VField& field, nb::object value)
     }
 }
 
+using Coordinates = std::array<double, 3>;
+
+void setDummyHeader(VField::VField& field, const Coordinates& cellSize,
+                    std::optional<Coordinates> origin)
+{
+    if(!field.isDataPresent() ||
+       field.header().meshType() != VField::MeshType::Rectangular ||
+       !field.isGridAddressable())
+        throw nb::value_error(
+            "dummy_header requires rectangular rank-4 data to be assigned first");
+
+    for(const auto value : cellSize)
+        if(!std::isfinite(value) || value <= 0.)
+            throw nb::value_error("cell_size values must be finite and greater than zero");
+
+    const Coordinates gridOrigin = origin.value_or(Coordinates{
+        cellSize[0] / 2., cellSize[1] / 2., cellSize[2] / 2.});
+    for(const auto value : gridOrigin)
+        if(!std::isfinite(value))
+            throw nb::value_error("origin values must be finite");
+
+    const auto& oldHeader = field.header();
+    const auto version = oldHeader.version();
+    const auto xnodes = oldHeader.requireAs<std::size_t>(OVFParameter::Xnodes);
+    const auto ynodes = oldHeader.requireAs<std::size_t>(OVFParameter::Ynodes);
+    const auto znodes = oldHeader.requireAs<std::size_t>(OVFParameter::Znodes);
+    const auto valueDimension =
+        oldHeader.requireAs<std::size_t>(OVFParameter::Vdim);
+
+    auto& header = field.header();
+    header = VField::OVFHeader{version};
+    header.setMeshType(VField::MeshType::Rectangular);
+    header.set<OVFParameter::Xnodes>(xnodes);
+    header.set<OVFParameter::Ynodes>(ynodes);
+    header.set<OVFParameter::Znodes>(znodes);
+    header.set<OVFParameter::Vdim>(valueDimension);
+    header.set<OVFParameter::Xstep>(cellSize[0]);
+    header.set<OVFParameter::Ystep>(cellSize[1]);
+    header.set<OVFParameter::Zstep>(cellSize[2]);
+    header.set<OVFParameter::Xbase>(gridOrigin[0]);
+    header.set<OVFParameter::Ybase>(gridOrigin[1]);
+    header.set<OVFParameter::Zbase>(gridOrigin[2]);
+    field.deduceRecursively(5);
+
+    if(const auto validation = field.validate(); !validation)
+        throw nb::value_error(std::format(
+            "failed to create a valid dummy header:\n{}",
+            validation.error().report).c_str());
+}
+
+void setIsotropicDummyHeader(VField::VField& field, double cellSize,
+                             std::optional<Coordinates> origin)
+{
+    setDummyHeader(field, Coordinates{cellSize, cellSize, cellSize}, origin);
+}
+
 void validateHeader(const VField::OVFHeader& header)
 {
     if(const auto result = header.validate(); !result)
@@ -302,6 +562,57 @@ NB_MODULE(ovftoolkit, module)
     nb::enum_<VField::MeshType>(module, "MeshType")
         .value("Irregular", VField::MeshType::Irregular)
         .value("Rectangular", VField::MeshType::Rectangular);
+
+    nb::class_<PythonReader>(module, "Reader")
+        .def("__enter__", [](PythonReader& reader) -> PythonReader& {
+            if(reader.closed())
+                throw nb::value_error("cannot enter a closed OVF reader");
+            return reader;
+        }, nb::rv_policy::reference_internal)
+        .def("__exit__", [](PythonReader& reader, nb::object, nb::object,
+                            nb::object) {
+            reader.close();
+            return false;
+        }, nb::arg("exception_type").none(), nb::arg("exception").none(),
+           nb::arg("traceback").none())
+        .def("__len__", &PythonReader::size)
+        .def("__getitem__", &PythonReader::read)
+        .def("read", &PythonReader::read, nb::arg("segment") = 0)
+        .def("header", &PythonReader::header, nb::arg("segment") = 0)
+        .def("close", &PythonReader::close)
+        .def_prop_ro("closed", &PythonReader::closed);
+
+    nb::class_<PythonWriter>(module, "Writer")
+        .def("__enter__", [](PythonWriter& writer) -> PythonWriter& {
+            if(writer.closed())
+                throw nb::value_error("cannot enter a closed OVF writer");
+            return writer;
+        }, nb::rv_policy::reference_internal)
+        .def("__exit__", [](PythonWriter& writer, nb::object exceptionType,
+                            nb::object, nb::object) {
+            if(exceptionType.is_none())
+                writer.close();
+            else
+                writer.abort();
+            return false;
+        }, nb::arg("exception_type").none(), nb::arg("exception").none(),
+           nb::arg("traceback").none())
+        .def("write", &PythonWriter::write)
+        .def("close", &PythonWriter::close)
+        .def_prop_ro("closed", &PythonWriter::closed)
+        .def_prop_ro("segments_written", &PythonWriter::written)
+        .def_prop_ro("deduction_report", &PythonWriter::deductionReport);
+
+    module.def("reader", [](nb::handle path, bool eager) {
+        return PythonReader{path, eager};
+    }, nb::arg("path"), nb::arg("eager") = false,
+       "Open an OVF reader; data loading is lazy by default");
+    module.def("writer", [](nb::handle path, std::size_t segments,
+                            std::size_t deductionIterations) {
+        return PythonWriter{path, segments, deductionIterations};
+    }, nb::arg("path"), nb::arg("segments") = 1,
+       nb::arg("deduction_iterations") = 5,
+       "Create a streaming OVF writer with automatic header deduction");
 
     auto parameter = nb::enum_<OVFParameter>(module, "OVFParameter");
     for(const auto value : VField::ParamUniverse)
@@ -421,6 +732,17 @@ NB_MODULE(ovftoolkit, module)
         .def_prop_ro("scalar_count", &VField::VField::scalarCount)
         .def_prop_ro("point_count", &VField::VField::pointCount)
         .def_prop_ro("point_dimension", &VField::VField::pointDimension)
+        .def("dummy_header", &setDummyHeader,
+            nb::arg("cell_size"), nb::arg("origin").none() = nb::none(),
+            "Replace the header with defaults for rectangular data. cell_size "
+            "is (x, y, z); origin defaults to cell_size / 2.")
+        .def("dummy_header", &setIsotropicDummyHeader,
+            nb::arg("cell_size"), nb::arg("origin").none() = nb::none(),
+            "Replace the header with defaults for an isotropic rectangular grid.")
+        .def("deduce", [](VField::VField& field, std::size_t iterations) {
+            return field.deduceRecursively(iterations);
+        }, nb::arg("max_iterations") = 5,
+           "Deduce missing header fields in place and return the deduction report")
         .def("validate", &validateField,
             "Validate header and data or raise ValueError with the report");
 }

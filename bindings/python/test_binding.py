@@ -1,4 +1,6 @@
 import gc
+import pathlib
+import tempfile
 
 import numpy as np
 
@@ -95,3 +97,30 @@ for invalid in (ovf.OVFHeader(), ovf.VField(), ovf.VField().header):
         assert str(error)
     else:
         raise AssertionError("invalid objects must raise ValueError when validated")
+
+with tempfile.TemporaryDirectory() as directory:
+    path = pathlib.Path(directory) / "π-field.ovf"
+    original = ovf.VField()
+    original.data = np.arange(24, dtype=np.float32).reshape(1, 2, 4, 3)
+    original.dummy_header((2.0, 3.0, 4.0))
+    assert original.header[ovf.OVFParameter.xbase] == 1.0
+    assert original.header[ovf.OVFParameter.ybase] == 1.5
+    assert original.header[ovf.OVFParameter.zbase] == 2.0
+    assert original.header[ovf.OVFParameter.xmin] == 0.0
+    assert original.header[ovf.OVFParameter.xmax] == 8.0
+    original.header[ovf.OVFParameter.Title] = "Python context manager"
+
+    with ovf.writer(path) as destination:
+        destination.write(original)
+        assert destination.segments_written == 1
+        assert destination.deduction_report
+    assert destination.closed
+
+    with ovf.reader(path) as source:
+        assert len(source) == 1
+        assert source.header()[ovf.OVFParameter.Title] == "Python context manager"
+        loaded = source[-1]
+        assert isinstance(loaded.data, np.ndarray)
+        np.testing.assert_array_equal(loaded.data, original.data)
+    assert source.closed
+    np.testing.assert_array_equal(loaded.data, original.data)
