@@ -31,7 +31,12 @@
 #include"OVFToolkitConfig.h"
 
 //fft engines
+#ifdef OVFTOOLKIT_HAS_CUFFT
 #include"cuda-backend.h"
+#endif
+#ifdef OVFTOOLKIT_HAS_FFTW
+#include"fftw-backend.h"
+#endif
 #include"fft-frequency.h"
 
 //console backend
@@ -598,6 +603,24 @@ void transformHeader(VField::OVFHeader& head, const std::string& tStampPattern)
 //TODO: look if windows can deal with UTF here, maybe implement winmain with UTF-16 parameters
 //TODO: include link to setargv.obg/wsetargv.obj in the windows build, look at https://docs.microsoft.com/en-us/cpp/c-runtime-library/link-options?view=vs-2019
 //TODO: disable monitors when output is redirected to a file
+void printGreeting()
+{
+    std::cout << "OVFToolkit time-domain FFT batch processing utility "
+              << OVFTOOLKIT_VERSION_STRING << '\n'
+              << "Copyright (c) 2020-2026 Artem Bondarenko\n"
+              << "Available FFT engines:";
+#ifdef OVFTOOLKIT_HAS_CUFFT
+    std::cout << " gpu (cuFFT)";
+#endif
+#ifdef OVFTOOLKIT_HAS_FFTW
+#ifdef OVFTOOLKIT_HAS_CUFFT
+    std::cout << ',';
+#endif
+    std::cout << " fftw";
+#endif
+    std::cout << "\n\n" << std::flush;
+}
+
 int batchMain(int argc, char** argv)
 {
     std::vector<fname_type> fileList{};
@@ -605,11 +628,21 @@ int batchMain(int argc, char** argv)
     std::string oFileName {};
 
     //system configuration
+#ifdef OVFTOOLKIT_HAS_CUFFT
     int gpu { -1 };
+#endif
+#if defined(OVFTOOLKIT_HAS_CUFFT)
+    std::string engineName{"gpu"};
+#else
+    std::string engineName{"fftw"};
+#endif
     std::optional<std::size_t> maxRam{};
+#ifdef OVFTOOLKIT_HAS_CUFFT
     std::optional<std::size_t> maxVRam{};
+#endif
     bool no_norm { false };
     bool no_reinterp { false };
+    std::unique_ptr<FFTEngine<float>> fft_engine;
     //first parse command-line options
     try
     {
@@ -621,9 +654,16 @@ int batchMain(int argc, char** argv)
             ("version,v", boost::program_options::bool_switch(), "Get this software's version information.")
             ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required( ), "Time sequence of vector fields in .ovf files." )
             ("output,o", boost::program_options::value<std::string>(&oFileName)->default_value("spectrum.ovf"), "Spectrum output file name.")
+#ifdef OVFTOOLKIT_HAS_MULTIPLE_FFT_ENGINES
+            ("engine", boost::program_options::value<std::string>(&engineName)->default_value("gpu"), "FFT engine: gpu (default) or fftw.")
+#endif
+#ifdef OVFTOOLKIT_HAS_CUFFT
             ("gpu", boost::program_options::value<int>(&gpu)->default_value(-1), "GPU id for CUDA fft.")
+#endif
             ("max-ram", boost::program_options::value<std::string>()->notifier([&maxRam](const std::string& sizeSpec){ maxRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on host machine for buffers.")
+#ifdef OVFTOOLKIT_HAS_CUFFT
             ("max-vram", boost::program_options::value<std::string>()->notifier([&maxVRam](const std::string& sizeSpec){ maxVRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on GPU for transform.")
+#endif
             ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.")
             ("no-norm", boost::program_options::bool_switch(&no_norm), "Don't normalize the fourier transform result.")
             ("no-reinterp", boost::program_options::bool_switch(&no_reinterp), "Don't reinterpolate the data to remove jitter.");
@@ -641,26 +681,67 @@ int batchMain(int argc, char** argv)
 
         if(vmap["help"].as<bool>())
         {
+            printGreeting();
             std::cout << desc ;
             return 0;
         }
         if(vmap["version"].as<bool>())
         {
-            std::cout << "OVFToolkit time domain FFT batch processing utility ver. " << OVFTOOLKIT_VERSION_STRING << "\n";
-            std::cout << "Copyright (C) 2020 Artem Bondarenko\n" ;
-            //TODO: add dependancies information into the message, gsl, fftw, CUDA and boost
+            printGreeting();
             return 0;
         }
 
+#ifdef OVFTOOLKIT_HAS_MULTIPLE_FFT_ENGINES
+        engineName = vmap["engine"].as<std::string>();
+#endif
+#ifdef OVFTOOLKIT_HAS_CUFFT
+        gpu = vmap["gpu"].as<int>();
+#endif
+        // Reject an unavailable backend before enforcing or opening input files.
+        if (engineName == "gpu")
+        {
+#ifdef OVFTOOLKIT_HAS_CUFFT
+            int deviceCount{};
+            const auto cudaStatus = cudaGetDeviceCount(&deviceCount);
+            if (cudaStatus != cudaSuccess || deviceCount == 0 || gpu >= deviceCount || gpu < -1)
+            {
+                std::cerr << "The requested GPU FFT engine is unavailable";
+                if (cudaStatus != cudaSuccess)
+                    std::cerr << ": " << cudaGetErrorString(cudaStatus);
+                else if (gpu >= deviceCount || gpu < -1)
+                    std::cerr << ": invalid GPU id " << gpu;
+                std::cerr << ".\n";
+                return 1;
+            }
+            fft_engine = std::make_unique<cuFFTEngine>(gpu);
+#else
+            std::cerr << "The GPU FFT engine is unavailable in this build.\n";
+            return 1;
+#endif
+        }
+        else if (engineName == "fftw")
+        {
+#ifdef OVFTOOLKIT_HAS_FFTW
+            fft_engine = std::make_unique<FFTWEngine>();
+#else
+            std::cerr << "The FFTW engine is unavailable in this build.\n";
+            return 1;
+#endif
+        }
+        else
+        {
+            std::cerr << "Unknown FFT engine '" << engineName << "'.\n";
+            return 1;
+        }
+
         boost::program_options::notify(vmap);
+        printGreeting();
     }
     catch (const std::exception& e)
     {
         std::cerr << "Error while parsing command line: " << e.what() << "\n";
         return -1;
     }
-    //virtual class so I can use fftw instead if I want to
-    std::unique_ptr<FFTEngine<float>> fft_engine(new cuFFTEngine(gpu));
     std::future<bool> engineInit{};
 
     //try to validate file list beforehand
@@ -918,8 +999,12 @@ int batchMain(int argc, char** argv)
         //begin initialization of engines outside main thread once dimensions are known
         engineInit = std::async( std::launch::async, [&] ()
         {
-            //TODO add code for fallback to cpu engine(fftw) later
-            auto res = fft_engine -> Init( tSeriesLength, VFSize, maxVRam.value_or(0) );
+            auto engineMemoryLimit = maxRam.value_or(0);
+#ifdef OVFTOOLKIT_HAS_CUFFT
+            if (engineName == "gpu")
+                engineMemoryLimit = maxVRam.value_or(0);
+#endif
+            auto res = fft_engine -> Init(tSeriesLength, VFSize, engineMemoryLimit);
 
             auto batch = fft_engine -> expectedBatch();
             auto cPoints = batch * (tSeriesLength/2 + 1);
@@ -1023,12 +1108,11 @@ int batchMain(int argc, char** argv)
             no_reinterp = true;
     }
 
-    //wait here for GPU to finish initializing, and buffers being created
+    //wait here for the selected engine to initialize and buffers to be created
     engineInit.get();
     if( !fft_engine -> isReady() )
     {
-        //TODO: add logic for initialize on cpu instead once that is finished
-        std::cerr << "Failed to initialize a FFT engine, quiting!\n";
+        std::cerr << "Failed to initialize the " << engineName << " FFT engine, quitting!\n";
         return -1;
     }
     //initialize interpolation
