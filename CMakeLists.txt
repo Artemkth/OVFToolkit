@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 
 #versioning
-project(OVFToolkit VERSION 0.2 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
+project(OVFToolkit VERSION 0.2.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
 
 #TODO: add some more checks
 # C++ standard

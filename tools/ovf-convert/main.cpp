@@ -44,7 +44,7 @@ namespace {
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 
-constexpr std::string_view version = "0.2";
+constexpr std::string_view version = "0.2.1";
 
 class H5Handle {
     hid_t id_{-1};
