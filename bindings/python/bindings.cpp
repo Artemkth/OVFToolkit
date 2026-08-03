@@ -22,6 +22,32 @@ namespace {
 
 using VField::OVFParameter;
 
+[[nodiscard]] std::string_view pythonName(OVFParameter parameter);
+
+struct FieldHeader {
+    VField::VField* field;
+
+    [[nodiscard]] VField::OVFHeader& header() const noexcept
+    { return field->header(); }
+};
+
+[[nodiscard]] constexpr bool isShapeDerived(OVFParameter parameter) noexcept
+{
+    return parameter == OVFParameter::Mtype ||
+           parameter == OVFParameter::Pcount ||
+           parameter == OVFParameter::Vdim ||
+           parameter == OVFParameter::Xnodes ||
+           parameter == OVFParameter::Ynodes ||
+           parameter == OVFParameter::Znodes;
+}
+
+[[noreturn]] void throwShapeDerived(OVFParameter parameter)
+{
+    throw nb::attribute_error(std::format(
+        "{} is derived from VField.data shape and is read-only",
+        pythonName(parameter)).c_str());
+}
+
 [[nodiscard]] std::string normalized(std::string_view text)
 {
     std::string result;
@@ -194,6 +220,13 @@ void setFieldData(VField::VField& field, nb::object value)
     if(value.is_none())
     {
         field.clearData();
+        auto& header = field.header();
+        header.clear<OVFParameter::Mtype>();
+        header.clear<OVFParameter::Pcount>();
+        header.clear<OVFParameter::Vdim>();
+        header.clear<OVFParameter::Xnodes>();
+        header.clear<OVFParameter::Ynodes>();
+        header.clear<OVFParameter::Znodes>();
         return;
     }
     using Array = nb::ndarray<nb::numpy, nb::c_contig>;
@@ -206,12 +239,41 @@ void setFieldData(VField::VField& field, nb::object value)
     {
         throw nb::type_error("data must be a C-contiguous NumPy ndarray or None");
     }
+    if(array.ndim() != 2 && array.ndim() != 4)
+        throw nb::value_error("data must have rank 2 (irregular) or rank 4 (rectangular)");
+    for(std::size_t dimension{}; dimension < array.ndim(); ++dimension)
+        if(array.shape(dimension) == 0)
+            throw nb::value_error("data dimensions must be nonzero");
+    if(array.ndim() == 2 && array.shape(1) <= 3)
+        throw nb::value_error(
+            "rank-2 irregular data requires XYZ plus at least one value component");
+
     if(array.dtype() == nb::dtype<float>())
         field.setData(static_cast<const float*>(array.data()), array.size());
     else if(array.dtype() == nb::dtype<double>())
         field.setData(static_cast<const double*>(array.data()), array.size());
     else
         throw nb::type_error("data dtype must be numpy.float32 or numpy.float64");
+
+    auto& header = field.header();
+    if(array.ndim() == 4)
+    {
+        header.set<OVFParameter::Mtype>(VField::MeshType::Rectangular);
+        header.set<OVFParameter::Znodes>(array.shape(0));
+        header.set<OVFParameter::Ynodes>(array.shape(1));
+        header.set<OVFParameter::Xnodes>(array.shape(2));
+        header.set<OVFParameter::Vdim>(array.shape(3));
+        header.clear<OVFParameter::Pcount>();
+    }
+    else
+    {
+        header.set<OVFParameter::Mtype>(VField::MeshType::Irregular);
+        header.set<OVFParameter::Pcount>(array.shape(0));
+        header.set<OVFParameter::Vdim>(array.shape(1) - 3);
+        header.clear<OVFParameter::Xnodes>();
+        header.clear<OVFParameter::Ynodes>();
+        header.clear<OVFParameter::Znodes>();
+    }
 }
 
 void validateHeader(const VField::OVFHeader& header)
@@ -246,6 +308,67 @@ NB_MODULE(ovftoolkit, module)
         if(VField::paramType(value) != VField::ParameterType::Other)
             parameter.value(pythonName(value).data(), value);
 
+    nb::class_<FieldHeader>(module, "VFieldHeader")
+        .def("__contains__", [](const FieldHeader& proxy, nb::handle key) {
+            try { return proxy.header().contains(parameterFromObject(key)); }
+            catch(const nb::builtin_exception& error) {
+                if(error.type() == nb::exception_type::key_error)
+                    return false;
+                throw;
+            }
+        })
+        .def("__len__", [](const FieldHeader& proxy) {
+            return proxy.header().size();
+        })
+        .def("__iter__", [](const FieldHeader& proxy) {
+            return nb::iter(headerKeys(proxy.header()));
+        })
+        .def("__getitem__", [](const FieldHeader& proxy, nb::handle key) {
+            return headerValue(proxy.header(), key);
+        })
+        .def("__setitem__", [](const FieldHeader& proxy, nb::handle key,
+                               nb::object value) {
+            const auto parameter = parameterFromObject(key);
+            if(isShapeDerived(parameter))
+                throwShapeDerived(parameter);
+            setHeaderValue(proxy.header(), key, std::move(value));
+        }, nb::arg("key"), nb::arg("value").none())
+        .def("__delitem__", [](const FieldHeader& proxy, nb::handle key) {
+            const auto parameter = parameterFromObject(key);
+            if(isShapeDerived(parameter))
+                throwShapeDerived(parameter);
+            if(!proxy.header().contains(parameter))
+                throw nb::key_error("OVF header field is not set");
+            proxy.header().clear(parameter);
+        })
+        .def("keys", [](const FieldHeader& proxy) {
+            return headerKeys(proxy.header());
+        })
+        .def("values", [](const FieldHeader& proxy) {
+            return headerValues(proxy.header());
+        })
+        .def("items", [](const FieldHeader& proxy) {
+            return headerItems(proxy.header());
+        })
+        .def("get", [](const FieldHeader& proxy, nb::handle key,
+                       nb::object fallback) {
+            const auto parameter = parameterFromObject(key);
+            const auto value = proxy.header().lookup(parameter);
+            return value ? pythonValue(value->get()) : std::move(fallback);
+        }, nb::arg("key"), nb::arg("default").none() = nb::none())
+        .def("validate", [](const FieldHeader& proxy) {
+            validateHeader(proxy.header());
+        }, "Validate the attached header or raise ValueError with the report")
+        .def_prop_ro("version", [](const FieldHeader& proxy) {
+            return proxy.header().version();
+        })
+        .def_prop_ro("point_count", [](const FieldHeader& proxy) {
+            return proxy.header().pointCount();
+        })
+        .def_prop_ro("point_dimension", [](const FieldHeader& proxy) {
+            return proxy.header().pointDimension();
+        });
+
     nb::class_<VField::OVFHeader>(module, "OVFHeader")
         .def(nb::init<>())
         .def(nb::init<VField::OVFVersion>())
@@ -279,7 +402,8 @@ NB_MODULE(ovftoolkit, module)
             const auto value = header.lookup(parameter);
             return value ? pythonValue(value->get()) : std::move(fallback);
         }, nb::arg("key"), nb::arg("default").none() = nb::none())
-        .def("validate", &validateHeader)
+        .def("validate", &validateHeader,
+            "Validate this header or raise ValueError with the report")
         .def_prop_ro("version", &VField::OVFHeader::version)
         .def_prop_ro("point_count", &VField::OVFHeader::pointCount)
         .def_prop_ro("point_dimension", &VField::OVFHeader::pointDimension);
@@ -287,9 +411,9 @@ NB_MODULE(ovftoolkit, module)
     nb::class_<VField::VField>(module, "VField")
         .def(nb::init<>())
         .def(nb::init<VField::OVFVersion>())
-        .def_prop_ro("header",
-            static_cast<VField::OVFHeader& (VField::VField::*)() noexcept>(
-                &VField::VField::header), nb::rv_policy::reference_internal)
+        .def_prop_ro("header", [](VField::VField& field) {
+            return FieldHeader{&field};
+        }, nb::keep_alive<0, 1>())
         .def_prop_rw("data", &fieldData, &setFieldData,
             nb::arg("value").none(),
             "Writable zero-copy NumPy view. Assignment replaces C++-owned "
@@ -297,5 +421,6 @@ NB_MODULE(ovftoolkit, module)
         .def_prop_ro("scalar_count", &VField::VField::scalarCount)
         .def_prop_ro("point_count", &VField::VField::pointCount)
         .def_prop_ro("point_dimension", &VField::VField::pointDimension)
-        .def("validate", &validateField);
+        .def("validate", &validateField,
+            "Validate header and data or raise ValueError with the report");
 }
