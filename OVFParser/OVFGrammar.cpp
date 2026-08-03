@@ -536,6 +536,27 @@ namespace VField{
                 return {true, 1. };
             }
         },
+        //Without physical grid metadata, use a unit-spaced mesh. This keeps
+        //shape-derived fields writable while still allowing callers to
+        //override the geometry explicitly before deduction.
+        {
+            OVFParameter::Xstep,
+            [](const VField&) -> sub_pair_t<ParameterType::Floating> {
+                return {true, 1.};
+            }
+        },
+        {
+            OVFParameter::Ystep,
+            [](const VField&) -> sub_pair_t<ParameterType::Floating> {
+                return {true, 1.};
+            }
+        },
+        {
+            OVFParameter::Zstep,
+            [](const VField&) -> sub_pair_t<ParameterType::Floating> {
+                return {true, 1.};
+            }
+        },
         //default value for the base are at (Xstep, Ystep, Zstep)/2 
         {
             OVFParameter::Xbase,
@@ -670,6 +691,13 @@ namespace VField{
             return {false, 0.};
         if(ref.header().meshType() == MeshType::Rectangular)
         {
+            const auto base = std::array{
+                OVFParameter::Xbase, OVFParameter::Ybase, OVFParameter::Zbase};
+            const auto step = std::array{
+                OVFParameter::Xstep, OVFParameter::Ystep, OVFParameter::Zstep};
+            if(!ref.header().contains(base[coordIndex]) ||
+               !ref.header().contains(step[coordIndex]))
+                return {false, 0.};
             switch(coordIndex){
                 case(0):
                     return {true, ref.header().requireAs<double>(OVFParameter::Xbase) - ref.header().requireAs<double>(OVFParameter::Xstep)/2};
@@ -705,13 +733,23 @@ namespace VField{
             return {false, 0.};
         if(ref.header().meshType() == MeshType::Rectangular)
         {
+            const auto base = std::array{
+                OVFParameter::Xbase, OVFParameter::Ybase, OVFParameter::Zbase};
+            const auto step = std::array{
+                OVFParameter::Xstep, OVFParameter::Ystep, OVFParameter::Zstep};
+            const auto nodes = std::array{
+                OVFParameter::Xnodes, OVFParameter::Ynodes, OVFParameter::Znodes};
+            if(!ref.header().contains(base[coordIndex]) ||
+               !ref.header().contains(step[coordIndex]) ||
+               !ref.header().contains(nodes[coordIndex]))
+                return {false, 0.};
             switch(coordIndex){
                 case(0):
-                    return {true, ref.header().requireAs<double>(OVFParameter::Xbase) + ref.header().requireAs<double>(OVFParameter::Xstep) * (0.5 + ref.header().requireAs<std::size_t>(OVFParameter::Xnodes))};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Xbase) + ref.header().requireAs<double>(OVFParameter::Xstep) * (ref.header().requireAs<std::size_t>(OVFParameter::Xnodes) - 0.5)};
                 case(1):
-                    return {true, ref.header().requireAs<double>(OVFParameter::Ybase) + ref.header().requireAs<double>(OVFParameter::Ystep) * (0.5 + ref.header().requireAs<std::size_t>(OVFParameter::Ynodes))};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Ybase) + ref.header().requireAs<double>(OVFParameter::Ystep) * (ref.header().requireAs<std::size_t>(OVFParameter::Ynodes) - 0.5)};
                 case(2):
-                    return {true, ref.header().requireAs<double>(OVFParameter::Zbase) + ref.header().requireAs<double>(OVFParameter::Zstep) * (0.5 + ref.header().requireAs<std::size_t>(OVFParameter::Znodes))};
+                    return {true, ref.header().requireAs<double>(OVFParameter::Zbase) + ref.header().requireAs<double>(OVFParameter::Zstep) * (ref.header().requireAs<std::size_t>(OVFParameter::Znodes) - 0.5)};
                 default:
                     return {false, 0.};
             }

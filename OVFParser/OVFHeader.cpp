@@ -80,6 +80,45 @@ namespace VField {
         return std::cref(*data_->values[parameterIndex(parameter)]);
     }
 
+    std::vector<OVFParameter> OVFHeader::keys() const
+    {
+        std::vector<OVFParameter> result;
+        result.reserve(size());
+        for(std::size_t index{}; index < parameterCount; ++index)
+        {
+            const auto parameter = static_cast<OVFParameter>(index);
+            if(contains(parameter))
+                result.push_back(parameter);
+        }
+        return result;
+    }
+
+    std::vector<OVFHeader::ValueReference> OVFHeader::values() const
+    {
+        std::vector<ValueReference> result;
+        result.reserve(size());
+        for(const auto parameter : keys())
+            result.push_back(std::cref(lookup(parameter)->get()));
+        return result;
+    }
+
+    std::vector<OVFHeader::Item> OVFHeader::items() const
+    {
+        std::vector<Item> result;
+        result.reserve(size());
+        for(const auto parameter : keys())
+            result.emplace_back(parameter, std::cref(lookup(parameter)->get()));
+        return result;
+    }
+
+    std::size_t OVFHeader::size() const noexcept
+    {
+        std::size_t result{};
+        for(const auto& value : data_->values)
+            result += value.has_value();
+        return result;
+    }
+
     void OVFHeader::set(OVFParameter parameter, ParameterValue value)
     {
         if(!isDeclaredParameter(parameter))

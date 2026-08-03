@@ -138,12 +138,12 @@ add_custom_target(mumax-runner ALL DEPENDS "${_mumax_slave}")
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_test(NAME MumaxSocketIPC
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/socket-smoke.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/mumax-runner.py" "${_mumax_slave}")
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/runner.py" "${_mumax_slave}")
     set_tests_properties(MumaxSocketIPC PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 install(PROGRAMS "${_mumax_slave}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(PROGRAMS mumax-runner.py
+install(PROGRAMS src/ovftoolkit_mumax/runner.py
     DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME mumax-runner)
 install(FILES LICENSE README.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/mumax-runner")

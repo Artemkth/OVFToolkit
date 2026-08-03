@@ -1,2 +1,5 @@
 # Integrations with external languages and runtimes.
-add_subdirectory(wolfram)
+if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING)
+    add_subdirectory(wolfram)
+endif()
+add_subdirectory(python)
