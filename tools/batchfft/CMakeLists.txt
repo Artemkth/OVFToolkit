@@ -2,20 +2,46 @@ if(NOT BUILD_FFUTIL)
     return()
 endif()
 
-add_executable(ovf-batchfft
+set(OVF_BATCHFFT_SOURCES
     main.cpp
-    cuda-backend.cu
     $<IF:$<BOOL:${WIN32}>,win-console.cpp,console.cpp>)
 
-set_property(TARGET ovf-batchfft PROPERTY CUDA_ARCHITECTURES all)
-set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 17)
+if(OVFTOOLKIT_CUFFT_FOUND)
+    list(APPEND OVF_BATCHFFT_SOURCES cuda-backend.cu)
+endif()
+if(FFTW_FLOAT_LIB_FOUND)
+    list(APPEND OVF_BATCHFFT_SOURCES fftw-backend.cpp)
+endif()
+add_executable(ovf-batchfft ${OVF_BATCHFFT_SOURCES})
+
+if(OVFTOOLKIT_CUFFT_FOUND AND FFTW_FLOAT_LIB_FOUND)
+    target_compile_definitions(ovf-batchfft PRIVATE OVFTOOLKIT_HAS_MULTIPLE_FFT_ENGINES=1)
+endif()
+
+if(OVFTOOLKIT_CUFFT_FOUND)
+    set_property(TARGET ovf-batchfft PROPERTY CUDA_ARCHITECTURES all)
+    set_property(TARGET ovf-batchfft PROPERTY CUDA_STANDARD 17)
+endif()
 
 target_link_libraries(ovf-batchfft PRIVATE
     ovfparser
     Threads::Threads
     Boost::program_options
-    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:tbb>
-    "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
+    $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:tbb>)
+
+if(OVFTOOLKIT_CUFFT_FOUND)
+    target_link_libraries(ovf-batchfft PRIVATE
+        "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
+    target_compile_definitions(ovf-batchfft PRIVATE OVFTOOLKIT_HAS_CUFFT=1)
+endif()
+if(FFTW_FLOAT_LIB_FOUND)
+    target_link_libraries(ovf-batchfft PRIVATE FFTW::Float)
+    target_compile_definitions(ovf-batchfft PRIVATE OVFTOOLKIT_HAS_FFTW=1)
+    if(FFTW_FLOAT_THREADS_LIB_FOUND)
+        target_link_libraries(ovf-batchfft PRIVATE FFTW::FloatThreads)
+        target_compile_definitions(ovf-batchfft PRIVATE OVFTOOLKIT_HAS_FFTW_THREADS=1)
+    endif()
+endif()
 
 target_include_directories(ovf-batchfft PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"

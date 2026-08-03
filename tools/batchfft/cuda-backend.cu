@@ -336,6 +336,11 @@ std::size_t cuFFTEngine::InitGPU()
 {
     //reset internal data if reinitializing
     free();
+    if(plan != cufftHandle{})
+    {
+        fail = !PackedAPI{cufftDestroy, "destroying old plan", plan}.exec();
+        plan = {};
+    }
 
     int devCount, curGPU; cudaGetDeviceCount(&devCount);
     fail = !run_api_pack( PackedAPI{ cudaGetDeviceCount, "getting device count", &devCount },
@@ -515,10 +520,16 @@ std::size_t cuFFTEngine::reallocate(std::size_t batch_size, bool lazy)
     std::size_t cPoints { fftLength/2 + 1 };
 
     //recreate a plan
-    fail = fail || !run_api_pack( 
-            PackedAPI{ cufftDestroy, "destroying old plan", plan },
-            PackedAPI{ cufftCreate, "creating a new plan", &plan } ) ||
-        !PackedAPI{ cufftSetAutoAllocation, "setting auto allocation off", plan, 0 }.exec();
+    if(plan != cufftHandle{})
+    {
+        fail = !PackedAPI{cufftDestroy, "destroying old plan", plan}.exec();
+        plan = {};
+    }
+    if(!fail)
+        fail = !PackedAPI{cufftCreate, "creating a new plan", &plan}.exec();
+    if(!fail)
+        fail = !PackedAPI{cufftSetAutoAllocation,
+                          "setting auto allocation off", plan, 0}.exec();
 
     std::size_t workSize {};
     fail = fail || !(useExtended? 
@@ -680,14 +691,14 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
 
 void cuFFTEngine::free()
 {
-    if(cufftReady)
-    {
-        run_api_pack( PackedAPI{cudaFree, "freeing data buffer", (void*)data},
-                      PackedAPI{cudaFree, "freeing work area buffer", (void*)cudaBuffer} );
-        allocDataSize = 0;
-        allocBufferSize = 0;
-        cufftReady = false;
-    }
+    if(data != nullptr)
+        PackedAPI{cudaFree, "freeing data buffer", static_cast<void*>(data)}.exec();
+    if(cudaBuffer != nullptr)
+        PackedAPI{cudaFree, "freeing work area buffer", cudaBuffer}.exec();
+    data = nullptr;
+    cudaBuffer = nullptr;
+    allocDataSize = 0;
+    allocBufferSize = 0;
     InterpAccel.free();
 }
 
@@ -695,8 +706,11 @@ void cuFFTEngine::free()
 cuFFTEngine::~cuFFTEngine() noexcept
 {
     free();
-    PackedAPI{cufftDestroy, "destroying the plan", plan}.exec();
-    InterpAccel.free();
+    if(plan != cufftHandle{})
+    {
+        PackedAPI{cufftDestroy, "destroying the plan", plan}.exec();
+        plan = {};
+    }
 }
 
 void cuFFTEngine::InterpAccel_t::free()

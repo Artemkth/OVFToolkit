@@ -15,7 +15,6 @@ class cuFFTEngine: public FFTEngine<float>
         std::size_t allocDataSize  {0};
         int gpuID {0};
         bool useExtended {false};
-        bool cufftReady {false};
 
         std::size_t reallocate(std::size_t, bool lazy=true);
 
@@ -52,9 +51,28 @@ class cuFFTEngine: public FFTEngine<float>
 
         //move operations are allowed tho
         cuFFTEngine(cuFFTEngine&& ref)
-        { std::swap(plan, ref.plan); std::swap(data, ref.data); std::swap(InterpAccel, ref.InterpAccel); }
+        { *this = std::move(ref); }
         cuFFTEngine& operator=(cuFFTEngine&& ref)
-        { std::swap(plan, ref.plan); std::swap(data, ref.data); std::swap(InterpAccel, ref.InterpAccel); return *this; }
+        {
+            if(this == &ref)
+                return *this;
+            free();
+            if(plan != cufftHandle{})
+                cufftDestroy(plan);
+            plan = {};
+            std::swap(plan, ref.plan);
+            std::swap(data, ref.data);
+            std::swap(cudaBuffer, ref.cudaBuffer);
+            std::swap(allocBufferSize, ref.allocBufferSize);
+            std::swap(allocDataSize, ref.allocDataSize);
+            std::swap(gpuID, ref.gpuID);
+            std::swap(useExtended, ref.useExtended);
+            std::swap(InterpAccel, ref.InterpAccel);
+            std::swap(batchSize, ref.batchSize);
+            std::swap(fftLength, ref.fftLength);
+            std::swap(fail, ref.fail);
+            return *this;
+        }
 
         bool Init( std::size_t, std::size_t maxBatch, std::size_t maxMem = 0 );
         bool RunTransform( float*, float norm = 1.0f, std::size_t padding = 0 );
@@ -62,4 +80,3 @@ class cuFFTEngine: public FFTEngine<float>
 
         void free();
 };
-
