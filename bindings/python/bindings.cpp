@@ -33,11 +33,32 @@ using VField::OVFParameter;
 
 [[nodiscard]] std::string_view pythonName(OVFParameter parameter);
 
-struct FieldHeader {
-    VField::VField* field;
+class SegmentHeader {
+    std::variant<VField::OVFHeader, VField::VField*> storage_;
 
-    [[nodiscard]] VField::OVFHeader& header() const noexcept
-    { return field->header(); }
+  public:
+    SegmentHeader(): storage_(std::in_place_type<VField::OVFHeader>) {}
+    explicit SegmentHeader(VField::OVFVersion version):
+      storage_(std::in_place_type<VField::OVFHeader>, version) {}
+    explicit SegmentHeader(const VField::OVFHeader& header): storage_(header) {}
+    explicit SegmentHeader(VField::VField& field): storage_(&field) {}
+
+    [[nodiscard]] bool attached() const noexcept
+    { return std::holds_alternative<VField::VField*>(storage_); }
+
+    [[nodiscard]] VField::OVFHeader& header() noexcept
+    {
+        if(auto* owned = std::get_if<VField::OVFHeader>(&storage_))
+            return *owned;
+        return std::get<VField::VField*>(storage_)->header();
+    }
+
+    [[nodiscard]] const VField::OVFHeader& header() const noexcept
+    {
+        if(const auto* owned = std::get_if<VField::OVFHeader>(&storage_))
+            return *owned;
+        return std::get<VField::VField*>(storage_)->header();
+    }
 };
 
 [[nodiscard]] std::filesystem::path pythonPath(nb::handle value)
@@ -129,12 +150,12 @@ class PythonReader {
         return std::move(*result);
     }
 
-    [[nodiscard]] VField::OVFHeader header(std::ptrdiff_t segment) const
+    [[nodiscard]] SegmentHeader header(std::ptrdiff_t segment) const
     {
         auto result = openFile().header(index(segment));
         if(!result)
             throwReadError(result.error());
-        return result->get();
+        return SegmentHeader{result->get()};
     }
 
     void close() noexcept { file_.reset(); }
@@ -645,8 +666,10 @@ NB_MODULE(_native, module)
         if(VField::paramType(value) != VField::ParameterType::Other)
             parameter.value(pythonName(value).data(), value);
 
-    nb::class_<FieldHeader>(module, "VFieldHeader")
-        .def("__contains__", [](const FieldHeader& proxy, nb::handle key) {
+    nb::class_<SegmentHeader>(module, "SegmentHeader")
+        .def(nb::init<>())
+        .def(nb::init<VField::OVFVersion>())
+        .def("__contains__", [](const SegmentHeader& proxy, nb::handle key) {
             try { return proxy.header().contains(parameterFromObject(key)); }
             catch(const nb::builtin_exception& error) {
                 if(error.type() == nb::exception_type::key_error)
@@ -654,102 +677,63 @@ NB_MODULE(_native, module)
                 throw;
             }
         })
-        .def("__len__", [](const FieldHeader& proxy) {
+        .def("__len__", [](const SegmentHeader& proxy) {
             return proxy.header().size();
         })
-        .def("__iter__", [](const FieldHeader& proxy) {
+        .def("__iter__", [](const SegmentHeader& proxy) {
             return nb::iter(headerKeys(proxy.header()));
         })
-        .def("__getitem__", [](const FieldHeader& proxy, nb::handle key) {
+        .def("__getitem__", [](const SegmentHeader& proxy, nb::handle key) {
             return headerValue(proxy.header(), key);
         })
-        .def("__setitem__", [](const FieldHeader& proxy, nb::handle key,
+        .def("__setitem__", [](SegmentHeader& proxy, nb::handle key,
                                nb::object value) {
             const auto parameter = parameterFromObject(key);
-            if(isShapeDerived(parameter))
+            if(proxy.attached() && isShapeDerived(parameter))
                 throwShapeDerived(parameter);
             setHeaderValue(proxy.header(), key, std::move(value));
         }, nb::arg("key"), nb::arg("value").none())
-        .def("__delitem__", [](const FieldHeader& proxy, nb::handle key) {
+        .def("__delitem__", [](SegmentHeader& proxy, nb::handle key) {
             const auto parameter = parameterFromObject(key);
-            if(isShapeDerived(parameter))
+            if(proxy.attached() && isShapeDerived(parameter))
                 throwShapeDerived(parameter);
             if(!proxy.header().contains(parameter))
                 throw nb::key_error("OVF header field is not set");
             proxy.header().clear(parameter);
         })
-        .def("keys", [](const FieldHeader& proxy) {
+        .def("keys", [](const SegmentHeader& proxy) {
             return headerKeys(proxy.header());
         })
-        .def("values", [](const FieldHeader& proxy) {
+        .def("values", [](const SegmentHeader& proxy) {
             return headerValues(proxy.header());
         })
-        .def("items", [](const FieldHeader& proxy) {
+        .def("items", [](const SegmentHeader& proxy) {
             return headerItems(proxy.header());
         })
-        .def("get", [](const FieldHeader& proxy, nb::handle key,
+        .def("get", [](const SegmentHeader& proxy, nb::handle key,
                        nb::object fallback) {
             const auto parameter = parameterFromObject(key);
             const auto value = proxy.header().lookup(parameter);
             return value ? pythonValue(value->get()) : std::move(fallback);
         }, nb::arg("key"), nb::arg("default").none() = nb::none())
-        .def("validate", [](const FieldHeader& proxy) {
+        .def("validate", [](const SegmentHeader& proxy) {
             validateHeader(proxy.header());
-        }, "Validate the attached header or raise ValueError with the report")
-        .def_prop_ro("version", [](const FieldHeader& proxy) {
+        }, "Validate this header or raise ValueError with the report")
+        .def_prop_ro("version", [](const SegmentHeader& proxy) {
             return proxy.header().version();
         })
-        .def_prop_ro("point_count", [](const FieldHeader& proxy) {
+        .def_prop_ro("point_count", [](const SegmentHeader& proxy) {
             return proxy.header().pointCount();
         })
-        .def_prop_ro("point_dimension", [](const FieldHeader& proxy) {
+        .def_prop_ro("point_dimension", [](const SegmentHeader& proxy) {
             return proxy.header().pointDimension();
         });
-
-    nb::class_<VField::OVFHeader>(module, "OVFHeader")
-        .def(nb::init<>())
-        .def(nb::init<VField::OVFVersion>())
-        .def("__contains__", [](const VField::OVFHeader& header, nb::handle key) {
-            try { return header.contains(parameterFromObject(key)); }
-            catch(const nb::builtin_exception& error) {
-                if(error.type() == nb::exception_type::key_error)
-                    return false;
-                throw;
-            }
-        })
-        .def("__len__", &VField::OVFHeader::size)
-        .def("__iter__", [](const VField::OVFHeader& header) {
-            return nb::iter(headerKeys(header));
-        })
-        .def("__getitem__", &headerValue)
-        .def("__setitem__", &setHeaderValue,
-            nb::arg("key"), nb::arg("value").none())
-        .def("__delitem__", [](VField::OVFHeader& header, nb::handle key) {
-            const auto value = parameterFromObject(key);
-            if(!header.contains(value))
-                throw nb::key_error("OVF header field is not set");
-            header.clear(value);
-        })
-        .def("keys", &headerKeys)
-        .def("values", &headerValues)
-        .def("items", &headerItems)
-        .def("get", [](const VField::OVFHeader& header, nb::handle key,
-                       nb::object fallback) {
-            const auto parameter = parameterFromObject(key);
-            const auto value = header.lookup(parameter);
-            return value ? pythonValue(value->get()) : std::move(fallback);
-        }, nb::arg("key"), nb::arg("default").none() = nb::none())
-        .def("validate", &validateHeader,
-            "Validate this header or raise ValueError with the report")
-        .def_prop_ro("version", &VField::OVFHeader::version)
-        .def_prop_ro("point_count", &VField::OVFHeader::pointCount)
-        .def_prop_ro("point_dimension", &VField::OVFHeader::pointDimension);
 
     nb::class_<VField::VField>(module, "VField")
         .def(nb::init<>())
         .def(nb::init<VField::OVFVersion>())
         .def_prop_ro("header", [](VField::VField& field) {
-            return FieldHeader{&field};
+            return SegmentHeader{field};
         }, nb::keep_alive<0, 1>())
         .def_prop_rw("data", &fieldData, &setFieldData,
             nb::arg("value").none(),

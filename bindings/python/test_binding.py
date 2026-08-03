@@ -86,11 +86,14 @@ for parameter in (
 ):
     assert parameter not in field.header
 
-standalone = ovf.OVFHeader()
+standalone = ovf.SegmentHeader()
+assert type(standalone) is type(field.header)
+assert not hasattr(ovf, "OVFHeader")
+assert not hasattr(ovf, "VFieldHeader")
 standalone[ovf.OVFParameter.xnodes] = 7
 assert standalone[ovf.OVFParameter.xnodes] == 7
 
-for invalid in (ovf.OVFHeader(), ovf.VField(), ovf.VField().header):
+for invalid in (ovf.SegmentHeader(), ovf.VField(), ovf.VField().header):
     try:
         invalid.validate()
     except ValueError as error:
@@ -118,7 +121,9 @@ with tempfile.TemporaryDirectory() as directory:
 
     with ovf.reader(path) as source:
         assert len(source) == 1
-        assert source.header()[ovf.OVFParameter.Title] == "Python context manager"
+        read_header = source.header()
+        assert isinstance(read_header, ovf.SegmentHeader)
+        assert read_header[ovf.OVFParameter.Title] == "Python context manager"
         loaded, = source
         assert isinstance(loaded.data, np.ndarray)
         np.testing.assert_array_equal(loaded.data, original.data)
