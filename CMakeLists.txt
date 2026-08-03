@@ -199,6 +199,10 @@ target_compile_options(ovfparser PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors -Wno-strict-aliasing>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>)
 
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+    include(CTest)
+endif()
+
 add_subdirectory(tools)
 
 #and install information for library
@@ -219,11 +223,6 @@ install(FILES
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 add_subdirectory(docs)
-
-#include tests
-IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-    include(CTest)
-ENDIF()
 
 IF(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_subdirectory(tests)

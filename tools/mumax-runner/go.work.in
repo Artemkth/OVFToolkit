@@ -1,0 +1,6 @@
+go 1.22.4
+
+use (
+    "@CMAKE_CURRENT_SOURCE_DIR@"
+    "@MUMAX3_SOURCE_DIR@"
+)

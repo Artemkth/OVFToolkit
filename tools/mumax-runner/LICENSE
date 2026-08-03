@@ -1,0 +1,9 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+
+The mumax runner in this directory links the mumax3 engine into its Go
+executable and is therefore distributed under the GNU General Public License,
+version 3 or (at your option) any later version. Mumax3 additionally grants the
+GPLv3 section 7 permission needed to link with NVIDIA CUDA libraries.
+
+The complete license and additional permission are distributed with mumax3:
+https://github.com/mumax/3/blob/master/LICENSE
