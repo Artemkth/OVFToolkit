@@ -1,0 +1,26 @@
+{
+  "dependencies": [
+    "boost-endian",
+    "boost-program-options",
+    {
+      "name": "fftw3",
+      "features": [
+        "threads"
+      ]
+    },
+    {
+		"name": "hdf5",
+		"version>=": "2.1.1#1"
+	},
+    "tbb",
+    {
+		"name": "vtk",
+		"version>=": "9.3.0-pv5.12.1#17"
+	},
+	{
+		"name": "netcdf-c",
+		"version>=": "4.9.3#3"
+	},
+    "nanobind"
+  ]
+}
