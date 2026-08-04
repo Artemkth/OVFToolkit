@@ -92,7 +92,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 #find interfaces for Mathematica
 if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING)
-    set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
+    set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
     find_package(Mathematica COMPONENTS WSTP)
 endif()
 
