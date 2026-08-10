@@ -37,6 +37,24 @@ endif()
 if(FFTW_FLOAT_LIB_FOUND)
     target_link_libraries(ovf-batchfft PRIVATE FFTW::Float)
     target_compile_definitions(ovf-batchfft PRIVATE OVFTOOLKIT_HAS_FFTW=1)
+
+    if(WIN32)
+        set(_ovf_batchfft_fftw_type_target FFTW::Float)
+        find_package(FFTW3f CONFIG QUIET)
+        if(TARGET FFTW3::fftw3f)
+            set(_ovf_batchfft_fftw_type_target FFTW3::fftw3f)
+        endif()
+        get_target_property(_ovf_batchfft_fftw_type
+            ${_ovf_batchfft_fftw_type_target} TYPE)
+        if(_ovf_batchfft_fftw_type STREQUAL "SHARED_LIBRARY")
+            message(FATAL_ERROR
+                "Dynamic FFTW3 builds on Windows are unsupported because "
+                "FFTW3 does not export fftwf_version from its DLL. Use a "
+                "static FFTW3 build, such as the x64-windows-static vcpkg "
+                "triplet. See https://github.com/FFTW/fftw3/issues/242")
+        endif()
+    endif()
+
     if(FFTW_FLOAT_THREADS_LIB_FOUND)
         target_link_libraries(ovf-batchfft PRIVATE FFTW::FloatThreads)
         target_compile_definitions(ovf-batchfft PRIVATE OVFTOOLKIT_HAS_FFTW_THREADS=1)
