@@ -121,3 +121,19 @@ cmake --build build --parallel --target ovf-batchfft
 
 CMake reports the backends it found during configuration. The executable is
 installed into the normal binary directory by `cmake --install build`.
+
+## Distribution and licensing
+
+The original OVFToolkit source for this tool is MIT-licensed, but the license
+requirements of a linked executable depend on its FFT backend:
+
+- a CUDA-only binary remains under the MIT license for OVFToolkit code and is
+  also subject to NVIDIA's terms for any CUDA redistributables;
+- an FFTW-linked binary using FFTW under its GPL terms must be distributed
+  under GPL-3.0-or-later with its complete corresponding source; and
+- a binary containing both FFTW and cuFFT is not published by this project.
+  OVFToolkit has no FFTW copyright-holder exception for CUDA. Obtain legal
+  review or a commercial FFTW license before distributing such a binary.
+
+Static versus dynamic linking does not change the FFTW licensing requirement.
+See the repository's [licensing guide](../../LICENSING.md) before packaging.

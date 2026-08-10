@@ -288,7 +288,7 @@ endif()
 install(PROGRAMS "${_mumax_slave}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(PROGRAMS src/ovftoolkit_mumax/runner.py
     DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME mumax-runner)
-install(FILES LICENSE README.md
+install(FILES LICENSE NOTICE README.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/mumax-runner")
 install(FILES "${MUMAX3_SOURCE_DIR}/LICENSE"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/mumax-runner"

@@ -204,4 +204,25 @@ cmake --build build --target ovftoolkit-docs
 
 ## License
 
-OVFToolkit is distributed under the MIT License. See `LICENSE`.
+Most original OVFToolkit source is distributed under the
+[MIT License](LICENSE). The exception is `tools/mumax-runner/`, which is a
+separate GPL-3.0-or-later distribution because its Go executable incorporates
+mumax3. Third-party source and libraries retain their own licenses.
+
+The license requirements of a binary depend on the components linked into it:
+
+| Artifact | Distribution terms |
+| --- | --- |
+| `ovfparser` and the Python `ovftoolkit` wheel | MIT, with the notices for included dependencies. |
+| `ovf-convert` | OVFToolkit code remains MIT; include the VTK, HDF5, NetCDF, and transitive dependency notices from the actual build. |
+| CUDA-only `ovf-batchfft` | OVFToolkit code remains MIT; NVIDIA's terms also apply to any CUDA redistributables. |
+| FFTW-linked `ovf-batchfft` | When FFTW is used under its GPL terms, distribute the executable under GPL-3.0-or-later and provide its complete corresponding source. Static and dynamic linking have the same licensing consequence. |
+| FFTW-and-cuFFT `ovf-batchfft` | Not published by this project. OVFToolkit has no FFTW copyright-holder CUDA exception; obtain legal review or a commercial FFTW license before distributing it. |
+| `mumax-slave` and the mumax runner | GPL-3.0-or-later with mumax3's GPLv3 section 7 CUDA permission; provide the exact corresponding runner and mumax3 source. |
+| `math-ovftoolkit` | OVFToolkit source remains MIT, but check the applicable Wolfram agreement before redistributing a WSTP-linked binary. |
+
+See [LICENSING.md](LICENSING.md) for the release checklist and precise scope,
+and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the dependency
+inventory. Packaged artifacts must carry the verbatim notices for the exact
+direct and transitive libraries they contain; for vcpkg builds these are under
+`vcpkg_installed/<triplet>/share/<port>/copyright`.
