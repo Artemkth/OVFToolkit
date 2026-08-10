@@ -34,7 +34,8 @@ if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING AND Mathematica_WSTP_FOUND)
         # installation above or ovfparser's root installation rules.
         install(TARGETS math-ovftoolkit
             RUNTIME DESTINATION "${OVFTOOLKIT_WOLFRAM_APPLICATION_DIR}"
-            COMPONENT Wolfram)
+            COMPONENT Wolfram
+            EXCLUDE_FROM_ALL)
 
         get_target_property(_ovftoolkit_parser_type ovfparser TYPE)
         if(_ovftoolkit_parser_type STREQUAL "SHARED_LIBRARY")
@@ -43,7 +44,8 @@ if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING AND Mathematica_WSTP_FOUND)
             install(TARGETS ovfparser
                 LIBRARY DESTINATION "${OVFTOOLKIT_WOLFRAM_APPLICATION_DIR}"
                 RUNTIME DESTINATION "${OVFTOOLKIT_WOLFRAM_APPLICATION_DIR}"
-                COMPONENT Wolfram)
+                COMPONENT Wolfram
+                EXCLUDE_FROM_ALL)
         endif()
 
         message(STATUS

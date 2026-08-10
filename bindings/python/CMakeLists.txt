@@ -13,14 +13,25 @@ if(NOT Python_FOUND OR NOT nanobind_FOUND)
     return()
 endif()
 
+# vcpkg supplies the debug Python library on Windows, but not a matching debug
+# interpreter.  Stub generation therefore has to load Debug extension builds
+# into the release interpreter.  Link those builds to the release Python DLL
+# so that the process does not contain two incompatible Python runtimes.
+if(WIN32 AND TARGET Python::Module AND NOT Python_EXECUTABLE_DEBUG)
+    set_property(TARGET Python::Module PROPERTY MAP_IMPORTED_CONFIG_DEBUG Release)
+endif()
+
 message(STATUS
     "Building Python binding with Python ${Python_VERSION} and nanobind ${nanobind_VERSION}")
 nanobind_add_module(ovftoolkit_native bindings.cpp)
+set(_python_package_build_dir "${CMAKE_CURRENT_BINARY_DIR}/ovftoolkit")
 set_target_properties(ovftoolkit_native PROPERTIES
     OUTPUT_NAME _native
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ovftoolkit"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ovftoolkit")
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ovftoolkit")
+    # The empty generator expression prevents multi-config generators from
+    # appending Debug/ or Release/ below the Python package directory.
+    LIBRARY_OUTPUT_DIRECTORY "${_python_package_build_dir}/$<0:>"
+    RUNTIME_OUTPUT_DIRECTORY "${_python_package_build_dir}/$<0:>")
+file(MAKE_DIRECTORY "${_python_package_build_dir}")
 configure_file(ovftoolkit/__init__.py ovftoolkit/__init__.py COPYONLY)
 configure_file(test_binding.py test_binding.py COPYONLY)
 target_link_libraries(ovftoolkit_native PRIVATE ovfparser)

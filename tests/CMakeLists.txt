@@ -18,8 +18,7 @@ add_test(VFieldDataTest vfield-test)
 #I/O testing
 add_executable(io-test ovf_io.cpp)
 target_link_libraries(io-test PRIVATE ovfparser)
-file(TO_NATIVE_PATH "${PROJECT_BINARY_DIR}" native_bin_dir)
-add_test(IOTests io-test "${native_bin_dir}")
+add_test(IOTests io-test "${PROJECT_BINARY_DIR}")
 
 add_executable(frequency-test frequency.cpp)
 target_include_directories(frequency-test PRIVATE "${CMAKE_SOURCE_DIR}/tools/batchfft")

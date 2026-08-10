@@ -496,13 +496,13 @@ try
     po::variables_map variables;
     po::store(po::command_line_parser(argc, argv).options(options)
                   .positional(positional).run(), variables);
-    if(variables.contains("help"))
+    if(variables.count("help") != 0)
     {
         std::cout << "Usage: ovf-convert [options] input.ovf output.{vts|vtu|h5}\n\n"
                   << options << '\n';
         return 0;
     }
-    if(variables.contains("version"))
+    if(variables.count("version") != 0)
     {
         std::cout << "ovf-convert " << version << '\n';
         return 0;
