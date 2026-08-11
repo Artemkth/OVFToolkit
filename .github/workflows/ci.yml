@@ -63,8 +63,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install nanobind
-        run: python -m pip install nanobind
+      - name: Install Python build and test dependencies
+        run: python -m pip install nanobind numpy
       - name: Install CUDA 12.9
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
@@ -222,8 +222,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install nanobind
-        run: python -m pip install nanobind
+      - name: Install Python build and test dependencies
+        run: python -m pip install nanobind numpy
       - name: Identify vcpkg tool revision
         id: vcpkg
         shell: pwsh
