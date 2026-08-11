@@ -19,6 +19,8 @@ vcpkg-produced artifact.
 | NVIDIA CUDA Toolkit and cuFFT | CUDA batch FFT and mumax3 | NVIDIA CUDA Toolkit EULA and component-specific redistribution terms | <https://docs.nvidia.com/cuda/eula/index.html> |
 | mumax3 | compiled into `mumax-slave` | GPL-3.0-or-later with a GPLv3 section 7 CUDA permission | <https://github.com/mumax/3> |
 | FindMathematica and Wolfram WSTP | Wolfram binding build/runtime | FindMathematica's license and the applicable Wolfram agreement | <https://github.com/sakra/FindMathematica> |
+| PyVista and VTK Python packages | optional imported-geometry example visualization | MIT and BSD 3-Clause, respectively | <https://pyvista.org/> |
+| Origins of the Pig by Keenan Crane | CC0 mesh used by the pig geometry example | CC0 1.0 Universal Public Domain Dedication | <https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/> |
 
 The nanobind and mdspan license texts used by source distributions and wheels
 are included under [`LICENSES/`](LICENSES/). Their inclusion records those

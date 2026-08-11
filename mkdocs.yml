@@ -1,0 +1,65 @@
+site_name: OVFToolkit
+site_description: OVF tools and reproducible micromagnetic analysis examples
+site_url: https://artemkth.github.io/OVFToolkit/
+repo_url: https://github.com/Artemkth/OVFToolkit
+repo_name: Artemkth/OVFToolkit
+
+docs_dir: docs/help
+site_dir: site
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Use light mode
+
+plugins:
+  - search
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
+      include: ["generated/**/*.ipynb"]
+      no_prompt: true
+      custom_mathjax_url: https://cdn.jsdelivr.net/npm/mathjax@2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Examples:
+      - Overview: examples/index.md
+      - Process a vortex spectrum: generated/process-spectrum/OVFToolkitWorkFlow.ipynb
+      - YIG strip dispersion: generated/yig-strip-dispersion/YIGStripDispersion.ipynb
+      - Import a figure-eight geometry: generated/imported-figure-eight/FigureEightGeometry.ipynb
+      - Import and visualize a pig: generated/imported-pig/PigGeometry.ipynb
+  - Reference:
+      - Overview: reference/index.md
+      - Python API: reference/python.md
+      - C++ API (Doxygen): generated/cpp-api/index.html
+
+not_in_nav: |
+  generated/**/*.mx3.in
+  generated/**/*.obj
+  generated/**/model/*.md
+  generated/**/model/*.txt
+  generated/cpp-api/**
+
+strict: true
