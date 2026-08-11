@@ -278,6 +278,47 @@ add_custom_command(
     VERBATIM)
 add_custom_target(mumax-runner ALL DEPENDS "${_mumax_slave}")
 
+set(_mumax_python_sources
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/__init__.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/__main__.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/runner.py")
+set(_mumax_package_build_dir "${CMAKE_CURRENT_BINARY_DIR}/python-package")
+set(_mumax_package_source_dir
+    "${_mumax_package_build_dir}/src/ovftoolkit_mumax")
+set(_mumax_wheel_dir "${CMAKE_CURRENT_BINARY_DIR}/wheel")
+set(_mumax_wheel_stamp "${_mumax_wheel_dir}/wheel.stamp")
+
+add_custom_command(
+    OUTPUT "${_mumax_wheel_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "${_mumax_package_source_dir}" "${_mumax_wheel_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/setup.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+        "${CMAKE_CURRENT_SOURCE_DIR}/NOTICE"
+        "${_mumax_package_build_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        ${_mumax_python_sources} "${_mumax_package_source_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_mumax_slave}" "${_mumax_package_source_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${MUMAX3_SOURCE_DIR}/LICENSE"
+        "${_mumax_package_build_dir}/LICENSE.mumax3"
+    COMMAND "${Python3_EXECUTABLE}" -m pip wheel
+        --no-deps --no-build-isolation
+        --wheel-dir "${_mumax_wheel_dir}"
+        "${_mumax_package_build_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_mumax_wheel_stamp}"
+    DEPENDS
+        pyproject.toml setup.py README.md LICENSE NOTICE
+        "${MUMAX3_SOURCE_DIR}/LICENSE"
+        ${_mumax_python_sources} "${_mumax_slave}"
+    COMMENT "Building ovftoolkit-mumax-runner Python wheel"
+    VERBATIM)
+add_custom_target(mumax-runner-wheel ALL DEPENDS "${_mumax_wheel_stamp}")
+
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_test(NAME MumaxSocketIPC
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/socket-smoke.py"
@@ -285,9 +326,9 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     set_tests_properties(MumaxSocketIPC PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-install(PROGRAMS "${_mumax_slave}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(PROGRAMS src/ovftoolkit_mumax/runner.py
-    DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME mumax-runner)
+install(DIRECTORY "${_mumax_wheel_dir}/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/python"
+    FILES_MATCHING PATTERN "*.whl")
 install(FILES LICENSE NOTICE README.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/mumax-runner")
 install(FILES "${MUMAX3_SOURCE_DIR}/LICENSE"

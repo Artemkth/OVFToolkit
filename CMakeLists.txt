@@ -103,6 +103,16 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/findFFTW" ${CMAKE_MODULE_PA
 # threaded FFTW companion library is optional; the serial float library is
 # sufficient for the CPU backend.
 find_package(FFTW COMPONENTS FLOAT_LIB OPTIONAL_COMPONENTS FLOAT_THREADS_LIB)
+
+# Prefer a configuration-aware package target when one is available.  The
+# legacy FindFFTW module exposes a single library path, which can make a
+# multi-config generator link a Debug archive into Release targets.
+set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW::Float)
+find_package(FFTW3f CONFIG QUIET)
+if(TARGET FFTW3::fftw3f)
+    set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW3::fftw3f)
+endif()
+
 if(FFTW_VERSION)
     set(OVFTOOLKIT_FFTW_VERSION "${FFTW_VERSION}")
 endif()

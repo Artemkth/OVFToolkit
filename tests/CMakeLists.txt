@@ -37,7 +37,7 @@ if(FFTW_FLOAT_LIB_FOUND)
         "${CMAKE_SOURCE_DIR}/tools/batchfft/fftw-backend.cpp")
     target_include_directories(fftw-backend-test PRIVATE
         "${CMAKE_SOURCE_DIR}/tools/batchfft")
-    target_link_libraries(fftw-backend-test PRIVATE FFTW::Float
+    target_link_libraries(fftw-backend-test PRIVATE ${OVFTOOLKIT_FFTW_FLOAT_TARGET}
         $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:tbb>)
     if(FFTW_FLOAT_THREADS_LIB_FOUND)
         target_link_libraries(fftw-backend-test PRIVATE FFTW::FloatThreads)
@@ -50,7 +50,7 @@ if(OVFTOOLKIT_CUFFT_FOUND AND FFTW_FLOAT_LIB_FOUND)
     function(add_cuda_fft_test target source test_name)
         add_executable(${target} ${source} "${CMAKE_SOURCE_DIR}/tools/batchfft/cuda-backend.cu")
         target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/tools/batchfft")
-        target_link_libraries(${target} PRIVATE FFTW::Float
+        target_link_libraries(${target} PRIVATE ${OVFTOOLKIT_FFTW_FLOAT_TARGET}
             "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
         set_target_properties(${target} PROPERTIES
             CUDA_ARCHITECTURES all
@@ -72,7 +72,7 @@ if(OVFTOOLKIT_CUFFT_FOUND AND FFTW_FLOAT_LIB_FOUND)
         "${CMAKE_SOURCE_DIR}/tools/batchfft/fftw-backend.cpp")
     target_include_directories(cross-engine-fft-test PRIVATE
         "${CMAKE_SOURCE_DIR}/tools/batchfft")
-    target_link_libraries(cross-engine-fft-test PRIVATE FFTW::Float
+    target_link_libraries(cross-engine-fft-test PRIVATE ${OVFTOOLKIT_FFTW_FLOAT_TARGET}
         $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:tbb>
         "$<IF:$<VERSION_LESS:${CMAKE_VERSION},3.17>,${CUDA_CUFFT_LIBRARIES},CUDA::cufft;CUDA::cudart>")
     if(FFTW_FLOAT_THREADS_LIB_FOUND)

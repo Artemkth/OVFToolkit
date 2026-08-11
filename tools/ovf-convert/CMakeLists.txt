@@ -1,4 +1,8 @@
 find_package(HDF5 COMPONENTS C QUIET)
+# VTK 9.3 ships a legacy Finddouble-conversion module that records only one
+# library path.  Load the package's configuration-aware imported target first
+# so multi-config builds select matching Debug and Release archives.
+find_package(double-conversion CONFIG QUIET)
 find_package(VTK COMPONENTS CommonCore CommonDataModel IOXML QUIET)
 
 if(NOT HDF5_FOUND OR NOT VTK_FOUND OR NOT Boost_PROGRAM_OPTIONS_FOUND)
