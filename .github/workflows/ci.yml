@@ -102,6 +102,7 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-release `
             -DVCPKG_HOST_TRIPLET=x64-windows-release `
             -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON `
+            -DVCPKG_MANIFEST_FEATURES=convert `
             '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>' `
             -DCMAKE_INSTALL_PREFIX=build-windows-cuda/stage `
             -DOVFTOOLKIT_BUILD_DOCS=OFF `
@@ -256,7 +257,7 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-release `
             -DVCPKG_HOST_TRIPLET=x64-windows-release `
             -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON `
-            -DVCPKG_MANIFEST_FEATURES=fftw `
+            '-DVCPKG_MANIFEST_FEATURES=convert;fftw' `
             '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>' `
             -DCMAKE_INSTALL_PREFIX=build-windows-fftw/stage `
             -DOVFTOOLKIT_BUILD_DOCS=OFF `

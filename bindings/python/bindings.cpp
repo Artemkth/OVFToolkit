@@ -377,6 +377,27 @@ class PythonWriter {
     return result;
 }
 
+void copyHeaderFrom(SegmentHeader& destination, const SegmentHeader& source)
+{
+    // Snapshot first so self-copy and two proxies attached to the same field
+    // cannot clear source values while the replacement is in progress.
+    const VField::OVFHeader sourceHeader{source.header()};
+    auto& destinationHeader = destination.header();
+
+    for(const auto parameter : VField::ParamUniverse)
+    {
+        if(VField::paramType(parameter) == VField::ParameterType::Other ||
+           (destination.attached() && isShapeDerived(parameter)))
+            continue;
+
+        const auto value = sourceHeader.lookup(parameter);
+        if(value)
+            destinationHeader.set(parameter, value->get());
+        else
+            destinationHeader.clear(parameter);
+    }
+}
+
 void setHeaderValue(VField::OVFHeader& header, nb::handle identifier,
                     nb::object value)
 {
@@ -520,6 +541,96 @@ void setFieldData(VField::VField& field, nb::object value)
 }
 
 using Coordinates = std::array<double, 3>;
+
+struct MeshAxis {
+    std::size_t nodes;
+    double base;
+    double step;
+};
+
+[[nodiscard]] MeshAxis meshAxis(
+    const VField::OVFHeader& header, OVFParameter nodesParameter,
+    OVFParameter baseParameter, OVFParameter stepParameter,
+    OVFParameter minimumParameter, OVFParameter maximumParameter,
+    std::string_view name)
+{
+    const auto nodesResult = header.lookupAs<std::size_t>(nodesParameter);
+    if(!nodesResult || nodesResult->get() == 0)
+        throw nb::value_error(std::format(
+            "meshgrid requires a positive {}nodes value", name).c_str());
+    const auto nodes = nodesResult->get();
+
+    const auto minimumResult = header.lookupAs<double>(minimumParameter);
+    const auto maximumResult = header.lookupAs<double>(maximumParameter);
+    const auto stepResult = header.lookupAs<double>(stepParameter);
+
+    double step{};
+    if(stepResult)
+        step = stepResult->get();
+    else if(minimumResult && maximumResult)
+        step = (maximumResult->get() - minimumResult->get()) /
+               static_cast<double>(nodes);
+    else
+        throw nb::value_error(std::format(
+            "meshgrid requires {}stepsize, or both {}min and {}max",
+            name, name, name).c_str());
+
+    if(!std::isfinite(step) || step <= 0.)
+        throw nb::value_error(std::format(
+            "meshgrid requires a finite, positive {} step size", name).c_str());
+
+    const auto baseResult = header.lookupAs<double>(baseParameter);
+    double base{};
+    if(baseResult)
+        base = baseResult->get();
+    else if(minimumResult)
+        base = minimumResult->get() + step / 2.;
+    else if(maximumResult)
+        base = maximumResult->get() -
+               step * (static_cast<double>(nodes) - .5);
+    else
+        throw nb::value_error(std::format(
+            "meshgrid requires {}base, {}min, or {}max",
+            name, name, name).c_str());
+
+    if(!std::isfinite(base))
+        throw nb::value_error(std::format(
+            "meshgrid requires a finite {} base coordinate", name).c_str());
+    return MeshAxis{nodes, base, step};
+}
+
+[[nodiscard]] nb::tuple fieldMeshgrid(const VField::VField& field)
+{
+    const auto& header = field.header();
+    if(header.meshType() != VField::MeshType::Rectangular ||
+       !field.isGridAddressable())
+        throw nb::value_error(
+            "meshgrid requires rectangular rank-4 field data with consistent nodes");
+
+    const auto x = meshAxis(header, OVFParameter::Xnodes,
+        OVFParameter::Xbase, OVFParameter::Xstep,
+        OVFParameter::Xmin, OVFParameter::Xmax, "x");
+    const auto y = meshAxis(header, OVFParameter::Ynodes,
+        OVFParameter::Ybase, OVFParameter::Ystep,
+        OVFParameter::Ymin, OVFParameter::Ymax, "y");
+    const auto z = meshAxis(header, OVFParameter::Znodes,
+        OVFParameter::Zbase, OVFParameter::Zstep,
+        OVFParameter::Zmin, OVFParameter::Zmax, "z");
+
+    const auto numpy = nb::module_::import_("numpy");
+    const auto coordinateAxis = [&](const MeshAxis& axis) {
+        return numpy.attr("add")(
+            numpy.attr("multiply")(numpy.attr("arange")(axis.nodes), axis.step),
+            axis.base);
+    };
+
+    const auto xCoordinates = coordinateAxis(x);
+    const auto yCoordinates = coordinateAxis(y);
+    const auto zCoordinates = coordinateAxis(z);
+    const nb::tuple grids = nb::cast<nb::tuple>(numpy.attr("meshgrid")(
+        zCoordinates, yCoordinates, xCoordinates, nb::arg("indexing") = "ij"));
+    return nb::make_tuple(grids[2], grids[1], grids[0]);
+}
 
 void setDummyHeader(VField::VField& field, const Coordinates& cellSize,
                     std::optional<Coordinates> origin)
@@ -710,6 +821,9 @@ NB_MODULE(_native, module)
         .def("items", [](const SegmentHeader& proxy) {
             return headerItems(proxy.header());
         })
+        .def("copy_from", &copyHeaderFrom, nb::arg("source"),
+            "Replace metadata from source. Headers attached to VField retain "
+            "their protected data-shape fields.")
         .def("get", [](const SegmentHeader& proxy, nb::handle key,
                        nb::object fallback) {
             const auto parameter = parameterFromObject(key);
@@ -742,6 +856,8 @@ NB_MODULE(_native, module)
         .def_prop_ro("scalar_count", &VField::VField::scalarCount)
         .def_prop_ro("point_count", &VField::VField::pointCount)
         .def_prop_ro("point_dimension", &VField::VField::pointDimension)
+        .def("meshgrid", &fieldMeshgrid,
+            "Return (x, y, z) cell-center grids shaped like data[..., 0].")
         .def("dummy_header", &setDummyHeader,
             nb::arg("cell_size"), nb::arg("origin").none() = nb::none(),
             "Replace the header with defaults for rectangular data. cell_size "

@@ -2,24 +2,30 @@
   "dependencies": [
     "boost-endian",
     "boost-program-options",
-    {
-		"name": "hdf5",
-		"version>=": "2.1.1#1"
-	},
-    "tbb",
-    {
-		"name": "vtk",
-		"version>=": "9.3.0-pv5.12.1#17"
-	},
-	{
-		"name": "netcdf-c",
-		"version>=": "4.9.3#3"
-	}
+    "tbb"
   ],
   "default-features": [
+    "convert",
     "fftw"
   ],
   "features": {
+    "convert": {
+      "description": "Build the VTK/HDF5 conversion tool",
+      "dependencies": [
+        {
+          "name": "hdf5",
+          "version>=": "2.1.1#1"
+        },
+        {
+          "name": "vtk",
+          "version>=": "9.3.0-pv5.12.1#17"
+        },
+        {
+          "name": "netcdf-c",
+          "version>=": "4.9.3#3"
+        }
+      ]
+    },
     "fftw": {
       "description": "Build the FFTW CPU backend",
       "dependencies": [

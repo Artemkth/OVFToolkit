@@ -93,6 +93,39 @@ assert not hasattr(ovf, "VFieldHeader")
 standalone[ovf.OVFParameter.xnodes] = 7
 assert standalone[ovf.OVFParameter.xnodes] == 7
 
+metadata = ovf.SegmentHeader()
+metadata[ovf.OVFParameter.Title] = "copied metadata"
+metadata[ovf.OVFParameter.Desc] = "source description"
+metadata[ovf.OVFParameter.xbase] = 3.5
+metadata[ovf.OVFParameter.Meshtype] = ovf.MeshType.Irregular
+metadata[ovf.OVFParameter.pointcount] = 99
+metadata[ovf.OVFParameter.valuedim] = 8
+
+destination = ovf.VField()
+destination.data = np.zeros((2, 3, 4, 3), dtype=np.float32)
+destination.header[ovf.OVFParameter.xmin] = -10.0
+destination.header.copy_from(metadata)
+assert destination.header[ovf.OVFParameter.Title] == "copied metadata"
+assert destination.header[ovf.OVFParameter.Desc] == "source description"
+assert destination.header[ovf.OVFParameter.xbase] == 3.5
+assert ovf.OVFParameter.xmin not in destination.header
+assert destination.header[ovf.OVFParameter.Meshtype] == ovf.MeshType.Rectangular
+assert destination.header[ovf.OVFParameter.xnodes] == 4
+assert destination.header[ovf.OVFParameter.ynodes] == 3
+assert destination.header[ovf.OVFParameter.znodes] == 2
+assert destination.header[ovf.OVFParameter.valuedim] == 3
+assert ovf.OVFParameter.pointcount not in destination.header
+destination.header.copy_from(destination.header)
+assert destination.header[ovf.OVFParameter.Title] == "copied metadata"
+assert destination.header[ovf.OVFParameter.xnodes] == 4
+
+standalone.copy_from(metadata)
+assert standalone[ovf.OVFParameter.Meshtype] == ovf.MeshType.Irregular
+assert standalone[ovf.OVFParameter.pointcount] == 99
+assert standalone[ovf.OVFParameter.valuedim] == 8
+metadata.copy_from(metadata)
+assert metadata[ovf.OVFParameter.Title] == "copied metadata"
+
 for invalid in (ovf.SegmentHeader(), ovf.VField(), ovf.VField().header):
     try:
         invalid.validate()
@@ -111,6 +144,15 @@ with tempfile.TemporaryDirectory() as directory:
     assert original.header[ovf.OVFParameter.zbase] == 2.0
     assert original.header[ovf.OVFParameter.xmin] == 0.0
     assert original.header[ovf.OVFParameter.xmax] == 8.0
+    x, y, z = original.meshgrid()
+    assert x.shape == y.shape == z.shape == original.data.shape[:-1]
+    np.testing.assert_allclose(x[0, 0, :], [1.0, 3.0, 5.0, 7.0])
+    np.testing.assert_allclose(y[0, :, 0], [1.5, 4.5])
+    np.testing.assert_allclose(z[:, 0, 0], [2.0])
+
+    original.header[ovf.OVFParameter.xbase] = None
+    x_from_bounds, _, _ = original.meshgrid()
+    np.testing.assert_allclose(x_from_bounds, x)
     original.header[ovf.OVFParameter.Title] = "Python context manager"
 
     with ovf.writer(path) as destination:
@@ -129,3 +171,21 @@ with tempfile.TemporaryDirectory() as directory:
         np.testing.assert_array_equal(loaded.data, original.data)
     assert source.closed
     np.testing.assert_array_equal(loaded.data, original.data)
+
+incomplete = ovf.VField()
+incomplete.data = np.zeros((1, 1, 1, 3), dtype=np.float32)
+try:
+    incomplete.meshgrid()
+except ValueError as error:
+    assert "stepsize" in str(error)
+else:
+    raise AssertionError("meshgrid must reject incomplete coordinate metadata")
+
+irregular = ovf.VField()
+irregular.data = np.zeros((1, 6), dtype=np.float32)
+try:
+    irregular.meshgrid()
+except ValueError as error:
+    assert "rectangular" in str(error)
+else:
+    raise AssertionError("meshgrid must reject irregular meshes")
