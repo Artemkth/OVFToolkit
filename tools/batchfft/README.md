@@ -121,6 +121,10 @@ cmake --build build --parallel --target ovf-batchfft
 
 CMake reports the backends it found during configuration. The executable is
 installed into the normal binary directory by `cmake --install build`.
+`OVFTOOLKIT_USE_CUFFT` and `OVFTOOLKIT_USE_FFTW` each accept `AUTO`, `ON`, or
+`OFF`. `AUTO` discovers an available backend, `ON` requires it, and `OFF`
+prevents its discovery. Release packaging should set both explicitly so that a
+binary cannot acquire an unintended backend from the build environment.
 
 ## Distribution and licensing
 

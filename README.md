@@ -187,6 +187,11 @@ python -m pip install cibuildwheel
 python -m cibuildwheel --output-dir wheelhouse
 ```
 
+Windows CI additionally publishes one `cp312-abi3` wheel. It uses nanobind's
+CPython 3.12+ stable ABI and is tested with a newer Python before upload. Normal
+source builds remain available for Python 3.10 and 3.11; stable ABI mode is an
+explicit packaging option (`OVFTOOLKIT_PYTHON_STABLE_ABI=ON`).
+
 The separately licensed mumax controller is packaged independently:
 
 ```sh

@@ -43,6 +43,10 @@ ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
     "Build the Wolfram Language WSTP binding")
 ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_MUMAX_RUNNER
     "Build the GPL-licensed interactive mumax3 runner")
+ovftoolkit_tristate_option(OVFTOOLKIT_USE_FFTW
+    "Use the FFTW CPU backend for Fourier analysis tools")
+ovftoolkit_tristate_option(OVFTOOLKIT_USE_CUFFT
+    "Use the NVIDIA cuFFT backend for Fourier analysis tools")
 
 check_cxx_source_compiles([=[
     #include <cstddef>
@@ -152,15 +156,25 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/findFFTW" ${CMAKE_MODULE_PA
 # Try to find either CPU FFTW or CUDA/cuFFT for Fourier analysis.  The
 # threaded FFTW companion library is optional; the serial float library is
 # sufficient for the CPU backend.
-find_package(FFTW COMPONENTS FLOAT_LIB OPTIONAL_COMPONENTS FLOAT_THREADS_LIB)
-
-# Prefer a configuration-aware package target when one is available.  The
-# legacy FindFFTW module exposes a single library path, which can make a
-# multi-config generator link a Debug archive into Release targets.
 set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW::Float)
-find_package(FFTW3f CONFIG QUIET)
-if(TARGET FFTW3::fftw3f)
-    set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW3::fftw3f)
+set(FFTW_FLOAT_LIB_FOUND OFF)
+set(FFTW_FLOAT_THREADS_LIB_FOUND OFF)
+if(NOT OVFTOOLKIT_USE_FFTW STREQUAL "OFF")
+    find_package(FFTW COMPONENTS FLOAT_LIB
+        OPTIONAL_COMPONENTS FLOAT_THREADS_LIB)
+
+    # Prefer a configuration-aware package target when one is available.  The
+    # legacy FindFFTW module exposes a single library path, which can make a
+    # multi-config generator link a Debug archive into Release targets.
+    find_package(FFTW3f CONFIG QUIET)
+    if(TARGET FFTW3::fftw3f)
+        set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW3::fftw3f)
+    endif()
+
+    if(OVFTOOLKIT_USE_FFTW STREQUAL "ON" AND NOT FFTW_FLOAT_LIB_FOUND)
+        message(FATAL_ERROR
+            "OVFTOOLKIT_USE_FFTW=ON requires the single-precision FFTW library")
+    endif()
 endif()
 
 if(FFTW_VERSION)
@@ -175,9 +189,11 @@ if(NOT OVFTOOLKIT_FFTW_VERSION AND FFTW_FLOAT_LIB_FOUND AND FFTW_INCLUDE_DIRS)
     endif()
 endif()
 include(CheckLanguage)
-CHECK_LANGUAGE(CUDA)
 set(OVFTOOLKIT_CUFFT_FOUND OFF)
-IF(CMAKE_CUDA_COMPILER)
+if(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF")
+    check_language(CUDA)
+endif()
+IF(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF" AND CMAKE_CUDA_COMPILER)
     # CUDA 12 rejects GCC 15 by default. Using an older G++ only for nvcc can
     # mix incompatible C++ runtimes at the final G++ 15 link, so keep one host
     # toolchain throughout and explicitly allow the unsupported combination.
@@ -217,9 +233,13 @@ IF(CMAKE_CUDA_COMPILER)
             set(OVFTOOLKIT_CUFFT_FOUND ON)
         endif()
     ENDIF()
-ELSE()
+ELSEIF(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF")
     MESSAGE(STATUS "Cuda was not found!")
 ENDIF()
+if(OVFTOOLKIT_USE_CUFFT STREQUAL "ON" AND NOT OVFTOOLKIT_CUFFT_FOUND)
+    message(FATAL_ERROR
+        "OVFTOOLKIT_USE_CUFFT=ON requires a CUDA compiler and cuFFT")
+endif()
 set(BUILD_FFUTIL OFF)
 if((FFTW_FLOAT_LIB_FOUND OR OVFTOOLKIT_CUFFT_FOUND) AND Boost_PROGRAM_OPTIONS_FOUND)
     set(BUILD_FFUTIL ON)

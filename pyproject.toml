@@ -41,7 +41,6 @@ cmake.version = ">=3.30"
 wheel.packages = []
 install.components = ["Python"]
 build.verbose = true
-build.tool-args = ["-j2"]
 sdist.exclude = [
     ".cache",
     ".gitmodules",

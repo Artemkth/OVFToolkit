@@ -2,6 +2,8 @@ ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_PYTHON_BINDING
     "Build the nanobind Python extension")
 option(OVFTOOLKIT_PYTHON_WHEEL
     "Install the Python extension into an ovftoolkit wheel package" OFF)
+option(OVFTOOLKIT_PYTHON_STABLE_ABI
+    "Build the Python extension for the CPython 3.12+ stable ABI" OFF)
 
 if(OVFTOOLKIT_BUILD_PYTHON_BINDING STREQUAL "OFF")
     if(OVFTOOLKIT_PYTHON_WHEEL)
@@ -18,7 +20,14 @@ if(OVFTOOLKIT_BUILD_PYTHON_BINDING STREQUAL "ON" OR
     set(_ovftoolkit_python_binding_required ON)
 endif()
 
-find_package(Python 3.10 COMPONENTS Interpreter Development.Module QUIET)
+set(_ovftoolkit_python_minimum_version 3.10)
+set(_ovftoolkit_python_components Interpreter Development.Module)
+if(OVFTOOLKIT_PYTHON_STABLE_ABI)
+    set(_ovftoolkit_python_minimum_version 3.12)
+    list(APPEND _ovftoolkit_python_components Development.SABIModule)
+endif()
+find_package(Python ${_ovftoolkit_python_minimum_version}
+    COMPONENTS ${_ovftoolkit_python_components} QUIET)
 if(NOT Python_FOUND OR NOT TARGET Python::Module)
     if(_ovftoolkit_python_binding_required)
         message(FATAL_ERROR
@@ -27,6 +36,11 @@ if(NOT Python_FOUND OR NOT TARGET Python::Module)
     endif()
     message(STATUS "Python binding disabled: Python development files not found")
     return()
+endif()
+if(OVFTOOLKIT_PYTHON_STABLE_ABI AND NOT TARGET Python::SABIModule)
+    message(FATAL_ERROR
+        "OVFTOOLKIT_PYTHON_STABLE_ABI=ON requires Python 3.12 or newer "
+        "with Development.SABIModule support")
 endif()
 
 get_target_property(_ovftoolkit_python_module_type Python::Module TYPE)
@@ -85,7 +99,13 @@ endif()
 
 message(STATUS
     "Building Python binding with Python ${Python_VERSION} and nanobind ${nanobind_VERSION}")
-nanobind_add_module(ovftoolkit_native bindings.cpp)
+set(_ovftoolkit_nanobind_options)
+if(OVFTOOLKIT_PYTHON_STABLE_ABI)
+    list(APPEND _ovftoolkit_nanobind_options STABLE_ABI)
+    message(STATUS "Python binding targets the CPython 3.12+ stable ABI")
+endif()
+nanobind_add_module(ovftoolkit_native
+    ${_ovftoolkit_nanobind_options} bindings.cpp)
 set(_python_package_build_dir "${CMAKE_CURRENT_BINARY_DIR}/ovftoolkit")
 set_target_properties(ovftoolkit_native PROPERTIES
     OUTPUT_NAME _native

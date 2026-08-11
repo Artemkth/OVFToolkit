@@ -3,13 +3,6 @@
     "boost-endian",
     "boost-program-options",
     {
-      "name": "fftw3",
-      "version>=": "3.3.11",
-      "features": [
-        "threads"
-      ]
-    },
-    {
 		"name": "hdf5",
 		"version>=": "2.1.1#1"
 	},
@@ -22,5 +15,22 @@
 		"name": "netcdf-c",
 		"version>=": "4.9.3#3"
 	}
-  ]
+  ],
+  "default-features": [
+    "fftw"
+  ],
+  "features": {
+    "fftw": {
+      "description": "Build the FFTW CPU backend",
+      "dependencies": [
+        {
+          "name": "fftw3",
+          "version>=": "3.3.11",
+          "features": [
+            "threads"
+          ]
+        }
+      ]
+    }
+  }
 }
