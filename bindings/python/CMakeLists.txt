@@ -115,7 +115,11 @@ set_target_properties(ovftoolkit_native PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${_python_package_build_dir}/$<0:>")
 file(MAKE_DIRECTORY "${_python_package_build_dir}")
 configure_file(ovftoolkit/__init__.py ovftoolkit/__init__.py COPYONLY)
+configure_file(ovftoolkit/arrays.py ovftoolkit/arrays.py COPYONLY)
+configure_file(ovftoolkit/spectrum.py ovftoolkit/spectrum.py COPYONLY)
 configure_file(test_binding.py test_binding.py COPYONLY)
+configure_file(test_arrays.py test_arrays.py COPYONLY)
+configure_file(test_spectrum.py test_spectrum.py COPYONLY)
 target_link_libraries(ovftoolkit_native PRIVATE ovfparser)
 target_compile_options(ovftoolkit_native PRIVATE
     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:AppleClang>>:-Werror -Wall -Wextra -pedantic-errors>
@@ -133,6 +137,14 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
         COMMAND "${CMAKE_COMMAND}" -E env
             "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}"
             "${Python_EXECUTABLE}" "${CMAKE_CURRENT_BINARY_DIR}/test_binding.py")
+    add_test(NAME PythonSpectrumTest
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}"
+            "${Python_EXECUTABLE}" "${CMAKE_CURRENT_BINARY_DIR}/test_spectrum.py")
+    add_test(NAME PythonArrayViewTest
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}"
+            "${Python_EXECUTABLE}" "${CMAKE_CURRENT_BINARY_DIR}/test_arrays.py")
 endif()
 
 if(OVFTOOLKIT_PYTHON_WHEEL)
@@ -148,5 +160,7 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/_native.pyi"
     "${CMAKE_CURRENT_SOURCE_DIR}/ovftoolkit/__init__.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/ovftoolkit/__init__.pyi"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ovftoolkit/arrays.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ovftoolkit/spectrum.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/ovftoolkit/py.typed"
     DESTINATION "${_python_package_dir}" COMPONENT Python)

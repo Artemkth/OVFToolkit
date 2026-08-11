@@ -50,6 +50,26 @@ view[0, 0, 1, 2] = 42
 assert field.data[0, 0, 1, 2] == 42  # getter is a writable zero-copy view
 
 try:
+    field.complex_data
+except ValueError as error:
+    assert "even final dimension" in str(error)
+else:
+    raise AssertionError("complex_data must reject an odd final dimension")
+
+complex_source = np.arange(16, dtype=np.float32).reshape(1, 2, 2, 4)
+complex_field = ovf.VField()
+complex_field.data = complex_source
+complex_view = complex_field.complex_data
+assert complex_view.shape == (1, 2, 2, 2)
+assert complex_view.dtype == np.complex64
+assert np.shares_memory(complex_field.data, complex_view)
+np.testing.assert_array_equal(complex_view.real, complex_field.data[..., 0::2])
+np.testing.assert_array_equal(complex_view.imag, complex_field.data[..., 1::2])
+complex_view[0, 0, 0, 0] = 10 + 20j
+assert complex_field.data[0, 0, 0, 0] == 10
+assert complex_field.data[0, 0, 0, 1] == 20
+
+try:
     header["does_not_exist"]
 except KeyError:
     pass

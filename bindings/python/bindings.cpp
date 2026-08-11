@@ -13,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <format>
 #include <filesystem>
@@ -479,6 +480,45 @@ template<typename T>
     return dataView<double>(field, owner);
 }
 
+template<typename T>
+[[nodiscard]] nb::object complexDataView(VField::VField& field,
+                                         nb::handle owner)
+{
+    const auto pointDimension = field.pointDimension();
+    if(pointDimension % 2 != 0)
+        throw nb::value_error("complex_data requires an even final dimension");
+
+    std::vector<std::size_t> shape;
+    if(field.isGridAddressable())
+    {
+        const auto& header = field.header();
+        shape = {
+            header.requireAs<std::size_t>(OVFParameter::Znodes),
+            header.requireAs<std::size_t>(OVFParameter::Ynodes),
+            header.requireAs<std::size_t>(OVFParameter::Xnodes),
+            pointDimension / 2};
+    }
+    else if(field.isWeaklyAddressable())
+        shape = {field.pointCount(), pointDimension / 2};
+    else
+        throw nb::value_error("complex_data requires addressable field data");
+
+    nb::ndarray<nb::numpy, std::complex<T>> array{
+        reinterpret_cast<std::complex<T>*>(field.data<T>()),
+        shape.size(), shape.data(), owner};
+    return array.cast();
+}
+
+[[nodiscard]] nb::object fieldComplexData(VField::VField& field)
+{
+    if(!field.isDataPresent())
+        return nb::none();
+    nb::object owner = nb::cast(&field, nb::rv_policy::reference);
+    if(field.stores<float>())
+        return complexDataView<float>(field, owner);
+    return complexDataView<double>(field, owner);
+}
+
 void setFieldData(VField::VField& field, nb::object value)
 {
     if(value.is_none())
@@ -853,6 +893,9 @@ NB_MODULE(_native, module)
             nb::arg("value").none(),
             "Writable zero-copy NumPy view. Assignment replaces C++-owned "
             "storage and invalidates older views.")
+        .def_prop_ro("complex_data", &fieldComplexData,
+            "Writable zero-copy NumPy view pairing adjacent real and imaginary "
+            "values. The final data dimension must be even.")
         .def_prop_ro("scalar_count", &VField::VField::scalarCount)
         .def_prop_ro("point_count", &VField::VField::pointCount)
         .def_prop_ro("point_dimension", &VField::VField::pointDimension)
