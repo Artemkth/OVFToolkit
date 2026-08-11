@@ -33,6 +33,10 @@ class cuFFTEngine: public FFTEngine<float>
             std::size_t* Indices{nullptr};
             float* dt{nullptr};
 
+            // Reserve the fixed-size interpolation tables before the large
+            // transform buffers consume the remaining VRAM.
+            bool allocate(std::size_t transformLength);
+
             //free the data
             void free();
         } InterpAccel;

@@ -429,6 +429,16 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
     }
     if(maxMem == 0) maxMem = 0.95 * freeMem; //defaulting to 95% of available VRAM
 
+    // EstimateBatchSize accounts for these fixed interpolation tables. Allocate
+    // them before the much larger data and workspace buffers so that WDDM cannot
+    // leave the reserved bytes unusable due to allocation order/fragmentation.
+    if(fftLength > 1 && !InterpAccel.allocate(fftLength))
+    {
+        fail = true;
+        std::cerr << "Failed to preallocate interpolation constants in VRAM.\n";
+        return !fail;
+    }
+
     //conversion to acceptable type for fft
     if( fftLength  > std::numeric_limits<long long int>::max() )
     {
@@ -602,31 +612,16 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
         //2 is acceptable = do nothing, lol
         return false;
 
-    InterpAccel.free();
-
     //constants for reinterpreter
-    InterpAccel.sCnt = fftLength - 1;//nunmber of intervals between cnt points
+    if(InterpAccel.sCnt != fftLength - 1 || InterpAccel.h == nullptr ||
+       (fftLength > 2 && InterpAccel.Indices == nullptr))
+    {
+        std::cerr << "Interpolation constants were not preallocated!\n";
+        return false;
+    }
     InterpAccel.trueStep = (ts[fftLength - 1] - ts[0]) / (fftLength - 1);
     const auto& sCnt = InterpAccel.sCnt;
     const auto& step = InterpAccel.trueStep;
-
-    const std::size_t staticOverhead {
-        //shared interp accelerators
-        // 3 (h, mu and l) arrays for spline parameters
-        // and fftLength - 2 dts points
-        (3 * sCnt + fftLength - 2) * sizeof(float) + 
-        // fftLength - 2 spline indices
-        (fftLength - 2) * sizeof(std::size_t)
-    };
-
-    //evaluate the memory constraints, give up if there is not enough free memory
-    std::size_t freeMem, totMem;
-    cudaMemGetInfo( &freeMem, &totMem );
-    if( freeMem < staticOverhead )
-    {
-        std::cerr << "Not enough free VRAM for interpolation! Giving up on interpolation! Consider limiting vram usage by the main subroutine with --max-vram" << std::endl;
-        return false;
-    }
 
     //do some host calculations and upload arithmetic accelerators onto the gpu
     std::unique_ptr<float[]> h{new float[3 * sCnt + fftLength - 2]};
@@ -656,18 +651,14 @@ __host__ bool cuFFTEngine::InitInterp( const double* ts )
         dts[i - 1] = ts[0] + i * step - ts[j];
     }
 
-    //upload results to gpu memory
-    bool failed = !run_api_pack(
-        PackedAPI{cudaMallocFunc, "allocating GPU memory for FP constants",
-          (void**)&InterpAccel.h, sizeof(float) * (3 * sCnt + fftLength -2)},
-        PackedAPI{cudaMallocFunc, "allocating spline indexing array",
-          (void**)&InterpAccel.Indices, sizeof(std::size_t) * (fftLength -2)});
-    if(!failed)
-        failed = !run_api_pack(
-        PackedAPI{cudaMemcpy, "copying FP constants to GPU",
-          (void*)InterpAccel.h, (const void*)h.get(), sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice},
-        PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
-          (void*)InterpAccel.Indices, (const void*)ind.get(), (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice});
+    //upload results to the memory reserved during transform initialization
+    bool failed = !PackedAPI{cudaMemcpy, "copying FP constants to GPU",
+        (void*)InterpAccel.h, (const void*)h.get(),
+        sizeof(float) * (3*sCnt + fftLength -2), cudaMemcpyHostToDevice}.exec();
+    if(!failed && fftLength > 2)
+        failed = !PackedAPI{cudaMemcpy, "copying spline indexes to GPU",
+            (void*)InterpAccel.Indices, (const void*)ind.get(),
+            (fftLength - 2) * sizeof(std::size_t), cudaMemcpyHostToDevice}.exec();
 
     if(!failed)
     {
@@ -725,6 +716,39 @@ void cuFFTEngine::InterpAccel_t::free()
     dt = nullptr;
     Indices = nullptr;
     interpReady = false;
+}
+
+bool cuFFTEngine::InterpAccel_t::allocate(std::size_t transformLength)
+{
+    free();
+    if(transformLength < 2)
+        return false;
+
+    constexpr auto sizeMax = std::numeric_limits<std::size_t>::max();
+    const auto maxFloatCount = sizeMax / sizeof(float);
+    if(transformLength > (maxFloatCount + 5) / 4 ||
+       transformLength - 2 > sizeMax / sizeof(std::size_t))
+        return false;
+
+    sCnt = transformLength - 1;
+    const auto floatCount = 3 * sCnt + transformLength - 2;
+    const auto indexCount = transformLength - 2;
+
+    bool failed = !PackedAPI{cudaMallocFunc, "allocating GPU memory for FP constants",
+                             (void**)&h, sizeof(float) * floatCount}.exec();
+    if(!failed && indexCount != 0)
+        failed = !PackedAPI{cudaMallocFunc, "allocating spline indexing array",
+                            (void**)&Indices, sizeof(std::size_t) * indexCount}.exec();
+    if(failed)
+    {
+        free();
+        return false;
+    }
+
+    mu = h + sCnt;
+    l = h + 2 * sCnt;
+    dt = h + 3 * sCnt;
+    return true;
 }
 
 // Convert the public time-major layout to cuFFT's padded transform-major
