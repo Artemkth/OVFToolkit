@@ -1361,7 +1361,7 @@ int batchMain(int argc, char** argv)
             !fft_engine -> RunTransform(buff -> data.get(), norm, fft_engine -> expectedBatch() - buff -> realPoints ))
         {
             monitorOn = false;
-            MonitorThread.join();
+            if(MonitorThread.joinable()) MonitorThread.join();
 
             std::cerr << "Error processing the data, aborting!";
             return -1;
@@ -1369,7 +1369,7 @@ int batchMain(int argc, char** argv)
         buff -> state = BufferState::STOP;
 
         monitorOn = false;
-        MonitorThread.join();
+        if(MonitorThread.joinable()) MonitorThread.join();
         //and that's all, Pogchamp
     }
 
