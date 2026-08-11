@@ -12,6 +12,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CheckCXXSourceCompiles)
 include(GNUInstallDirs)
 
+function(ovftoolkit_install_executable target)
+    install(TARGETS ${target}
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    if(WIN32)
+        # vcpkg's app-local deployment places the complete runtime DLL closure
+        # beside each executable after it is built.  Install that closure rather
+        # than scanning the host system or relying on incomplete imported-target
+        # metadata from some packages.
+        install(DIRECTORY "$<TARGET_FILE_DIR:${target}>/"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            FILES_MATCHING PATTERN "*.dll")
+    endif()
+endfunction()
+
 macro(ovftoolkit_tristate_option name description)
     set(${name} AUTO CACHE STRING "${description}: AUTO, ON, or OFF")
     set_property(CACHE ${name} PROPERTY STRINGS AUTO ON OFF)

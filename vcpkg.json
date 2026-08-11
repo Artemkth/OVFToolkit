@@ -4,6 +4,7 @@
     "boost-program-options",
     {
       "name": "fftw3",
+      "version>=": "3.3.11",
       "features": [
         "threads"
       ]

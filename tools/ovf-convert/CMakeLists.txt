@@ -50,5 +50,5 @@ if(WIN32)
     set_target_properties(ovf-convert PROPERTIES LINK_FLAGS "wsetargv.obj")
 endif()
 
-install(TARGETS ovf-convert RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+ovftoolkit_install_executable(ovf-convert)
 install(FILES README.md DESTINATION "${CMAKE_INSTALL_DOCDIR}/ovf-convert")
