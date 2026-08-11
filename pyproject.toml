@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "ovftoolkit"
-version = "0.2.1"
+version = "0.3.0"
 description = "Fast, lazy NumPy access to OOMMF vector-field files"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +35,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.urls]
+Documentation = "https://artemkth.github.io/OVFToolkit/"
+Issues = "https://github.com/Artemkth/OVFToolkit/issues"
+Repository = "https://github.com/Artemkth/OVFToolkit"
+
 [tool.scikit-build]
 minimum-version = "build-system.requires"
 cmake.version = ">=3.30"
@@ -47,7 +52,8 @@ sdist.exclude = [
     "CMake",
     "build*",
     "compile_commands.json",
-    "external",
+    "externals/FindMathematica",
+    "externals/findFFTW",
     "submodules",
     "tests",
     "testing",
@@ -55,6 +61,10 @@ sdist.exclude = [
     "util",
     "bindings/wolfram",
     "tools/mumax-runner/__pycache__",
+]
+sdist.include = [
+    "externals/mdspan/include/**",
+    "externals/mdspan/LICENSE",
 ]
 
 [tool.scikit-build.cmake.define]

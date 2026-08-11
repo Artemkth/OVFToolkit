@@ -7,3 +7,5 @@ CMakeFiles/
 /.cache/
 /.venv-docs/
 /docs/help/generated/
+/dist/
+/wheelhouse/

@@ -1,0 +1,165 @@
+name: Publish Python package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    name: Verify release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Match tag and project versions
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          ref_type = os.environ["GITHUB_REF_TYPE"]
+          package_version = tomllib.loads(
+              Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+          match = re.search(r"project\(OVFToolkit VERSION ([0-9]+\.[0-9]+\.[0-9]+)", cmake)
+          if match is None:
+              raise SystemExit("Could not determine the CMake project version")
+          cmake_version = match.group(1)
+          expected_tag = f"v{package_version}"
+          if cmake_version != package_version:
+              raise SystemExit(
+                  f"Release mismatch: package={package_version}, "
+                  f"CMake={cmake_version}"
+              )
+          if ref_type == "tag" and ref_name != expected_tag:
+              raise SystemExit(
+                  f"Release mismatch: tag={ref_name}; expected {expected_tag}"
+              )
+          print(f"Verified OVFToolkit {package_version}; release tag is {expected_tag}")
+          PY
+      - name: Require the tagged commit to belong to master
+        run: git merge-base --is-ancestor "$GITHUB_SHA" "origin/master"
+
+  build-sdist:
+    name: Build source distribution
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Build sdist
+        run: |
+          python -m pip install build
+          python -m build --sdist --outdir dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-wheels:
+    name: Build ${{ matrix.platform }} ABI3 wheel
+    needs: verify-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: manylinux-x86_64
+            os: ubuntu-24.04
+          - platform: windows-x86_64
+            os: windows-2022
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install Boost headers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install boost-endian:x64-windows
+          $vcpkgRoot = Split-Path -Parent (Get-Command vcpkg).Source
+          $prefix = (Join-Path $vcpkgRoot "installed/x64-windows").Replace('\', '/')
+          "CMAKE_PREFIX_PATH=$prefix" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==4.1.1
+      - name: Build and test wheel
+        env:
+          CIBW_BUILD: "cp312-*"
+          CIBW_SKIP: "*-musllinux_* *-win32"
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_CONFIG_SETTINGS: >-
+            wheel.py-api=cp312
+            cmake.define.OVFTOOLKIT_PYTHON_STABLE_ABI=ON
+          CIBW_BEFORE_ALL_LINUX: >-
+            if command -v dnf >/dev/null 2>&1;
+            then dnf install -y boost-devel;
+            else yum install -y boost-devel;
+            fi
+        run: python -m cibuildwheel --output-dir wheelhouse
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-wheel-${{ matrix.platform }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  check-distributions:
+    name: Check distributions
+    needs: [build-sdist, build-wheels]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Validate package metadata
+        run: |
+          python -m pip install twine
+          python -m twine check --strict dist/*
+          ls -lh dist
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check-distributions
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ovftoolkit
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
