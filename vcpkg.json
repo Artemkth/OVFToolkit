@@ -20,7 +20,6 @@
 	{
 		"name": "netcdf-c",
 		"version>=": "4.9.3#3"
-	},
-    "nanobind"
+	}
   ]
 }

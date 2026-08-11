@@ -35,27 +35,44 @@ if(_ovftoolkit_python_module_type STREQUAL "STATIC_LIBRARY")
         message(FATAL_ERROR
             "Python binding requested, but Python::Module is a static library. "
             "The nanobind extension requires a shared Python runtime; use a "
-            "dynamic Python/vcpkg triplet or disable the Python binding.")
+            "dynamic Python installation or disable the Python binding.")
     endif()
     message(STATUS
         "Python binding disabled: Python::Module is a static library")
     return()
 endif()
 
-find_package(nanobind CONFIG QUIET)
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+    RESULT_VARIABLE _ovftoolkit_nanobind_result
+    OUTPUT_VARIABLE _ovftoolkit_nanobind_cmake_dir
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(_ovftoolkit_nanobind_result EQUAL 0 AND
+   IS_DIRECTORY "${_ovftoolkit_nanobind_cmake_dir}")
+    # Use the nanobind package installed for the selected interpreter.  In
+    # particular, do not accidentally pick up a stale copy from vcpkg or a
+    # different Python installation.
+    set(nanobind_DIR "${_ovftoolkit_nanobind_cmake_dir}")
+    find_package(nanobind CONFIG QUIET NO_DEFAULT_PATH)
+endif()
 if(NOT nanobind_FOUND)
     if(_ovftoolkit_python_binding_required)
         message(FATAL_ERROR
-            "Python binding requested, but nanobind was not found")
+            "Python binding requested, but nanobind is not installed for "
+            "${Python_EXECUTABLE}. Install it with: "
+            "\"${Python_EXECUTABLE}\" -m pip install nanobind")
     endif()
-    message(STATUS "Python binding disabled: nanobind not found")
+    message(STATUS
+        "Python binding disabled: nanobind is not installed for "
+        "${Python_EXECUTABLE}")
     return()
 endif()
 
-# vcpkg supplies the debug Python library on Windows, but not a matching debug
-# interpreter.  Stub generation therefore has to load Debug extension builds
-# into the release interpreter.  Link those builds to the release Python DLL
-# so that the process does not contain two incompatible Python runtimes.
+# Most Windows Python installations do not supply a matching debug interpreter.
+# Stub generation therefore has to load Debug extension builds into the release
+# interpreter. Link those builds to the release Python DLL so that the process
+# does not contain two incompatible Python runtimes.
 if(WIN32 AND TARGET Python::Module AND NOT Python_EXECUTABLE_DEBUG)
     set_property(TARGET Python::Module PROPERTY MAP_IMPORTED_CONFIG_DEBUG Release)
 endif()

@@ -103,8 +103,8 @@ The core C++ library requires:
 - native `std::mdspan`, or the bundled Kokkos mdspan reference implementation.
 
 Python bindings additionally require Python 3.10 or newer, its development
-headers, nanobind, and NumPy. Matplotlib is needed only for the plotting
-example.
+headers, and nanobind installed for that same Python interpreter. NumPy is a
+runtime dependency; Matplotlib is needed only for the plotting example.
 
 Optional components are enabled when their dependencies are available:
 
@@ -139,14 +139,21 @@ To build only the core library and Python binding, without probing heavyweight
 tool integrations:
 
 ```sh
+python -m pip install nanobind
 cmake -S . -B build-python \
   -DCMAKE_BUILD_TYPE=Release \
+  -DPython_EXECUTABLE="$(command -v python)" \
   -DOVFTOOLKIT_BUILD_TOOLS=OFF \
   -DOVFTOOLKIT_BUILD_DOCS=OFF \
   -DOVFTOOLKIT_BUILD_WOLFRAM_BINDING=OFF \
   -DBUILD_TESTING=OFF
 cmake --build build-python --parallel
 ```
+
+CMake queries the selected interpreter with `python -m nanobind --cmake_dir`;
+nanobind and Python are therefore not supplied by vcpkg. When multiple Python
+installations exist, set `Python_EXECUTABLE` to the interpreter for which
+nanobind was installed.
 
 Individual optional features can be controlled with
 `OVFTOOLKIT_BUILD_TOOLS`, `OVFTOOLKIT_BUILD_PYTHON_BINDING`,
