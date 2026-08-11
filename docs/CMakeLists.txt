@@ -1,12 +1,9 @@
-option(OVFTOOLKIT_BUILD_DOCUMENTATION
-    "Enable the ovftoolkit-docs Doxygen target" ${PROJECT_IS_TOP_LEVEL})
-
-if(NOT OVFTOOLKIT_BUILD_DOCUMENTATION)
-    return()
-endif()
-
 find_package(Doxygen QUIET)
 if(NOT Doxygen_FOUND)
+    if(OVFTOOLKIT_BUILD_DOCS STREQUAL "ON")
+        message(FATAL_ERROR
+            "OVFTOOLKIT_BUILD_DOCS=ON requires Doxygen")
+    endif()
     message(STATUS
         "Doxygen was not found; the ovftoolkit-docs target is unavailable")
     return()

@@ -151,7 +151,11 @@ cmake --build build-python --parallel
 Individual optional features can be controlled with
 `OVFTOOLKIT_BUILD_TOOLS`, `OVFTOOLKIT_BUILD_PYTHON_BINDING`,
 `OVFTOOLKIT_BUILD_WOLFRAM_BINDING`, `OVFTOOLKIT_BUILD_MUMAX_RUNNER`,
-`OVFTOOLKIT_BUILD_DOCS`, and `OVFTOOLKIT_BUILD_DOCUMENTATION`.
+and `OVFTOOLKIT_BUILD_DOCS`. Each accepts `AUTO` (the default), `ON`, or
+`OFF`. `AUTO` builds the feature when its dependencies are usable, `ON`
+requires the feature and reports missing or incompatible dependencies, and
+`OFF` disables it. In particular, static Python installations are skipped in
+`AUTO` mode because a nanobind extension requires a shared Python runtime.
 
 ## Python packages
 

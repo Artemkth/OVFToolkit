@@ -1,17 +1,24 @@
+if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "OFF")
+    return()
+endif()
+
 find_program(OVFTOOLKIT_GO_EXECUTABLE NAMES go)
 find_package(Git QUIET)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
-set(_mumax_runner_default OFF)
-if(OVFTOOLKIT_GO_EXECUTABLE AND Git_FOUND AND Python3_Interpreter_FOUND AND
-   OVFTOOLKIT_CUFFT_FOUND)
-    set(_mumax_runner_default ON)
-endif()
-option(OVFTOOLKIT_BUILD_MUMAX_RUNNER
-    "Build the GPL-licensed interactive mumax3 runner" ${_mumax_runner_default})
-
-#drop through if mumax runner not requested and not possible
-if(NOT OVFTOOLKIT_BUILD_MUMAX_RUNNER)
+if(NOT OVFTOOLKIT_GO_EXECUTABLE OR NOT Git_FOUND OR
+   NOT Python3_Interpreter_FOUND OR NOT OVFTOOLKIT_CUFFT_FOUND)
+    if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "ON")
+        if(NOT OVFTOOLKIT_GO_EXECUTABLE)
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires Go")
+        elseif(NOT Python3_Interpreter_FOUND)
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires Python 3")
+        elseif(NOT Git_FOUND)
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires Git")
+        else()
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires CUDA/cuFFT")
+        endif()
+    endif()
     if(NOT OVFTOOLKIT_GO_EXECUTABLE)
         message(STATUS "Mumax runner disabled: Go was not found")
     elseif(NOT Python3_Interpreter_FOUND)
@@ -22,20 +29,6 @@ if(NOT OVFTOOLKIT_BUILD_MUMAX_RUNNER)
         message(STATUS "Mumax runner disabled: CUDA/cuFFT was not found")
     endif()
     return()
-endif()
-
-#else imply runner is desired, and fail when unable to build
-if(NOT OVFTOOLKIT_GO_EXECUTABLE)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires Go")
-endif()
-if(NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires Python 3")
-endif()
-if(NOT Git_FOUND)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires Git")
-endif()
-if(NOT OVFTOOLKIT_CUFFT_FOUND)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires CUDA")
 endif()
 
 set(MUMAX3_SOURCE_DIR "" CACHE PATH

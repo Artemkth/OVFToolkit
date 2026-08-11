@@ -12,10 +12,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CheckCXXSourceCompiles)
 include(GNUInstallDirs)
 
-option(OVFTOOLKIT_BUILD_TOOLS "Build OVFToolkit command-line tools" ON)
-option(OVFTOOLKIT_BUILD_DOCS "Configure the Doxygen documentation target" ON)
-option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
-    "Build the Wolfram Language WSTP binding when Mathematica is available" ON)
+macro(ovftoolkit_tristate_option name description)
+    set(${name} AUTO CACHE STRING "${description}: AUTO, ON, or OFF")
+    set_property(CACHE ${name} PROPERTY STRINGS AUTO ON OFF)
+    string(TOUPPER "${${name}}" ${name})
+    if(NOT ${name} MATCHES "^(AUTO|ON|OFF)$")
+        message(FATAL_ERROR "${name} must be AUTO, ON, or OFF")
+    endif()
+endmacro()
+
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_TOOLS
+    "Build OVFToolkit command-line tools")
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_DOCS
+    "Configure the Doxygen documentation target")
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
+    "Build the Wolfram Language WSTP binding")
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_MUMAX_RUNNER
+    "Build the GPL-licensed interactive mumax3 runner")
 
 check_cxx_source_compiles([=[
     #include <cstddef>
@@ -78,10 +91,24 @@ find_package(Threads REQUIRED)
 # The parser only needs Boost headers. Command-line tools additionally use
 # program_options, which should not be a build dependency of Python wheels.
 cmake_policy(SET CMP0167 NEW)
-if(OVFTOOLKIT_BUILD_TOOLS)
-    find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
-else()
-    find_package(Boost 1.58.0 REQUIRED)
+find_package(Boost 1.58.0 REQUIRED)
+set(OVFTOOLKIT_BUILD_TOOLS_ENABLED OFF)
+if(NOT OVFTOOLKIT_BUILD_TOOLS STREQUAL "OFF")
+    find_package(Boost 1.58.0 COMPONENTS program_options QUIET)
+    if(Boost_PROGRAM_OPTIONS_FOUND)
+        set(OVFTOOLKIT_BUILD_TOOLS_ENABLED ON)
+    elseif(OVFTOOLKIT_BUILD_TOOLS STREQUAL "ON")
+        message(FATAL_ERROR
+            "OVFTOOLKIT_BUILD_TOOLS=ON requires Boost.Program_options")
+    else()
+        message(STATUS
+            "Command-line tools disabled: Boost.Program_options was not found")
+    endif()
+endif()
+if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "ON" AND
+   NOT OVFTOOLKIT_BUILD_TOOLS_ENABLED)
+    message(FATAL_ERROR
+        "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires command-line tools")
 endif()
 
 #library build file
@@ -91,13 +118,22 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 #find interfaces for Mathematica
-if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING)
+set(OVFTOOLKIT_BUILD_WOLFRAM_BINDING_ENABLED OFF)
+if(NOT OVFTOOLKIT_BUILD_WOLFRAM_BINDING STREQUAL "OFF")
     set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
-    find_package(Mathematica COMPONENTS WSTP)
+    find_package(Mathematica COMPONENTS WSTP QUIET)
+    if(Mathematica_WSTP_FOUND)
+        set(OVFTOOLKIT_BUILD_WOLFRAM_BINDING_ENABLED ON)
+    elseif(OVFTOOLKIT_BUILD_WOLFRAM_BINDING STREQUAL "ON")
+        message(FATAL_ERROR
+            "OVFTOOLKIT_BUILD_WOLFRAM_BINDING=ON requires Mathematica WSTP")
+    else()
+        message(STATUS "Wolfram binding disabled: Mathematica WSTP was not found")
+    endif()
 endif()
 
 #find fftw frameworks and other components for time fourier of magnetization files
-if(OVFTOOLKIT_BUILD_TOOLS)
+if(OVFTOOLKIT_BUILD_TOOLS_ENABLED)
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/findFFTW" ${CMAKE_MODULE_PATH})
 # Try to find either CPU FFTW or CUDA/cuFFT for Fourier analysis.  The
 # threaded FFTW companion library is optional; the serial float library is
@@ -239,7 +275,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     include(CTest)
 endif()
 
-if(OVFTOOLKIT_BUILD_TOOLS)
+if(OVFTOOLKIT_BUILD_TOOLS_ENABLED)
     add_subdirectory(tools)
 endif()
 
@@ -273,7 +309,7 @@ install(FILES
 install(DIRECTORY LICENSES/
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/licenses")
 
-if(OVFTOOLKIT_BUILD_DOCS)
+if(NOT OVFTOOLKIT_BUILD_DOCS STREQUAL "OFF")
     add_subdirectory(docs)
 endif()
 
