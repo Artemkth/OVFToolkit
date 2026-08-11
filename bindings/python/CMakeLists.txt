@@ -69,12 +69,18 @@ if(NOT nanobind_FOUND)
     return()
 endif()
 
-# Most Windows Python installations do not supply a matching debug interpreter.
-# Stub generation therefore has to load Debug extension builds into the release
-# interpreter. Link those builds to the release Python DLL so that the process
-# does not contain two incompatible Python runtimes.
+# Some packaged Python installations expose separate Debug and Release import
+# libraries without supplying a matching debug interpreter.  Map Debug builds
+# to Release only when the imported target actually has a Release-specific
+# library.  Standard Windows Python uses a configuration-neutral pythonXY.lib,
+# which already works for every configuration and must not be remapped.
 if(WIN32 AND TARGET Python::Module AND NOT Python_EXECUTABLE_DEBUG)
-    set_property(TARGET Python::Module PROPERTY MAP_IMPORTED_CONFIG_DEBUG Release)
+    get_target_property(_ovftoolkit_python_release_implib
+        Python::Module IMPORTED_IMPLIB_RELEASE)
+    if(_ovftoolkit_python_release_implib)
+        set_property(TARGET Python::Module
+            PROPERTY MAP_IMPORTED_CONFIG_DEBUG Release)
+    endif()
 endif()
 
 message(STATUS
