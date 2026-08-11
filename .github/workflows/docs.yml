@@ -36,8 +36,8 @@ jobs:
           cache-dependency-path: docs/requirements.txt
       - name: Install documentation dependencies
         run: python -m pip install -r docs/requirements.txt
-      - name: Install Doxygen
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends doxygen
+      - name: Install Doxygen and Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends doxygen graphviz
       - name: Stage notebooks without executing them
         run: python docs/prepare_help.py
       - name: Build documentation
