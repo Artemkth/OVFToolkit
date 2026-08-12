@@ -108,7 +108,10 @@ endif()
 find_package(Threads REQUIRED)
 # The parser only needs Boost headers. Command-line tools additionally use
 # program_options, which should not be a build dependency of Python wheels.
-cmake_policy(SET CMP0167 NEW)
+# Use CMake's FindBoost module so header-only distro packages remain usable;
+# manylinux's boost-devel does not ship BoostConfig.cmake.
+cmake_policy(PUSH)
+cmake_policy(SET CMP0167 OLD)
 find_package(Boost 1.58.0 REQUIRED)
 set(OVFTOOLKIT_BUILD_TOOLS_ENABLED OFF)
 if(NOT OVFTOOLKIT_BUILD_TOOLS STREQUAL "OFF")
@@ -123,6 +126,7 @@ if(NOT OVFTOOLKIT_BUILD_TOOLS STREQUAL "OFF")
             "Command-line tools disabled: Boost.Program_options was not found")
     endif()
 endif()
+cmake_policy(POP)
 if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "ON" AND
    NOT OVFTOOLKIT_BUILD_TOOLS_ENABLED)
     message(FATAL_ERROR

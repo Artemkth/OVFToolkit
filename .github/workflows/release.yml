@@ -119,15 +119,15 @@ jobs:
 
   locate-windows-artifact:
     name: Locate successful Windows package
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: verify-release
     runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
     outputs:
-      artifact-name: ${{ steps.find.outputs.artifact-name }}
+      portable-artifact-name: ${{ steps.find.outputs.portable-artifact-name }}
       run-id: ${{ steps.find.outputs.run-id }}
+      wheel-artifact-name: ${{ steps.find.outputs.wheel-artifact-name }}
     steps:
       - name: Find portable artifact for tagged commit
         id: find
@@ -159,19 +159,46 @@ jobs:
                   per_page: 100,
                 },
               );
-              const artifact = artifacts.find(
+              const portable = artifacts.find(
                 item => !item.expired &&
                   item.name.endsWith("windows-x64-cuda12.9-static-portable"),
               );
-              if (artifact) {
+              const wheel = artifacts.find(
+                item => !item.expired &&
+                  item.name.endsWith("windows-x64-cp312-abi3-wheel"),
+              );
+              if (portable && wheel) {
                 core.setOutput("run-id", String(run.id));
-                core.setOutput("artifact-name", artifact.name);
+                core.setOutput("portable-artifact-name", portable.name);
+                core.setOutput("wheel-artifact-name", wheel.name);
                 return;
               }
             }
             core.setFailed(
-              `No unexpired Windows portable artifact found for ${context.sha}`,
+              `No successful Windows package set found for ${context.sha}`,
             );
+
+  stage-windows-wheel:
+    name: Stage tested Windows ABI3 wheel
+    needs: locate-windows-artifact
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download wheel from matching Windows CI build
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.locate-windows-artifact.outputs.wheel-artifact-name }}
+          path: wheelhouse
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.locate-windows-artifact.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-wheel-windows-x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
 
   build-wheels:
     name: Build ${{ matrix.platform }} ABI3 wheel
@@ -182,8 +209,6 @@ jobs:
         include:
           - platform: manylinux-x86_64
             os: ubuntu-24.04
-          - platform: windows-x86_64
-            os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -193,15 +218,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install Boost headers
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          vcpkg install boost-endian:x64-windows
-          $vcpkgRoot = Split-Path -Parent (Get-Command vcpkg).Source
-          $prefix = (Join-Path $vcpkgRoot "installed/x64-windows").Replace('\', '/')
-          "CMAKE_PREFIX_PATH=$prefix" | Out-File `
-            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==4.1.1
       - name: Build and test wheel
@@ -227,7 +243,7 @@ jobs:
 
   check-distributions:
     name: Check distributions
-    needs: [build-sdist, build-wheels]
+    needs: [build-sdist, build-wheels, stage-windows-wheel]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v6
@@ -305,7 +321,7 @@ jobs:
       - name: Download portable Windows tools
         uses: actions/download-artifact@v6
         with:
-          name: ${{ needs.locate-windows-artifact.outputs.artifact-name }}
+          name: ${{ needs.locate-windows-artifact.outputs.portable-artifact-name }}
           path: release-assets
           repository: ${{ github.repository }}
           run-id: ${{ needs.locate-windows-artifact.outputs.run-id }}
