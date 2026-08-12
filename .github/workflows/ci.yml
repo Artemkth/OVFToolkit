@@ -97,7 +97,8 @@ jobs:
           $revision = git -C $env:VCPKG_INSTALLATION_ROOT rev-parse --short=12 HEAD
           "revision=$revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: Restore release-only vcpkg binary cache
-        uses: actions/cache@v5
+        id: vcpkg-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.VCPKG_BINARY_CACHE }}
           key: windows-vcpkg-x64-static-release-cuda-v1-${{ steps.vcpkg.outputs.revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-triplets/**') }}
@@ -136,6 +137,12 @@ jobs:
             -DOVFTOOLKIT_USE_CUFFT=ON `
             -DOVFTOOLKIT_USE_FFTW=OFF `
             "-DPython_EXECUTABLE=$python"
+      - name: Save vcpkg dependencies after configuration
+        if: ${{ github.event_name != 'pull_request' && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.VCPKG_BINARY_CACHE }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Build Release
         run: cmake --build build-windows-cuda --config Release --parallel
       - name: Run complete test suite
@@ -258,7 +265,8 @@ jobs:
           $revision = git -C $env:VCPKG_INSTALLATION_ROOT rev-parse --short=12 HEAD
           "revision=$revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: Restore release-only vcpkg binary cache
-        uses: actions/cache@v5
+        id: vcpkg-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.VCPKG_BINARY_CACHE }}
           key: windows-vcpkg-x64-static-release-fftw-v1-${{ steps.vcpkg.outputs.revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-triplets/**', 'vcpkg-overlays/fftw3/**') }}
@@ -293,6 +301,12 @@ jobs:
             -DOVFTOOLKIT_USE_CUFFT=OFF `
             -DOVFTOOLKIT_USE_FFTW=ON `
             "-DPython_EXECUTABLE=$python"
+      - name: Save vcpkg dependencies after configuration
+        if: ${{ github.event_name != 'pull_request' && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.VCPKG_BINARY_CACHE }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Build Release
         run: cmake --build build-windows-fftw --config Release --parallel
       - name: Run complete test suite
