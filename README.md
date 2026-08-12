@@ -15,14 +15,13 @@ than the total file size.
 
 ### Install
 
-Once the package is published on PyPI, installation is one command:
+[OVFToolkit is available on PyPI](https://pypi.org/project/ovftoolkit/):
 
 ```sh
 python -m pip install ovftoolkit
 ```
 
-Until then, download a wheel from the project releases, or install from a source
-checkout:
+To install the latest source checkout instead:
 
 ```sh
 git clone --recurse-submodules https://github.com/Artemkth/OVFToolkit.git
@@ -30,9 +29,10 @@ cd OVFToolkit
 python -m pip install .
 ```
 
-Binary wheels require only Python 3.10 or newer and NumPy. A source build also
-needs a C++23 compiler, Boost headers, and Python development headers. Install
-those prerequisites with one of:
+Published ABI3 wheels require only Python 3.12 or newer and NumPy. Python 3.10
+and 3.11 remain supported through source installation, which additionally needs
+a C++23 compiler, Boost headers, and Python development headers. Install those
+prerequisites with one of:
 
 ```sh
 # Debian, Ubuntu, and derivatives

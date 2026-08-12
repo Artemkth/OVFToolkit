@@ -311,7 +311,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          pattern: release-*
+          # The sdist is published to PyPI but is redundant on GitHub beside
+          # the standalone, submodule-complete source bundle below.
+          pattern: release-wheel-*
           path: release-assets
           merge-multiple: true
       - uses: actions/download-artifact@v6
