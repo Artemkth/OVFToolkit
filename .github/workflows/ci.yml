@@ -72,7 +72,7 @@ jobs:
         with:
           cuda: "12.9.1"
           method: network
-          sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cufft"]'
+          sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cufft", "cufft_dev"]'
       - name: Verify CUDA 12.9 installation
         shell: pwsh
         env:
