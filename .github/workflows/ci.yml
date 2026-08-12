@@ -195,6 +195,8 @@ jobs:
         id: wheel
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $prefix = "$env:GITHUB_WORKSPACE/build-windows-cuda/vcpkg_installed/x64-windows-static-release".Replace('\', '/')
           $env:CMAKE_ARGS = "-DCMAKE_PREFIX_PATH=$prefix"
           $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
