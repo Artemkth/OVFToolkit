@@ -67,11 +67,29 @@ jobs:
       - name: Install Python build and test dependencies
         run: python -m pip install nanobind numpy
       - name: Install CUDA 12.9
+        id: cuda
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.9.1"
           method: network
           sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cufft"]'
+      - name: Verify CUDA 12.9 installation
+        shell: pwsh
+        env:
+          CUDA_ROOT: ${{ steps.cuda.outputs.CUDA_PATH }}
+        run: |
+          $required = @(
+            "$env:CUDA_ROOT/bin/nvcc.exe",
+            "$env:CUDA_ROOT/include/cufft.h",
+            "$env:CUDA_ROOT/lib/x64/cufft.lib",
+            "$env:CUDA_ROOT/extras/visual_studio_integration/MSBuildExtensions/CUDA 12.9.props"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "CUDA installation is incomplete; missing $path"
+            }
+          }
+          & "$env:CUDA_ROOT/bin/nvcc.exe" --version
       - name: Identify vcpkg tool revision
         id: vcpkg
         shell: pwsh
@@ -93,12 +111,17 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Configure CUDA-only static build
         shell: pwsh
+        env:
+          CUDA_ROOT: ${{ steps.cuda.outputs.CUDA_PATH }}
         run: |
           $toolchain = "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake".Replace('\', '/')
           $triplets = "$env:GITHUB_WORKSPACE/vcpkg-triplets".Replace('\', '/')
           $python = (Get-Command python).Source.Replace('\', '/')
-          cmake -S . -B build-windows-cuda -A x64 -T cuda=12.9 `
+          $cuda = $env:CUDA_ROOT.Replace('\', '/')
+          cmake -S . -B build-windows-cuda -G "Visual Studio 17 2022" `
+            -A x64 -T "v143,cuda=$cuda" `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+            "-DCUDAToolkit_ROOT=$cuda" `
             "-DVCPKG_OVERLAY_TRIPLETS=$triplets" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-release `
             -DVCPKG_HOST_TRIPLET=x64-windows-release `

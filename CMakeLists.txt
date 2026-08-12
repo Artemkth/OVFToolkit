@@ -237,8 +237,14 @@ ELSEIF(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF")
     MESSAGE(STATUS "Cuda was not found!")
 ENDIF()
 if(OVFTOOLKIT_USE_CUFFT STREQUAL "ON" AND NOT OVFTOOLKIT_CUFFT_FOUND)
-    message(FATAL_ERROR
-        "OVFTOOLKIT_USE_CUFFT=ON requires a CUDA compiler and cuFFT")
+    if(NOT CMAKE_CUDA_COMPILER)
+        message(FATAL_ERROR
+            "OVFTOOLKIT_USE_CUFFT=ON requires a CUDA compiler")
+    else()
+        message(FATAL_ERROR
+            "OVFTOOLKIT_USE_CUFFT=ON found CUDA compiler "
+            "${CMAKE_CUDA_COMPILER}, but could not find cuFFT")
+    endif()
 endif()
 set(BUILD_FFUTIL OFF)
 if((FFTW_FLOAT_LIB_FOUND OR OVFTOOLKIT_CUFFT_FOUND) AND Boost_PROGRAM_OPTIONS_FOUND)
