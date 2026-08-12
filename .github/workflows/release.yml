@@ -83,6 +83,96 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  build-source-bundle:
+    name: Build standalone source bundle
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Archive source with populated submodules
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          archive="$GITHUB_WORKSPACE/dist/OVFToolkit-${version}-source.tar.gz"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          tar \
+            --exclude='./.git' \
+            --exclude='*/.git' \
+            --exclude='./dist' \
+            --transform="s,^\.,OVFToolkit-${version}," \
+            -czf "$archive" .
+          if tar -tzf "$archive" | grep -Eq '(^|/)\.git(/|$)'; then
+            echo "Source archive contains Git metadata" >&2
+            exit 1
+          fi
+          tar -tzf "$archive" | head -n 20
+      - uses: actions/upload-artifact@v6
+        with:
+          name: source-bundle
+          path: dist/*-source.tar.gz
+          if-no-files-found: error
+
+  locate-windows-artifact:
+    name: Locate successful Windows package
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact-name: ${{ steps.find.outputs.artifact-name }}
+      run-id: ${{ steps.find.outputs.run-id }}
+    steps:
+      - name: Find portable artifact for tagged commit
+        id: find
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "ci.yml",
+                head_sha: context.sha,
+                status: "success",
+                per_page: 100,
+              },
+            );
+            if (runs.length === 0) {
+              core.setFailed(`No successful ci.yml run found for ${context.sha}`);
+              return;
+            }
+            for (const run of runs) {
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                  per_page: 100,
+                },
+              );
+              const artifact = artifacts.find(
+                item => !item.expired &&
+                  item.name.endsWith("windows-x64-cuda12.9-static-portable"),
+              );
+              if (artifact) {
+                core.setOutput("run-id", String(run.id));
+                core.setOutput("artifact-name", artifact.name);
+                return;
+              }
+            }
+            core.setFailed(
+              `No unexpired Windows portable artifact found for ${context.sha}`,
+            );
+
   build-wheels:
     name: Build ${{ matrix.platform }} ABI3 wheel
     needs: verify-release
@@ -190,3 +280,42 @@ jobs:
           merge-multiple: true
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-github-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-source-bundle
+      - check-distributions
+      - locate-windows-artifact
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v6
+        with:
+          name: source-bundle
+          path: release-assets
+      - name: Download portable Windows tools
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.locate-windows-artifact.outputs.artifact-name }}
+          path: release-assets
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.locate-windows-artifact.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Create GitHub Release and attach artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OVFToolkit $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
