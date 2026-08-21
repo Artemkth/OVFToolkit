@@ -409,10 +409,18 @@ std::size_t cuFFTEngine::InitGPU()
     return freeMem;
 }
 
-bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t maxMem )
+bool cuFFTEngine::Init(std::size_t t_len, std::size_t maxBatch,
+                       std::size_t maxMem, std::size_t batchMultiple)
 {
     //start by resetting fail flag
     fail = false;
+
+    if(batchMultiple == 0)
+    {
+        fail = true;
+        std::cerr << "FFT batch multiple must be non-zero.\n";
+        return false;
+    }
 
     fftLength = t_len;
 
@@ -489,6 +497,15 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
         return !fail;
     }
 
+    batchSize -= batchSize % batchMultiple;
+    if(batchSize == 0)
+    {
+        fail = true;
+        std::cerr << "GPU memory limit cannot hold one " << batchMultiple
+                  << "-transform logical point.\n";
+        return false;
+    }
+
     const auto workSize = reallocate(batchSize);
     if( workSize == 0 )
     {
@@ -497,8 +514,13 @@ bool cuFFTEngine::Init( std::size_t t_len, std::size_t maxBatch, std::size_t max
         return !fail;
     }
 
-    std::cout << "Chosen to do transforms in " << batchSize << " point batches (" << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float)) <<
-        " each, " << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float) + workSize) << " together with work area in the gpu).\n";
+    std::cout << "Chosen to do transforms in " << batchSize
+        << " scalar-transform batches (" << batchSize / batchMultiple
+        << " logical points, "
+        << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float))
+        << " each, "
+        << printMemSize(2 * batchSize * (fftLength/2 + 1) * sizeof(float) + workSize)
+        << " together with work area in the gpu).\n";
     return !fail;
 }
 

@@ -278,9 +278,12 @@ auto Average(const T& array)
 //processing data
 enum class BufferState { WAIT, IMPORT, POST, PROCESS, EXPORT, STOP, FAIL };
 struct GPUBuffer {
-    std::unique_ptr<float[]> data{};
+    // Only physical field values enter this buffer and the FFT backends.
+    std::unique_ptr<float[]> transformData{};
     std::size_t nSize{0};
     std::size_t realPoints{0};
+    // Irregular-mesh xyz positions bypass the FFT and are reattached verbatim.
+    std::vector<float> spatialCoordinates{};
 
     BufferState state{ BufferState::WAIT };
 };
@@ -298,36 +301,39 @@ inline std::string printTimeStamp(std::chrono::duration<Rep, Period> dur)
    return ret;
 }
 
-//template to copy data into array
 template<typename T>
-inline void loadData( const VField::VField& field, float *arr, std::size_t offset, std::size_t cnt, std::size_t skip )
+void loadPointValues(const VField::VField& field, float* destination,
+                     std::size_t valueDimension, float* coordinates)
 {
-    if(skip == 0)
-        std::copy_n( field.data<T>() + offset, cnt, arr );
-    else
+    const auto meshType = field.header().meshType().value();
+    const auto storedDimension = field.header().pointDimension().value();
+    const auto points = field.pointCount();
+    const auto* source = field.data<T>();
+    for(std::size_t point = 0; point < points; ++point)
     {
-        const auto dim = field.header().pointDimension().value();
-        auto begin = field.data<T>();
-        const auto end = begin + field.scalarCount();
-
-        std::copy_n(begin + skip + offset, dim - skip - offset, arr);
-        begin += dim;
-
-        for(; begin != end; begin += dim)
+        const auto* sourcePoint = source + point * storedDimension;
+        if(meshType == VField::MeshType::Irregular)
         {
-            std::copy_n(begin + skip, cnt > (dim - skip)? dim - skip : cnt % (dim - skip), arr);
-            arr += dim - skip; cnt -= dim - skip;
+            if(coordinates)
+                std::transform(sourcePoint, sourcePoint + 3,
+                               coordinates + 3 * point,
+                               [](T value) { return static_cast<float>(value); });
+            sourcePoint += 3;
         }
+        std::transform(sourcePoint, sourcePoint + valueDimension,
+                       destination + point * valueDimension,
+                       [](T value) { return static_cast<float>(value); });
     }
 }
 
 //group import data
 void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile>>& handles,
-               float* data,
+               float* transformValues,
                std::size_t offset,
                std::atomic<std::size_t>& progMax,
                std::atomic<std::size_t>& progress,
-               std::size_t& impLen )
+               std::size_t& impLen,
+               std::vector<float>* spatialCoordinates = nullptr )
 {
     progress = 0;
     
@@ -338,25 +344,132 @@ void readData( const std::vector<std::pair<std::size_t, const VField::VFieldFile
     const auto len   = handles.size();
     const auto vdim  = dim - (mType == VField::MeshType::Rectangular? 0 : 3);
     impLen = std::min( impLen, vdim * pts - offset );
+    if(offset % vdim != 0 || impLen % vdim != 0)
+        throw std::logic_error("FFT batch is not aligned to complete OVF points");
     progMax = impLen * len;
 
-    //for irregular meshes offset skips over coordinate tripplets
-    const auto adjBegin  = (mType == VField::MeshType::Rectangular? offset : dim * (offset/vdim) + offset % vdim)/dim;
-    const auto adjEnd    = ((mType == VField::MeshType::Rectangular? offset + impLen : offset + dim * (impLen/vdim) + impLen % vdim ) + dim - 1)/dim;
+    const auto firstPoint = offset / vdim;
+    const auto pointCount = impLen / vdim;
+    if(spatialCoordinates && mType == VField::MeshType::Irregular)
+        spatialCoordinates->resize(3 * pointCount);
 
     auto importer = [&](const std::pair<std::size_t, VField::VFieldFile>& handle)
     {
-        auto slice = handle.second.readSlice(0, adjBegin, adjEnd - adjBegin).value();
+        auto slice = handle.second.readSlice(0, firstPoint, pointCount).value();
+        // Coordinates are copied once into a side buffer. They never enter
+        // transformValues, which is the only storage passed to RunTransform.
+        auto* coordinateOutput = spatialCoordinates && handle.first == 0
+            ? spatialCoordinates->data() : nullptr;
 
         if (slice.scalarSizeBytes() == 4)
-            loadData<float>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::MeshType::Rectangular ? 0 : 3);
+            loadPointValues<float>(slice, transformValues + impLen * handle.first,
+                                   vdim, coordinateOutput);
         else
-            loadData<double>(slice, data + impLen * handle.first, offset % vdim, impLen, mType == VField::MeshType::Rectangular ? 0 : 3);
+            loadPointValues<double>(slice, transformValues + impLen * handle.first,
+                                    vdim, coordinateOutput);
 
         progress += impLen;
     };
 
     std::for_each(ioPolicy, handles.cbegin(), handles.cend(), importer);
+}
+
+std::vector<VField::OVFHeader> spectrumHeaders(
+    const VField::OVFHeader& commonHeader, std::size_t frequencyCount,
+    double frequencyIncrement)
+{
+    std::vector<VField::OVFHeader> headers(frequencyCount, commonHeader);
+    const auto description = commonHeader.contains(VField::OVFParameter::Desc)
+        ? commonHeader.requireAs<std::string>(VField::OVFParameter::Desc)
+        : std::string{};
+    for(std::size_t frequency = 0; frequency < frequencyCount; ++frequency)
+        headers[frequency].set(VField::OVFParameter::Desc,
+            description + (!description.empty() ? "\n" : "") +
+            std::format("f = {:.9g} Hz",
+                        frequencyIncrement * static_cast<double>(frequency)));
+    return headers;
+}
+
+bool streamSpectrumBatch(VField::OVFStreamWriter& writer,
+                         const GPUBuffer& buffer,
+                         std::size_t valueDimension,
+                         VField::MeshType meshType,
+                         std::atomic<std::size_t>& progress)
+{
+    const auto pointCount = buffer.realPoints / valueDimension;
+    const auto outputValueDimension = 2 * valueDimension;
+    using FloatPoints = VField::md::mdspan<
+        const float, VField::md::dextents<std::size_t, 2>,
+        VField::md::layout_right>;
+    std::vector<float> irregularPoints;
+    if(meshType == VField::MeshType::Irregular)
+    {
+        if(buffer.spatialCoordinates.size() != 3 * pointCount)
+        {
+            std::cerr << "Irregular FFT batch has an incomplete coordinate side buffer\n";
+            return false;
+        }
+        irregularPoints.resize(pointCount * (outputValueDimension + 3));
+    }
+
+    for(std::size_t frequency = 0; frequency < writer.segmentCount(); ++frequency)
+    {
+        const auto* frequencyData = buffer.transformData.get() +
+            frequency * 2 * buffer.realPoints;
+        auto& sink = writer.segment(frequency);
+        if(meshType == VField::MeshType::Rectangular)
+            sink << FloatPoints{frequencyData, pointCount, outputValueDimension};
+        else
+        {
+            for(std::size_t point = 0; point < pointCount; ++point)
+            {
+                auto* destination = irregularPoints.data() +
+                    point * (outputValueDimension + 3);
+                std::copy_n(buffer.spatialCoordinates.data() + 3 * point, 3,
+                            destination);
+                std::copy_n(frequencyData + outputValueDimension * point,
+                            outputValueDimension, destination + 3);
+            }
+            sink << FloatPoints{irregularPoints.data(), pointCount,
+                                outputValueDimension + 3};
+        }
+        if(!sink)
+        {
+            std::cerr << "Failed to stream frequency segment " << frequency
+                      << ": " << sink.error()->message << '\n';
+            return false;
+        }
+        progress += 2 * buffer.realPoints;
+    }
+    return true;
+}
+
+std::vector<float> readIrregularCoordinates(const VField::VFieldFile& file)
+{
+    const auto& header = file.header(0).value().get();
+    if(header.meshType() != VField::MeshType::Irregular)
+        return {};
+    const auto pointCount = header.pointCount().value();
+    const auto pointDimension = header.pointDimension().value();
+    auto field = file.readSlice(0, 0, pointCount).value();
+    std::vector<float> coordinates(3 * pointCount);
+    if(field.scalarSizeBytes() == sizeof(float))
+    {
+        const auto* source = field.data<float>();
+        for(std::size_t point = 0; point < pointCount; ++point)
+            std::copy_n(source + point * pointDimension, 3,
+                        coordinates.data() + 3 * point);
+    }
+    else
+    {
+        const auto* source = field.data<double>();
+        for(std::size_t point = 0; point < pointCount; ++point)
+            std::transform(source + point * pointDimension,
+                           source + point * pointDimension + 3,
+                           coordinates.data() + 3 * point,
+                           [](double value) { return static_cast<float>(value); });
+    }
+    return coordinates;
 }
 
 //export into one yuge ovf with multiple segments, defaults to OVF version 2 trying to convert the headers
@@ -385,9 +498,11 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     }
     const auto mType = commonHeader.meshType().value();
     const std::size_t vdim    = commonHeader.requireAs<std::size_t>( VField::OVFParameter::Vdim );
-    const std::size_t pntCnt  = commonHeader.pointCount().value() * vdim;
+    const std::size_t pointCount = commonHeader.pointCount().value();
+    const std::size_t valueScalarCount = pointCount * vdim;
     const std::size_t bufTotal= descriptor.size();
-    assert(("Incompatible array dimensions!\n", vdim % 2 == 0 && pntCnt == descriptor.back()[1] * 2));
+    assert(("Incompatible array dimensions!\n", vdim % 2 == 0 &&
+            valueScalarCount == descriptor.back()[1] * 2));
 
     //open output file
     std::ofstream output(outputFile, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
@@ -404,7 +519,7 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
     if(mType == VField::MeshType::Irregular)
     {
         assert(("Expected a coordinate field for transform", irregCoords != nullptr)); 
-        for(std::size_t i = 0; i < pntCnt; i++)
+        for(std::size_t i = 0; i < pointCount; i++)
             std::copy_n(irregCoords + i * 3, 3, data.get() + i * (vdim + 3));
     }
 
@@ -459,16 +574,11 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
                 std::copy_n(curSection, dist, dest);
             else
             {
-                std::size_t initRemainder {vdim - offset % vdim};
-                std::copy_n(curSection, initRemainder, dest);
-                dest += initRemainder;
-
-                std::size_t wholePts { (dist - initRemainder) / vdim };
-                for(std::size_t k = 0; k < wholePts; k++)
-                    std::copy_n(curSection + k * vdim + initRemainder, vdim, dest + (3 + vdim) * k);
-
-                //and copy the last part
-                std::copy_n(curSection + wholePts * vdim + initRemainder, (dist - initRemainder) % vdim, dest + (3 + vdim) * wholePts);
+                assert(offset % vdim == 0 && dist % vdim == 0);
+                const auto batchPoints = dist / vdim;
+                for(std::size_t point = 0; point < batchPoints; ++point)
+                    std::copy_n(curSection + point * vdim, vdim,
+                                dest + point * (vdim + 3));
             }
 
             progVar += dist;
@@ -479,7 +589,12 @@ bool exportSpectrum( const std::filesystem::path& outputFile,
 
         //output the VField
         output << '\n';
-        writeSegment(output, field);
+        if(auto result = writeSegment(output, field); !result)
+        {
+            std::cerr << "Failed to write frequency segment " << i << ": "
+                      << result.error().message << '\n';
+            return false;
+        }
     }
 
     return true;
@@ -642,6 +757,9 @@ int batchMain(int argc, char** argv)
 #endif
     bool no_norm { false };
     bool no_reinterp { false };
+    bool forceBufferedExport { false };
+    bool bufferedExport { false };
+    bool automaticBufferedExport { false };
     std::unique_ptr<FFTEngine<float>> fft_engine;
     //first parse command-line options
     try
@@ -666,7 +784,9 @@ int batchMain(int argc, char** argv)
 #endif
             ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.")
             ("no-norm", boost::program_options::bool_switch(&no_norm), "Don't normalize the fourier transform result.")
-            ("no-reinterp", boost::program_options::bool_switch(&no_reinterp), "Don't reinterpolate the data to remove jitter.");
+            ("no-reinterp", boost::program_options::bool_switch(&no_reinterp), "Don't reinterpolate the data to remove jitter.")
+            ("buffered-export", boost::program_options::bool_switch(&forceBufferedExport),
+             "Use the legacy temporary-file and sequential spectrum export path.");
 
         //set position of input-files to automatically them without a switch
         boost::program_options::positional_options_description pos_desc;
@@ -974,6 +1094,8 @@ int batchMain(int argc, char** argv)
     }
 
     std::size_t VFSize{};
+    std::size_t valueDimension{};
+    VField::MeshType meshType{VField::MeshType::Rectangular};
     std::unique_ptr<struct GPUBuffer> buffers[2]; //tripple buffering, yay
     struct {
         std::unique_ptr<float[]> data{};
@@ -994,8 +1116,10 @@ int batchMain(int argc, char** argv)
             return 1;
         }
         //guaranteed to be set by this point
-        const auto mType = filesMeta.front().second.header(0).value().get().meshType().value();
-        VFSize = (*expDim - (mType == VField::MeshType::Rectangular? 0 : 3)) * *expCnt;
+        meshType = filesMeta.front().second.header(0).value().get().meshType().value();
+        valueDimension = *expDim -
+            (meshType == VField::MeshType::Rectangular ? 0 : 3);
+        VFSize = valueDimension * *expCnt;
         //begin initialization of engines outside main thread once dimensions are known
         engineInit = std::async( std::launch::async, [&] ()
         {
@@ -1004,7 +1128,8 @@ int batchMain(int argc, char** argv)
             if (engineName == "gpu")
                 engineMemoryLimit = maxVRam.value_or(0);
 #endif
-            auto res = fft_engine -> Init(tSeriesLength, VFSize, engineMemoryLimit);
+            auto res = fft_engine -> Init(tSeriesLength, VFSize,
+                                          engineMemoryLimit, valueDimension);
 
             auto batch = fft_engine -> expectedBatch();
             auto cPoints = batch * (tSeriesLength/2 + 1);
@@ -1012,17 +1137,21 @@ int batchMain(int argc, char** argv)
             {
                 auto maxRamBuffers = maxRam.value_or(0) / (sizeof(float) * 2 * cPoints);
                 auto neededBuffers = (VFSize + batch - 1)/batch;//all the full buffers and one partially filled
+                automaticBufferedExport = maxRam.has_value() &&
+                    neededBuffers <= maxRamBuffers;
+                bufferedExport = forceBufferedExport || automaticBufferedExport;
                 const std::size_t activeBuffers { std::min<std::size_t>(2, neededBuffers) };
                 for( std::size_t i = 0; i < activeBuffers; i++ )
                 {
                     buffers[i] = std::make_unique<GPUBuffer> ();
                     buffers[i] -> nSize = 2 * cPoints;
                     buffers[i] -> realPoints = batch;
-                    buffers[i] -> data = std::make_unique<float[]>( buffers[i]->nSize );
+                    buffers[i] -> transformData =
+                        std::make_unique<float[]>(buffers[i]->nSize);
                 }
 
                 //and allocate space for ram buffer
-                if( neededBuffers > 2 && maxRamBuffers > 2 )
+                if(bufferedExport && neededBuffers > 2 && maxRamBuffers > 2)
                 {
                     CollectorBuffer.cnt = std::min(neededBuffers - 2, maxRamBuffers - 2);
                     CollectorBuffer.data = std::make_unique<float[]>( 2 * cPoints * CollectorBuffer.cnt );
@@ -1041,7 +1170,7 @@ int batchMain(int argc, char** argv)
             const auto& head = it -> second.header(0).value().get();
             if ( head.pointDimension() != expDim ||
                  head.pointCount()    != expCnt ||
-                 head.meshType()       != mType    )
+                 head.meshType()       != meshType    )
             {
                 if(!badFiles.empty()) badFiles += ", ";
                 std::format_to(std::back_inserter(badFiles), "\"{}\"",
@@ -1115,6 +1244,9 @@ int batchMain(int argc, char** argv)
         std::cerr << "Failed to initialize the " << engineName << " FFT engine, quitting!\n";
         return -1;
     }
+    if(automaticBufferedExport && !forceBufferedExport)
+        std::cout << "The complete spectrum fits within --max-ram; using the "
+                     "in-memory sequential export path.\n";
     //initialize interpolation
     if( !no_reinterp && !fft_engine -> InitInterp(times.data()) )
             std::cerr << "Failed to initialize an interpolation!\n";
@@ -1151,30 +1283,76 @@ int batchMain(int argc, char** argv)
     //prepare for work
     //after this main thread works with I/O
     const auto BatchSize = fft_engine -> expectedBatch();
+    const auto frequencyCount = tSeriesLength / 2 + 1;
+    const auto outputPath = pathFromUtf8(oFileName);
+    auto head = filesMeta.front().second.header(0).value().get();
+    transformHeader(head, TimeRegExStr);
+    std::optional<VField::OVFStreamWriter> spectrumWriter;
+    if(!bufferedExport)
+    {
+        auto headers = spectrumHeaders(head, frequencyCount, frequencyIncrement);
+        auto prepared = VField::OVFStreamWriter::create(
+            outputPath, headers, sizeof(float));
+        if(!prepared)
+        {
+            std::cerr << "Unable to prepare spectrum output: "
+                      << prepared.error().message << '\n';
+            return -1;
+        }
+        spectrumWriter.emplace(std::move(*prepared));
+    }
     std::vector<std::array<std::size_t, 2>> segmentDescriptor;
     //open a temporary file for outputting results of fft
     std::filesystem::path tmpPath(".batchfft-temp");
-    std::ofstream tmpFile (tmpPath, std::ios_base::out |
-                                    std::ios_base::binary |
-                                    std::ios_base::trunc );
+    std::ofstream tmpFile;
+    if(bufferedExport)
+    {
+        tmpFile.open(tmpPath, std::ios_base::out | std::ios_base::binary |
+                              std::ios_base::trunc);
+        if(!tmpFile.good())
+        {
+            std::cerr << "Unable to open temporary spectrum file "
+                      << pathToUtf8(tmpPath) << '\n';
+            return -1;
+        }
+    }
     //created array of handle-index pairs
     std::vector< std::pair<std::size_t, const VField::VFieldFile> > indexedHandles{};
     indexedHandles.reserve(filesMeta.size());
     for (std::size_t i = 0; i < filesMeta.size(); i++)
         indexedHandles.emplace_back(i, filesMeta[i].second);
  
+    bool exportFailed{};
     auto exportData = [&] (GPUBuffer* buff)
     {
-        if(CollectorBuffer.occup < CollectorBuffer.cnt)
+        if(!bufferedExport)
         {
-            std::copy_n( buff -> data.get(), (tSeriesLength / 2 + 1) * buff ->realPoints * 2, 
+            if(!streamSpectrumBatch(*spectrumWriter, *buff, valueDimension,
+                                    meshType, progVar))
+                exportFailed = true;
+        }
+        else if(CollectorBuffer.occup < CollectorBuffer.cnt)
+        {
+            std::copy_n(buff -> transformData.get(),
+                    frequencyCount * buff ->realPoints * 2,
                     CollectorBuffer.data.get() + CollectorBuffer.occup * buff -> nSize );
             CollectorBuffer.occup++;
         }
         else
-            tmpFile.write( (char*) buff -> data.get(), (tSeriesLength / 2 + 1) * buff -> realPoints * 2 * sizeof(float) / sizeof(std::ofstream::char_type) );
+            tmpFile.write((char*)buff -> transformData.get(), frequencyCount *
+                buff -> realPoints * 2 * sizeof(float) /
+                sizeof(std::ofstream::char_type) );
 
         buff -> state = BufferState::WAIT;
+    };
+
+    auto cleanupTemp = [&]
+    {
+        if(bufferedExport)
+        {
+            tmpFile.close();
+            std::filesystem::remove(tmpPath);
+        }
     };
 
     std::atomic<bool> monitorOn {true};
@@ -1195,7 +1373,7 @@ int batchMain(int argc, char** argv)
                 auto curBuffer = buffers[0].get();
 
                 if( !fft_engine -> isReady() || curBuffer -> nSize < fft_engine -> expectedLength() || curBuffer -> nSize > 2 * fft_engine -> expectedLength() * fft_engine -> expectedBatch() || 
-                    !fft_engine -> RunTransform(curBuffer -> data.get(), norm, fft_engine -> expectedBatch() - curBuffer -> realPoints ))
+                    !fft_engine -> RunTransform(curBuffer -> transformData.get(), norm, fft_engine -> expectedBatch() - curBuffer -> realPoints ))
                 {
                     curBuffer -> state = BufferState::FAIL;
                     lock.unlock();
@@ -1259,6 +1437,17 @@ int batchMain(int argc, char** argv)
             GPUBuffer* curBuffer = buffers[1].get();
             if( curBuffer -> state == BufferState::EXPORT )
                 exportData( curBuffer );
+            if(exportFailed)
+            {
+                buffers[0]->state = BufferState::STOP;
+                buffers[1]->state = BufferState::STOP;
+                gpuRotate.notify_all();
+                monitorOn = false;
+                gpuStreamThread.join();
+                if(!cInfo.isRedirected) MonitorThread.join();
+                cleanupTemp();
+                return -1;
+            }
             if( buffers[0] -> state == BufferState::FAIL ||
                     buffers[1] -> state == BufferState::FAIL )
             {
@@ -1266,15 +1455,15 @@ int batchMain(int argc, char** argv)
                 gpuStreamThread.join();
                 if(!cInfo.isRedirected) MonitorThread.join();
                 std::cerr << "GPU thread failed!\n";
-                tmpFile.close();
-                std::filesystem::remove( tmpPath );
+                cleanupTemp();
                 return -1;
             }
 
             curBuffer -> state = BufferState::IMPORT;
             const std::size_t begin = segmentDescriptor.empty()? 0lu : segmentDescriptor.back()[1];
-            readData(indexedHandles, curBuffer -> data.get(), begin,
-                    expectProg, progVar, curBuffer -> realPoints );
+            readData(indexedHandles, curBuffer -> transformData.get(), begin,
+                    expectProg, progVar, curBuffer -> realPoints,
+                    &curBuffer -> spatialCoordinates );
             segmentDescriptor.push_back( {begin, begin + curBuffer -> realPoints} );
             curBuffer -> state = BufferState::PROCESS;
 
@@ -1290,10 +1479,11 @@ int batchMain(int argc, char** argv)
             monitorOn = false;
             gpuStreamThread.join();
             if(!cInfo.isRedirected) MonitorThread.join();
-            tmpFile.close();
-            std::filesystem::remove( tmpPath );
+            cleanupTemp();
             return -1;
         }
+        if(!bufferedExport && buffers[1]->state == BufferState::EXPORT)
+            exportData(buffers[1].get());
         buffers[1] -> state = BufferState::STOP;
 
         //and wait for the last one to finish processing
@@ -1306,12 +1496,26 @@ int batchMain(int argc, char** argv)
             monitorOn = false;
             gpuStreamThread.join();
             if(!cInfo.isRedirected) MonitorThread.join();
-            tmpFile.close();
-            std::filesystem::remove( tmpPath );
+            cleanupTemp();
             return -1;
         }
-        else 
+        else
+        {
+            if(!bufferedExport)
+                exportData(buffers[0].get());
             buffers[0] -> state = BufferState::STOP;
+        }
+
+        if(exportFailed)
+        {
+            monitorOn = false;
+            buffers[1]->state = BufferState::STOP;
+            gpuRotate.notify_all();
+            gpuStreamThread.join();
+            if(!cInfo.isRedirected) MonitorThread.join();
+            cleanupTemp();
+            return -1;
+        }
 
         gpuRotate.notify_all();
         gpuStreamThread.join();
@@ -1351,14 +1555,15 @@ int batchMain(int argc, char** argv)
             });
 
         buff -> state = BufferState::IMPORT;
-        readData(indexedHandles, buff -> data.get(), 0lu,
-                expectProg, progVar, buff -> realPoints );
+        readData(indexedHandles, buff -> transformData.get(), 0lu,
+                expectProg, progVar, buff -> realPoints,
+                &buff -> spatialCoordinates );
         segmentDescriptor.push_back( {0lu, buff -> realPoints} );
         buff -> state = BufferState::PROCESS;
 
         //now launch kernel to do the processing
         if( buff -> nSize < fft_engine -> expectedLength() || buff -> nSize > 2 * fft_engine -> expectedLength() * fft_engine -> expectedBatch() || 
-            !fft_engine -> RunTransform(buff -> data.get(), norm, fft_engine -> expectedBatch() - buff -> realPoints ))
+            !fft_engine -> RunTransform(buff -> transformData.get(), norm, fft_engine -> expectedBatch() - buff -> realPoints ))
         {
             monitorOn = false;
             if(MonitorThread.joinable()) MonitorThread.join();
@@ -1366,6 +1571,8 @@ int batchMain(int argc, char** argv)
             std::cerr << "Error processing the data, aborting!";
             return -1;
         }
+        if(!bufferedExport)
+            exportData(buff);
         buff -> state = BufferState::STOP;
 
         monitorOn = false;
@@ -1374,13 +1581,11 @@ int batchMain(int argc, char** argv)
     }
 
     //and close tmp file
-    tmpFile.close();
-    auto head = filesMeta.front().second.header(0).value().get();
-    transformHeader( head, TimeRegExStr );
+    if(bufferedExport) tmpFile.close();
 
-    expectProg = (tSeriesLength/2 + 1) * VFSize * 2;
+    expectProg = frequencyCount * VFSize * 2;
     progVar = 0;
-    if(!cInfo.isRedirected) MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
+    if(bufferedExport && !cInfo.isRedirected) MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
         {
             CMDMonitor monitor(std::cout);
             while(true)
@@ -1396,21 +1601,42 @@ int batchMain(int argc, char** argv)
             }
         });
 
-    const auto outputPath = pathFromUtf8(oFileName);
-    if(BatchSize < VFSize) exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[1] -> data.get(), buffers[0] -> data.get(),
-                        head, tSeriesLength/2 + 1, frequencyIncrement, progVar,
-                        CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
-    else exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[0] -> data.get(), nullptr, head, tSeriesLength/2 + 1, frequencyIncrement,
-                         progVar, CollectorBuffer.data.get(), CollectorBuffer.occup, nullptr );
-
-    //clean up temp files
-    std::filesystem::remove( tmpPath );
+    if(bufferedExport)
+    {
+        const auto coordinates = readIrregularCoordinates(filesMeta.front().second);
+        const auto* coordinateData = coordinates.empty() ? nullptr : coordinates.data();
+        bool exported{};
+        if(BatchSize < VFSize) exported = exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[1] -> transformData.get(), buffers[0] -> transformData.get(),
+                            head, frequencyCount, frequencyIncrement, progVar,
+                            CollectorBuffer.data.get(), CollectorBuffer.occup,
+                            coordinateData );
+        else exported = exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[0] -> transformData.get(), nullptr, head, frequencyCount, frequencyIncrement,
+                             progVar, CollectorBuffer.data.get(), CollectorBuffer.occup,
+                             coordinateData );
+        std::filesystem::remove(tmpPath);
+        if(!exported)
+        {
+            progVar = expectProg.load();
+            if(!cInfo.isRedirected) MonitorThread.join();
+            return -1;
+        }
+    }
+    else
+    {
+        if(auto result = spectrumWriter->finalize(); !result)
+        {
+            std::cerr << "Unable to finalize spectrum output: "
+                      << result.error().message << '\n';
+            return -1;
+        }
+        progVar = expectProg.load();
+    }
     if( progVar != expectProg )
     {
         std::cerr << "Unexpected error occured while exporting the spectrum!\n";
         return -1;
     }
-    if(!cInfo.isRedirected) MonitorThread.join();
+    if(bufferedExport && !cInfo.isRedirected) MonitorThread.join();
     else std::cout << "Exported a " << printMemSize( sizeof(float) * expectProg ) << " spectrum into \"" + oFileName + "\"\n";
 
     return 0;

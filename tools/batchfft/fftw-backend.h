@@ -34,7 +34,8 @@ public:
     FFTWEngine& operator=(const FFTWEngine&) = delete;
 
     bool Init(std::size_t length, std::size_t maxBatch,
-              std::size_t maxMemory = 0) override;
+              std::size_t maxMemory = 0,
+              std::size_t batchMultiple = 1) override;
     bool RunTransform(float* data, float norm = 1.0f,
                       std::size_t padding = 0) override;
     bool InitInterp(const double* times) override;

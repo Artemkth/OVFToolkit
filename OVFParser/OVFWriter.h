@@ -7,10 +7,13 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace VField {
 
@@ -46,6 +49,113 @@ namespace VField {
     /** @brief Write one field as a single-segment OVF file. */
     OVFPARSER_EXPORT WriteResult writeOVF(const std::filesystem::path& path,
                                           const VField& field);
+
+    class OVFStreamWriter;
+
+    /** @brief Sequential point sink for one prepared binary OVF segment. */
+    class OVFPARSER_EXPORT OVFSegmentSink {
+        friend class OVFStreamWriter;
+      public:
+        struct State;
+
+      private:
+        State* state_{};
+        std::size_t segment_{};
+        std::optional<WriteError> error_{};
+
+        OVFSegmentSink(State* state, std::size_t segment) noexcept;
+        WriteResult writeContiguous(std::span<const float> values,
+                                    std::size_t points,
+                                    std::size_t dimension);
+        WriteResult writeContiguous(std::span<const double> values,
+                                    std::size_t points,
+                                    std::size_t dimension);
+
+      public:
+        OVFSegmentSink() = default;
+        OVFSegmentSink(const OVFSegmentSink&) = delete;
+        OVFSegmentSink& operator=(const OVFSegmentSink&) = delete;
+        OVFSegmentSink(OVFSegmentSink&&) noexcept = default;
+        OVFSegmentSink& operator=(OVFSegmentSink&&) noexcept = default;
+
+        /** @brief Append a contiguous, point-major rank-two view. */
+        template<class Element, class Extents>
+          requires (Extents::rank() == 2) &&
+            (std::same_as<std::remove_cv_t<Element>, float> ||
+             std::same_as<std::remove_cv_t<Element>, double>)
+        WriteResult write(md::mdspan<Element, Extents, md::layout_right,
+                          md::default_accessor<Element>> points)
+        {
+            const auto count = static_cast<std::size_t>(points.extent(0));
+            const auto dimension = static_cast<std::size_t>(points.extent(1));
+            const auto scalarCount = count * dimension;
+            using Scalar = std::remove_cv_t<Element>;
+            return writeContiguous(
+                std::span<const Scalar>{points.data_handle(), scalarCount},
+                count, dimension);
+        }
+
+        /** @brief Stream a point-major view and retain the first error. */
+        template<class Element, class Extents>
+          requires (Extents::rank() == 2) &&
+            (std::same_as<std::remove_cv_t<Element>, float> ||
+             std::same_as<std::remove_cv_t<Element>, double>)
+        OVFSegmentSink& operator<<(
+            md::mdspan<Element, Extents, md::layout_right,
+                       md::default_accessor<Element>> points)
+        {
+            if(!error_)
+                if(auto result = write(points); !result)
+                    error_ = std::move(result.error());
+            return *this;
+        }
+
+        [[nodiscard]] std::size_t pointsWritten() const noexcept;
+        [[nodiscard]] std::size_t pointsRemaining() const noexcept;
+        [[nodiscard]] bool complete() const noexcept;
+        [[nodiscard]] bool good() const noexcept;
+        [[nodiscard]] explicit operator bool() const noexcept { return good(); }
+        [[nodiscard]] const std::optional<WriteError>& error() const noexcept
+        { return error_; }
+    };
+
+    /**
+     * @brief Header-first writer whose segment sinks accept points independently.
+     *
+     * Segment payload regions are reserved without writing placeholder arrays.
+     * Every sink remains sequential even though the underlying file is updated
+     * with positioned writes.
+     */
+    class OVFPARSER_EXPORT OVFStreamWriter {
+        std::unique_ptr<OVFSegmentSink::State> state_{};
+        std::vector<OVFSegmentSink> sinks_{};
+
+        OVFStreamWriter(std::unique_ptr<OVFSegmentSink::State> state,
+                        std::size_t segments);
+
+      public:
+        OVFStreamWriter() = default;
+        ~OVFStreamWriter();
+        OVFStreamWriter(const OVFStreamWriter&) = delete;
+        OVFStreamWriter& operator=(const OVFStreamWriter&) = delete;
+        OVFStreamWriter(OVFStreamWriter&&) noexcept;
+        OVFStreamWriter& operator=(OVFStreamWriter&&) noexcept;
+
+        /** @brief Prepare all binary segments and return their sequential sinks. */
+        [[nodiscard]] static std::expected<OVFStreamWriter, WriteError>
+          create(const std::filesystem::path& path,
+                 std::span<const OVFHeader> headers,
+                 std::size_t scalarSizeBytes = sizeof(float));
+
+        [[nodiscard]] std::size_t segmentCount() const noexcept;
+        [[nodiscard]] OVFSegmentSink& segment(std::size_t index);
+        [[nodiscard]] const OVFSegmentSink& segment(std::size_t index) const;
+
+        /** @brief Flush and validate that every declared point was written. */
+        WriteResult finalize();
+        /** @brief Close an incomplete writer without final validation. */
+        void abort() noexcept;
+    };
 
     /**
      * @brief Write a forward range of fields without modifying their headers.

@@ -78,7 +78,8 @@ class cuFFTEngine: public FFTEngine<float>
             return *this;
         }
 
-        bool Init( std::size_t, std::size_t maxBatch, std::size_t maxMem = 0 );
+        bool Init(std::size_t, std::size_t maxBatch, std::size_t maxMem = 0,
+                  std::size_t batchMultiple = 1) override;
         bool RunTransform( float*, float norm = 1.0f, std::size_t padding = 0 );
         bool InitInterp( const double* );
 

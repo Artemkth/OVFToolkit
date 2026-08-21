@@ -92,12 +92,12 @@ bool FFTWEngine::makePlan(std::size_t batch)
 }
 
 bool FFTWEngine::Init(std::size_t length, std::size_t maxBatch,
-                      std::size_t maxMemory)
+                      std::size_t maxMemory, std::size_t batchMultiple)
 {
     fail = false;
     fftLength = length;
     interpolation = {};
-    if (length < 2 || maxBatch == 0)
+    if (length < 2 || maxBatch == 0 || batchMultiple == 0)
         return !(fail = true);
 
     const auto complexPoints = length / 2 + 1;
@@ -113,6 +113,13 @@ bool FFTWEngine::Init(std::size_t length, std::size_t maxBatch,
     const auto memoryLimit = maxMemory == 0 ? defaultWorkspaceLimit() : maxMemory;
     batchSize = std::min(maxBatch,
         std::max<std::size_t>(1, memoryLimit / bytesPerTransform));
+    batchSize -= batchSize % batchMultiple;
+    if(batchSize == 0)
+    {
+        std::cerr << "FFTW memory limit cannot hold one " << batchMultiple
+                  << "-transform logical point.\n";
+        return !(fail = true);
+    }
 
     fail = !makePlan(batchSize);
     if (fail)
@@ -122,7 +129,8 @@ bool FFTWEngine::Init(std::size_t length, std::size_t maxBatch,
         return false;
     }
     std::cout << "Chosen to do CPU transforms in " << batchSize
-              << " point batches using FFTW " << fftwf_version << ".\n";
+              << " scalar-transform batches (" << batchSize / batchMultiple
+              << " logical points) using FFTW " << fftwf_version << ".\n";
     return true;
 }
 

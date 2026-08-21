@@ -220,5 +220,102 @@ int main(int argc, char** argv)
     }
     //success handling OVF1
 
+    //Prepare multiple segment payloads, then stream each one independently in
+    //whole point views. This exercises header-first positioned output.
+    auto streamHeader = testOVF.header();
+    streamHeader.setVersion(VField::OVFVersion::OVF2);
+    streamHeader.set(VField::OVFParameter::Xnodes, std::size_t{2});
+    streamHeader.set(VField::OVFParameter::Ynodes, std::size_t{1});
+    streamHeader.set(VField::OVFParameter::Znodes, std::size_t{1});
+    std::vector<VField::OVFHeader> streamHeaders{streamHeader, streamHeader};
+    streamHeaders[1].set(VField::OVFParameter::Desc, "second streamed segment");
+    auto streaming = VField::OVFStreamWriter::create(
+        workingDir + "streamed.ovf", streamHeaders, sizeof(float));
+    if(!streaming)
+    {
+        std::cerr << "Could not prepare streaming OVF output: "
+                  << streaming.error().message << '\n';
+        return 16;
+    }
+    std::array<float, 6> firstStream{1, 2, 3, 4, 5, 6};
+    std::array<float, 6> secondStream{7, 8, 9, 10, 11, 12};
+    using StreamView = VField::md::mdspan<
+        const float, VField::md::dextents<std::size_t, 2>,
+        VField::md::layout_right>;
+    streaming->segment(0) << StreamView{firstStream.data(), 1, 3};
+    streaming->segment(0) << StreamView{firstStream.data() + 3, 1, 3};
+    streaming->segment(1) << StreamView{secondStream.data(), 2, 3};
+    if(!streaming->finalize())
+    {
+        std::cerr << "Could not finalize streaming OVF output\n";
+        return 17;
+    }
+    auto streamedRead = VField::VFieldFile::open(workingDir + "streamed.ovf");
+    if(!streamedRead || streamedRead->segmentCount() != 2)
+    {
+        std::cerr << "Could not read streaming OVF output";
+        if(!streamedRead) std::cerr << ": " << streamedRead.error().message;
+        std::cerr << '\n';
+        return 18;
+    }
+    for(std::size_t segment = 0; segment < 2; ++segment)
+    {
+        const auto loaded = streamedRead->load(segment);
+        const auto& expected = segment == 0 ? firstStream : secondStream;
+        if(!loaded || !std::equal(expected.begin(), expected.end(),
+                                  loaded->get().data<float>()))
+        {
+            std::cerr << "Streaming OVF segment contains unexpected data\n";
+            return 19;
+        }
+    }
+
+    auto invalidStreaming = VField::OVFStreamWriter::create(
+        workingDir + "invalid-streamed.ovf", std::span{streamHeaders}.first(1),
+        sizeof(float));
+    std::array<float, 2> wrongDimension{1, 2};
+    if(!invalidStreaming ||
+       invalidStreaming->segment(0).write(
+           StreamView{wrongDimension.data(), 1, 2}) ||
+       invalidStreaming->finalize())
+    {
+        std::cerr << "Streaming writer accepted a wrong or incomplete point shape\n";
+        return 20;
+    }
+
+    auto doubleStreaming = VField::OVFStreamWriter::create(
+        workingDir + "double-streamed.ovf", std::span{streamHeaders}.first(1),
+        sizeof(double));
+    std::array<double, 6> doubleStream{1.25, 2.5, 3.75, 5, 6.25, 7.5};
+    using DoubleStreamView = VField::md::mdspan<
+        const double, VField::md::dextents<std::size_t, 2>,
+        VField::md::layout_right>;
+    if(!doubleStreaming)
+    {
+        std::cerr << "Could not prepare double streaming output\n";
+        return 21;
+    }
+    doubleStreaming->segment(0) <<
+        DoubleStreamView{doubleStream.data(), 2, 3};
+    if(!doubleStreaming->finalize())
+    {
+        std::cerr << "Could not finalize double streaming output\n";
+        return 22;
+    }
+    auto doubleRead = VField::VFieldFile::open(workingDir + "double-streamed.ovf");
+    if(!doubleRead)
+    {
+        std::cerr << "Could not read double streaming output\n";
+        return 23;
+    }
+    const auto loadedDouble = doubleRead->load(0);
+    if(!loadedDouble || loadedDouble->get().scalarSizeBytes() != sizeof(double) ||
+       !std::equal(doubleStream.begin(), doubleStream.end(),
+                   loadedDouble->get().data<double>()))
+    {
+        std::cerr << "Double streaming output contains unexpected data\n";
+        return 24;
+    }
+
     return 0;
 }

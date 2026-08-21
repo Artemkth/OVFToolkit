@@ -59,6 +59,18 @@ bool closeToReference(const float* actualData,
 
 int main()
 {
+    {
+        FFTWEngine quantized;
+        constexpr std::size_t pointDimension = 3;
+        if(!quantized.Init(transformLength, batchSize,
+                           16ULL * 1024 * 1024, pointDimension) ||
+           quantized.expectedBatch() != batchSize - batchSize % pointDimension)
+        {
+            std::cerr << "FFTW did not quantize its batch to complete points.\n";
+            return 1;
+        }
+    }
+
     FFTWEngine engine;
     if (!engine.Init(transformLength, batchSize, 16ULL * 1024 * 1024) ||
         engine.expectedBatch() != batchSize)
