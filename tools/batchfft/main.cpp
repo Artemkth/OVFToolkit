@@ -11,6 +11,8 @@
 #include<memory>
 #include<chrono>
 #include<format>
+#include<expected>
+#include<functional>
 
 //headers for parallelization, hurray for atomic future :D
 #include<atomic>
@@ -286,6 +288,13 @@ struct GPUBuffer {
     std::vector<float> spatialCoordinates{};
 
     BufferState state{ BufferState::WAIT };
+};
+
+struct CollectorBuffer
+{
+    std::unique_ptr<float[]> data{};
+    std::size_t count{};
+    std::size_t occupied{};
 };
 
 template<typename Rep, typename Period>
@@ -736,525 +745,547 @@ void printGreeting()
     std::cout << "\n\n" << std::flush;
 }
 
-int batchMain(int argc, char** argv)
+struct BatchOptions
 {
-    std::vector<fname_type> fileList{};
-    std::string TimeRegExStr {};
-    std::string oFileName {};
-
-    //system configuration
-#ifdef OVFTOOLKIT_HAS_CUFFT
-    int gpu { -1 };
-#endif
+    std::vector<fname_type> inputFiles{};
+    std::string timeRegex{};
+    std::string outputFile{};
 #if defined(OVFTOOLKIT_HAS_CUFFT)
     std::string engineName{"gpu"};
+    int gpu{-1};
+    std::optional<std::size_t> maxVRam{};
 #else
     std::string engineName{"fftw"};
 #endif
     std::optional<std::size_t> maxRam{};
-#ifdef OVFTOOLKIT_HAS_CUFFT
-    std::optional<std::size_t> maxVRam{};
-#endif
-    bool no_norm { false };
-    bool no_reinterp { false };
-    bool forceBufferedExport { false };
-    bool bufferedExport { false };
-    bool automaticBufferedExport { false };
-    std::unique_ptr<FFTEngine<float>> fft_engine;
-    //first parse command-line options
+    bool disableNormalization{};
+    bool disableReinterpolation{};
+    bool forceBufferedExport{};
+};
+
+std::expected<BatchOptions, int> parseCommandLine(int argc, char** argv)
+{
+    BatchOptions options;
     try
     {
-        //console width initiated on program start and is assumed to stay the same until output, because program_options doesn't have a way to alter it later
-        boost::program_options::options_description desc("Usage: ovf-batch [options] files...\nOptions", cInfo.GetConsoleWidth());
-        //populate options list
-        desc.add_options()
-            ("help,h", boost::program_options::bool_switch(), "Produce this help message.")
-            ("version,v", boost::program_options::bool_switch(), "Get this software's version information.")
-            ("input-files", boost::program_options::value<std::vector<fname_type>>(&fileList)->multitoken()->required( ), "Time sequence of vector fields in .ovf files." )
-            ("output,o", boost::program_options::value<std::string>(&oFileName)->default_value("spectrum.ovf"), "Spectrum output file name.")
+        boost::program_options::options_description description(
+            "Usage: ovf-batch [options] files...\nOptions",
+            cInfo.GetConsoleWidth());
+        description.add_options()
+            ("help,h", boost::program_options::bool_switch(),
+             "Produce this help message.")
+            ("version,v", boost::program_options::bool_switch(),
+             "Get this software's version information.")
+            ("input-files",
+             boost::program_options::value<std::vector<fname_type>>(
+                 &options.inputFiles)->multitoken()->required(),
+             "Time sequence of vector fields in .ovf files.")
+            ("output,o", boost::program_options::value<std::string>(
+                 &options.outputFile)->default_value("spectrum.ovf"),
+             "Spectrum output file name.")
 #ifdef OVFTOOLKIT_HAS_MULTIPLE_FFT_ENGINES
-            ("engine", boost::program_options::value<std::string>(&engineName)->default_value("gpu"), "FFT engine: gpu (default) or fftw.")
+            ("engine", boost::program_options::value<std::string>(
+                 &options.engineName)->default_value("gpu"),
+             "FFT engine: gpu (default) or fftw.")
 #endif
 #ifdef OVFTOOLKIT_HAS_CUFFT
-            ("gpu", boost::program_options::value<int>(&gpu)->default_value(-1), "GPU id for CUDA fft.")
+            ("gpu", boost::program_options::value<int>(&options.gpu)
+                 ->default_value(-1),
+             "GPU id for CUDA fft.")
 #endif
-            ("max-ram", boost::program_options::value<std::string>()->notifier([&maxRam](const std::string& sizeSpec){ maxRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on host machine for buffers.")
+            ("max-ram", boost::program_options::value<std::string>()->notifier(
+                 [&options](const std::string& value)
+                 { options.maxRam = parseMemSize(value); }),
+             "Maximum ammount of RAM allocated on host machine for buffers.")
 #ifdef OVFTOOLKIT_HAS_CUFFT
-            ("max-vram", boost::program_options::value<std::string>()->notifier([&maxVRam](const std::string& sizeSpec){ maxVRam = parseMemSize(sizeSpec); }), "Maximum ammount of RAM allocated on GPU for transform.")
+            ("max-vram", boost::program_options::value<std::string>()->notifier(
+                 [&options](const std::string& value)
+                 { options.maxVRam = parseMemSize(value); }),
+             "Maximum ammount of RAM allocated on GPU for transform.")
 #endif
-            ("time-regex", boost::program_options::value<std::string>(&TimeRegExStr)->default_value("Total simulation time:\\s+(.+?)\\s+s"), "Regex pattern to extract time from .ovf files.")
-            ("no-norm", boost::program_options::bool_switch(&no_norm), "Don't normalize the fourier transform result.")
-            ("no-reinterp", boost::program_options::bool_switch(&no_reinterp), "Don't reinterpolate the data to remove jitter.")
-            ("buffered-export", boost::program_options::bool_switch(&forceBufferedExport),
+            ("time-regex", boost::program_options::value<std::string>(
+                 &options.timeRegex)->default_value(
+                     "Total simulation time:\\s+(.+?)\\s+s"),
+             "Regex pattern to extract time from .ovf files.")
+            ("no-norm", boost::program_options::bool_switch(
+                 &options.disableNormalization),
+             "Don't normalize the fourier transform result.")
+            ("no-reinterp", boost::program_options::bool_switch(
+                 &options.disableReinterpolation),
+             "Don't reinterpolate the data to remove jitter.")
+            ("buffered-export", boost::program_options::bool_switch(
+                 &options.forceBufferedExport),
              "Use the legacy temporary-file and sequential spectrum export path.");
 
-        //set position of input-files to automatically them without a switch
-        boost::program_options::positional_options_description pos_desc;
-        pos_desc.add("input-files", -1);
+        boost::program_options::positional_options_description positional;
+        positional.add("input-files", -1);
+        boost::program_options::variables_map variables;
+        auto parser = boost::program_options::command_line_parser(argc, argv)
+            .options(description).positional(positional);
+        boost::program_options::store(parser.run(), variables);
 
-        //setting up for parsing
-        boost::program_options::variables_map vmap;
-        boost::program_options::command_line_parser parser(argc, argv);
-        parser.options(desc);
-        parser.positional(pos_desc);
-        boost::program_options::store( parser.run(), vmap );
-
-        if(vmap["help"].as<bool>())
+        if(variables["help"].as<bool>())
         {
             printGreeting();
-            std::cout << desc ;
-            return 0;
+            std::cout << description;
+            return std::unexpected(0);
         }
-        if(vmap["version"].as<bool>())
+        if(variables["version"].as<bool>())
         {
             printGreeting();
-            return 0;
+            return std::unexpected(0);
         }
 
-#ifdef OVFTOOLKIT_HAS_MULTIPLE_FFT_ENGINES
-        engineName = vmap["engine"].as<std::string>();
-#endif
-#ifdef OVFTOOLKIT_HAS_CUFFT
-        gpu = vmap["gpu"].as<int>();
-#endif
-        // Reject an unavailable backend before enforcing or opening input files.
-        if (engineName == "gpu")
-        {
-#ifdef OVFTOOLKIT_HAS_CUFFT
-            int deviceCount{};
-            const auto cudaStatus = cudaGetDeviceCount(&deviceCount);
-            if (cudaStatus != cudaSuccess || deviceCount == 0 || gpu >= deviceCount || gpu < -1)
-            {
-                std::cerr << "The requested GPU FFT engine is unavailable";
-                if (cudaStatus != cudaSuccess)
-                    std::cerr << ": " << cudaGetErrorString(cudaStatus);
-                else if (gpu >= deviceCount || gpu < -1)
-                    std::cerr << ": invalid GPU id " << gpu;
-                std::cerr << ".\n";
-                return 1;
-            }
-            fft_engine = std::make_unique<cuFFTEngine>(gpu);
-#else
-            std::cerr << "The GPU FFT engine is unavailable in this build.\n";
-            return 1;
-#endif
-        }
-        else if (engineName == "fftw")
-        {
-#ifdef OVFTOOLKIT_HAS_FFTW
-            fft_engine = std::make_unique<FFTWEngine>();
-#else
-            std::cerr << "The FFTW engine is unavailable in this build.\n";
-            return 1;
-#endif
-        }
-        else
-        {
-            std::cerr << "Unknown FFT engine '" << engineName << "'.\n";
-            return 1;
-        }
-
-        boost::program_options::notify(vmap);
+        boost::program_options::notify(variables);
         printGreeting();
+        return options;
     }
-    catch (const std::exception& e)
+    catch(const std::exception& error)
     {
-        std::cerr << "Error while parsing command line: " << e.what() << "\n";
-        return -1;
+        std::cerr << "Error while parsing command line: " << error.what() << "\n";
+        return std::unexpected(-1);
     }
-    std::future<bool> engineInit{};
+}
 
-    //try to validate file list beforehand
-    std::size_t tSeriesLength = fileList.size();
-    if( tSeriesLength < 2 )
+std::expected<std::unique_ptr<FFTEngine<float>>, int>
+createEngine(const BatchOptions& options)
+{
+    if(options.engineName == "gpu")
     {
-        std::cerr << "At least 2 files were expected to be provided to form a time series, a single file is already its own transform, aborting!\n";
-        return 1;
-    }
-    {
-        //else check if all the files exist
-        std::vector<fname_type> missingFiles{};
-        for(const auto& fname: fileList)
+#ifdef OVFTOOLKIT_HAS_CUFFT
+        int deviceCount{};
+        const auto status = cudaGetDeviceCount(&deviceCount);
+        if(status != cudaSuccess || deviceCount == 0 ||
+           options.gpu >= deviceCount || options.gpu < -1)
         {
-            const auto fPath = pathFromUtf8(fname);
-            if( !std::filesystem::exists(fPath) || !std::filesystem::is_regular_file(fPath) )
-                missingFiles.push_back(fname);
+            std::cerr << "The requested GPU FFT engine is unavailable";
+            if(status != cudaSuccess)
+                std::cerr << ": " << cudaGetErrorString(status);
+            else if(options.gpu >= deviceCount || options.gpu < -1)
+                std::cerr << ": invalid GPU id " << options.gpu;
+            std::cerr << ".\n";
+            return std::unexpected(1);
         }
-        if( !missingFiles.empty() )
+        return std::make_unique<cuFFTEngine>(options.gpu);
+#else
+        std::cerr << "The GPU FFT engine is unavailable in this build.\n";
+        return std::unexpected(1);
+#endif
+    }
+    if(options.engineName == "fftw")
+    {
+#ifdef OVFTOOLKIT_HAS_FFTW
+        return std::make_unique<FFTWEngine>();
+#else
+        std::cerr << "The FFTW engine is unavailable in this build.\n";
+        return std::unexpected(1);
+#endif
+    }
+    std::cerr << "Unknown FFT engine '" << options.engineName << "'.\n";
+    return std::unexpected(1);
+}
+
+bool validateInputFiles(const std::vector<fname_type>& files)
+{
+    if(files.size() < 2)
+    {
+        std::cerr << "At least 2 files were expected to be provided to form a "
+                     "time series, a single file is already its own transform, "
+                     "aborting!\n";
+        return false;
+    }
+
+    std::vector<fname_type> missing;
+    for(const auto& name: files)
+    {
+        const auto path = pathFromUtf8(name);
+        if(!std::filesystem::exists(path) ||
+           !std::filesystem::is_regular_file(path))
+            missing.push_back(name);
+    }
+    if(missing.empty())
+        return true;
+
+    std::cerr << "Following files were not found: \"" << missing.front() << "\"";
+    for(auto iterator = std::next(missing.begin()); iterator != missing.end();
+        ++iterator)
+        std::cerr << ", \"" << *iterator << "\"";
+    std::cerr << '\n';
+    return false;
+}
+
+std::thread metadataMonitor(std::atomic<std::size_t>& progress,
+                            std::atomic<std::size_t>& expected,
+                            std::atomic<const char*>& lastFile)
+{
+    if(cInfo.isRedirected)
+        return {};
+    return std::thread([&]
+    {
+        CMDMonitor monitor(std::cout);
+        const auto width = std::to_string(expected.load()).size();
+        while(true)
         {
-            std::cerr << "Following files were not found: \"" << missingFiles.front() << "\"";
-            auto begin = ++missingFiles.begin();
-            auto end = missingFiles.end();
-            for(; begin != end; ++begin)
-                std::cerr << ", \"" << *begin << "\"";
-            std::cerr << "\n";
-            return 1;
+            const auto current = progress.load();
+            const auto currentText = std::to_string(current);
+            const auto name = std::string{lastFile.load()};
+            monitor.update("File " + std::string(width - currentText.size(), ' ') +
+                           currentText + '/' + std::to_string(expected.load()) +
+                           ": \"" + name + '\"');
+            if(current >= expected)
+                return;
+            using namespace std::chrono_literals;
+            std::this_thread::sleep_for(100ms);
         }
-    }
+    });
+}
 
-    //evaluation monitors
-    std::atomic<std::size_t> progVar{};
-    std::atomic<std::size_t> expectProg{fileList.size()};
-    std::atomic<const fname_type::value_type*> lastFile { "No file imported yet." };
-    std::thread MonitorThread{};
+std::expected<std::vector<metaPair>, int>
+prefetchMetadata(const BatchOptions& options)
+{
+    std::atomic<std::size_t> progress{};
+    std::atomic<std::size_t> expected{options.inputFiles.size()};
+    std::atomic<const char*> lastFile{"No file imported yet."};
+    auto monitor = metadataMonitor(progress, expected, lastFile);
+    std::vector<metaPair> metadata(options.inputFiles.size());
+    const std::regex timePattern(options.timeRegex,
+        std::regex_constants::ECMAScript | std::regex_constants::optimize);
 
-    if(!cInfo.isRedirected)
+    auto parse = [&](const std::string& name) -> metaPair
     {
-        //time prefetch phase for profiling
-        MonitorThread = std::thread([&] () -> void 
-            {
-                CMDMonitor monitor(std::cout);
-                const auto expSizeStr = std::to_string(expectProg);
-
-                std::string message {};
-
-                bool lastRun = true;
-                while(true)
-                {
-                    std::string message { "File " };
-                    const std::size_t cCount = progVar;
-                    const auto name = std::string { lastFile };
-                    const auto cCountStr = std::to_string(cCount);
-
-                    message += std::string( expSizeStr.length() - cCountStr.length(), ' ' ) + cCountStr + '/' + expSizeStr + ": \"" + name + '\"';
-
-                    monitor.update(message);
-                    if( cCount >= expectProg )
-                        break;
-
-                    using namespace std::chrono_literals;
-                    std::this_thread::sleep_for(100ms);
-                }
-            });
-    }
-
-    std::vector<metaPair> filesMeta( fileList.size() );
-    //comparison operator for time/handle pair
-    auto metaCompPred = [](const metaPair& pair1, const metaPair& pair2) { return pair1.first < pair2.first;  };
-    //parsing predicate
-    const std::regex timeRegEx(TimeRegExStr, std::regex_constants::ECMAScript | std::regex_constants::optimize);
-    auto parseMetaPred = [&lastFile, &progVar, &timeRegEx, &TimeRegExStr](const std::string& fName) -> metaPair
-    {
-        auto opened = VField::VFieldFile::open(pathFromUtf8(fName));
+        auto opened = VField::VFieldFile::open(pathFromUtf8(name));
         if(!opened)
         {
-            std::cerr << std::format("Failed to read '{}': {}\n", fName, opened.error().message);
-            lastFile = fName.c_str();
-            ++progVar;
+            std::cerr << std::format("Failed to read '{}': {}\n", name,
+                                     opened.error().message);
+            lastFile = name.c_str();
+            ++progress;
             return {std::nullopt, VField::VFieldFile{}};
         }
         auto file = std::move(*opened);
-
-        //if file is not single segment, give up LULW
-        if (file.segmentCount() != 1)
+        if(file.segmentCount() != 1)
         {
-            std::cerr << "Encountered bad segment count in file: \"" << fName << "\": " << file.segmentCount() << "\n";
-            //set last file to the one we processed 
-            lastFile = fName.c_str();
-            ++progVar;
-            return { std::nullopt, std::move(file) };
+            std::cerr << "Encountered bad segment count in file: \"" << name
+                      << "\": " << file.segmentCount() << '\n';
+            lastFile = name.c_str();
+            ++progress;
+            return {std::nullopt, std::move(file)};
         }
 
-        std::optional<double> time{ std::nullopt };
-        //and then check if header is oiro
-        const VField::OVFHeader& ref = file.header(0).value().get();
-        std::smatch pat_matches{};
-        if (ref.contains(VField::OVFParameter::Desc) && std::regex_search(ref.requireAs<std::string>(VField::OVFParameter::Desc), pat_matches, timeRegEx))
+        std::optional<double> time;
+        const auto& header = file.header(0).value().get();
+        std::smatch matches;
+        if(header.contains(VField::OVFParameter::Desc) &&
+           std::regex_search(header.requireAs<std::string>(
+                                 VField::OVFParameter::Desc),
+                             matches, timePattern))
         {
-            char* ret{ nullptr };
-            auto str = pat_matches[1].str();
-            double val = strtod(str.c_str(), &ret);
-            if (ret != str.c_str())
-                time = val;
+            char* end{};
+            const auto text = matches[1].str();
+            const auto value = std::strtod(text.c_str(), &end);
+            if(end != text.c_str())
+                time = value;
         }
-        else //could not parse time
-            std::cerr << "Could not parse time from 'Description' field in file \"" << fName << "\", with regular expression \"" << TimeRegExStr << "\"."
-            "Got \"" << (ref.contains(VField::OVFParameter::Desc) ? ref.requireAs<std::string>(VField::OVFParameter::Desc) : "*NOTHING*") << "\" in the description field!\n";
-        
-        //set last file to the one we processed 
-        lastFile = fName.c_str();
-        ++progVar;
-        return {std::move(time), std::move(file)};
+        else
+            std::cerr << "Could not parse time from 'Description' field in file \""
+                      << name << "\", with regular expression \""
+                      << options.timeRegex << "\".Got \""
+                      << (header.contains(VField::OVFParameter::Desc)
+                          ? header.requireAs<std::string>(VField::OVFParameter::Desc)
+                          : "*NOTHING*")
+                      << "\" in the description field!\n";
+        lastFile = name.c_str();
+        ++progress;
+        return {time, std::move(file)};
     };
 
-    auto t_before = std::chrono::steady_clock::now();
-    std::transform(ioPolicy, fileList.cbegin(), fileList.cend(), filesMeta.begin(), parseMetaPred);
-    auto t_after = std::chrono::steady_clock::now();
+    const auto before = std::chrono::steady_clock::now();
+    std::transform(ioPolicy, options.inputFiles.cbegin(), options.inputFiles.cend(),
+                   metadata.begin(), parse);
+    const auto after = std::chrono::steady_clock::now();
+    expected = progress.load();
+    if(monitor.joinable())
+        monitor.join();
+    std::cout << "Done pre-fetching .ovf metadata for " << metadata.size()
+              << " files in "
+              << std::chrono::duration<double>(after - before).count()
+              << " seconds.\n";
+    return metadata;
+}
 
-    if( progVar != tSeriesLength )
+std::expected<std::vector<double>, int>
+prepareTimeline(std::vector<metaPair>& metadata)
+{
+    std::string missing;
+    for(const auto& [time, file]: metadata)
+        if(!time)
+            std::format_to(std::back_inserter(missing), "{}{}",
+                missing.empty() ? "" : ", ", pathToUtf8(file.path()));
+    if(!missing.empty())
     {
-        std::cerr << "Failed to import one or more files, aborting!\n";
-        progVar = tSeriesLength;
-        if(!cInfo.isRedirected) MonitorThread.join();
-        return -1;
-    }
-    if (!cInfo.isRedirected) MonitorThread.join();
-    std::cout << "Done pre-fetching .ovf metadata for " << tSeriesLength << " files in " << std::chrono::duration<double>(t_after - t_before).count() << " seconds." << "\n";
-
-    //process timestamp data
-    //first check if all the times are present
-    {
-        std::string noTSFiles{};
-        for(const auto& [timeOpt, handle]: filesMeta)
-            if( !timeOpt.has_value() )
-                std::format_to(std::back_inserter(noTSFiles), "{}{}",
-                    noTSFiles.empty() ? "" : ", ", pathToUtf8(handle.path()));
-
-        if (!noTSFiles.empty())
-        {
-            std::cout << "Following files were found to have no time stamp: " << noTSFiles << "\n";
-            std::cout << "Aborting!\n";
-            return -1;
-        }
+        std::cout << "Following files were found to have no time stamp: "
+                  << missing << "\nAborting!\n";
+        return std::unexpected(-1);
     }
 
-    //it is safe to assume now that all the times are populated, sort everything by time
-    if (!std::is_sorted(filesMeta.begin(), filesMeta.end(), metaCompPred))
+    const auto byTime = [](const metaPair& left, const metaPair& right)
+    { return left.first < right.first; };
+    if(!std::is_sorted(metadata.begin(), metadata.end(), byTime))
     {
         std::cout << "File list received was not ordered by time, sorting it now!\n";
-        std::sort(filesMeta.begin(), filesMeta.end(), metaCompPred);
+        std::sort(metadata.begin(), metadata.end(), byTime);
     }
 
-    //check the duplicates and transfer times into their own array
-    std::vector<double> times(tSeriesLength);
+    std::vector<double> times(metadata.size());
+    std::transform(metadata.begin(), metadata.end(), times.begin(),
+        [](const metaPair& item) { return *item.first; });
+    std::string duplicates;
+    for(std::size_t first{}; first < times.size();)
     {
-        //check the times
-        std::string dupTSFiles{};
-        bool encounteredDup {false};
-
-        //first loop. merged duplicate check and time set check
-        for (std::size_t i = 0; i < tSeriesLength; i++)
+        auto last = first + 1;
+        while(last < times.size() && times[last] == times[first])
+            ++last;
+        if(last - first > 1)
         {
-
-            //push value onto the list
-            times[i] = filesMeta[i].first.value();
-
-            if (i > 0 && times[0] == times[i]) //duplicate check
-            {
-                if (!encounteredDup)
-                {
-                    encounteredDup = true;
-                    if (!dupTSFiles.empty()) dupTSFiles += '\n';
-
-                    std::ostringstream strStream;
-
-                    strStream << std::scientific << std::setprecision(4);
-                    strStream << times.front();
-
-                    std::format_to(std::back_inserter(dupTSFiles),
-                        "t={}: \"{}\"", strStream.str(),
-                        pathToUtf8(filesMeta.front().second.path()));
-                }
-
-                std::format_to(std::back_inserter(dupTSFiles), ", \"{}\"",
-                    pathToUtf8(filesMeta[i].second.path()));
-            }
+            std::ostringstream formattedTime;
+            formattedTime << std::scientific << std::setprecision(4)
+                          << times[first];
+            if(!duplicates.empty())
+                duplicates += '\n';
+            std::format_to(std::back_inserter(duplicates), "t={}: \"{}\"",
+                formattedTime.str(), pathToUtf8(metadata[first].second.path()));
+            for(auto index = first + 1; index < last; ++index)
+                std::format_to(std::back_inserter(duplicates), ", \"{}\"",
+                    pathToUtf8(metadata[index].second.path()));
         }
-
-        //duplicate check loop, starts from second value
-        for(std::size_t i = 1; i < tSeriesLength - 1; i++)
-        {
-            //reset for next run
-            if(encounteredDup)
-            {
-                dupTSFiles += '\n';
-                encounteredDup = false;
-            }
-
-            for( std::size_t j = i + 1; j < tSeriesLength; j++ )
-                if ( times[i] == times[j] )
-                {
-                    if(!encounteredDup)
-                    {
-                        encounteredDup = true;
-                        if (!dupTSFiles.empty()) dupTSFiles += '\n';
-
-                        std::ostringstream strStream;
-
-                        strStream << std::scientific << std::setprecision(4);
-                        strStream << times[i];
-
-                        std::format_to(std::back_inserter(dupTSFiles),
-                            "t={}: \"{}\"", strStream.str(),
-                            pathToUtf8(filesMeta[i].second.path()));
-                    }
-
-                    std::format_to(std::back_inserter(dupTSFiles), ", \"{}\"",
-                        pathToUtf8(filesMeta[j].second.path()));
-                }
-        }
-
-        //outputting stuff
-        if (!dupTSFiles.empty())
-        {
-            std::cout << "Following timestamps were duplicated:\n" << dupTSFiles << "\n";
-            std::cout << "Aborting!\n";
-            return -1;
-        }
+        first = last;
     }
+    if(!duplicates.empty())
+    {
+        std::cout << "Following timestamps were duplicated:\n" << duplicates
+                  << "\nAborting!\n";
+        return std::unexpected(-1);
+    }
+    return times;
+}
 
-    std::size_t VFSize{};
+struct FieldLayout
+{
+    std::size_t valueCount{};
     std::size_t valueDimension{};
     VField::MeshType meshType{VField::MeshType::Rectangular};
-    std::unique_ptr<struct GPUBuffer> buffers[2]; //tripple buffering, yay
-    struct {
-        std::unique_ptr<float[]> data{};
-        std::size_t cnt{};
+};
 
-        //occupied buffer count
-        std::size_t occup{};
-    } CollectorBuffer; //anonymous struct with data for buffer
-
+std::expected<FieldLayout, int>
+validateFieldLayouts(const std::vector<metaPair>& metadata)
+{
+    const auto& first = metadata.front().second.header(0).value().get();
+    const auto pointDimension = first.pointDimension();
+    const auto pointCount = first.pointCount();
+    if(!pointDimension || !pointCount)
     {
-        //check if internal dimensions are compatible
-        const auto expDim = filesMeta.front().second.header(0).value().get().pointDimension();
-        const auto expCnt = filesMeta.front().second.header(0).value().get().pointCount();
+        std::cerr << "First file has indeterminate point count or dimension!\n";
+        return std::unexpected(1);
+    }
 
-        if(!expDim || !expCnt)
+    FieldLayout layout;
+    layout.meshType = first.meshType().value();
+    layout.valueDimension = *pointDimension -
+        (layout.meshType == VField::MeshType::Rectangular ? 0 : 3);
+    layout.valueCount = layout.valueDimension * *pointCount;
+    std::string incompatible;
+    for(auto iterator = std::next(metadata.cbegin()); iterator != metadata.cend();
+        ++iterator)
+    {
+        const auto& header = iterator->second.header(0).value().get();
+        if(header.pointDimension() != pointDimension ||
+           header.pointCount() != pointCount ||
+           header.meshType() != layout.meshType)
         {
-            std::cerr << "First file has indeterminate point count or dimension!\n";
-            return 1;
+            if(!incompatible.empty())
+                incompatible += ", ";
+            std::format_to(std::back_inserter(incompatible), "\"{}\"",
+                           pathToUtf8(iterator->second.path()));
         }
-        //guaranteed to be set by this point
-        meshType = filesMeta.front().second.header(0).value().get().meshType().value();
-        valueDimension = *expDim -
-            (meshType == VField::MeshType::Rectangular ? 0 : 3);
-        VFSize = valueDimension * *expCnt;
-        //begin initialization of engines outside main thread once dimensions are known
-        engineInit = std::async( std::launch::async, [&] ()
+    }
+    if(!incompatible.empty())
+    {
+        std::cout << "Following files have incompatible grids: "
+                  << incompatible << '\n';
+        return std::unexpected(1);
+    }
+    const auto total = layout.valueCount * metadata.size();
+    std::cout << "Found " << total << " values to be handled ("
+              << printMemSize(sizeof(float) * total)
+              << " of data in single precision).\n";
+    return layout;
+}
+
+struct SamplingInfo
+{
+    double step{};
+    bool disableReinterpolation{};
+};
+
+SamplingInfo analyzeSampling(const std::vector<double>& times,
+                             const std::vector<metaPair>& metadata,
+                             bool disableReinterpolation)
+{
+    SamplingInfo result{
+        (times.back() - times.front()) / (times.size() - 1),
+        disableReinterpolation};
+    std::vector<double> distances(std::next(times.begin()), times.end());
+    std::transform(distances.begin(), distances.end(), times.begin(),
+                   distances.begin(), std::minus<>{});
+    const auto average = Average(distances);
+    for(auto& distance: distances)
+        distance *= distance;
+    const auto dispersion = std::sqrt(Average(distances) - average * average);
+    std::cout << "Input array has even time step of " << result.step
+              << " seconds. Average time step is " << average
+              << " seconds, and time step dispersion is " << dispersion
+              << " seconds. \n";
+
+    std::string outliers;
+    auto expectedTime = times.front();
+    for(std::size_t index{}; index < times.size(); ++index,
+        expectedTime += result.step)
+    {
+        if(std::abs(times[index] - expectedTime) > 3 * dispersion)
         {
-            auto engineMemoryLimit = maxRam.value_or(0);
+            if(!outliers.empty())
+                outliers += ", ";
+            std::format_to(std::back_inserter(outliers),
+                "\"{}\" (dt/disp={})", pathToUtf8(metadata[index].second.path()),
+                (times[index] - expectedTime) / dispersion);
+        }
+    }
+    if(!outliers.empty())
+        std::cout << "Following files found to be far away from expected times: "
+                  << outliers << ";\n";
+    if(!result.disableReinterpolation && outliers.empty() &&
+       dispersion <= 5 * std::numeric_limits<float>::epsilon() * result.step)
+        result.disableReinterpolation = true;
+    return result;
+}
+
+bool initializeEngineAndBuffers(
+    FFTEngine<float>& engine, const BatchOptions& options,
+    const FieldLayout& layout, std::size_t sampleCount,
+    std::array<std::unique_ptr<GPUBuffer>, 2>& buffers,
+    CollectorBuffer& collector, bool& bufferedExport,
+    bool& automaticBufferedExport)
+{
+    auto memoryLimit = options.maxRam.value_or(0);
 #ifdef OVFTOOLKIT_HAS_CUFFT
-            if (engineName == "gpu")
-                engineMemoryLimit = maxVRam.value_or(0);
+    if(options.engineName == "gpu")
+        memoryLimit = options.maxVRam.value_or(0);
 #endif
-            auto res = fft_engine -> Init(tSeriesLength, VFSize,
-                                          engineMemoryLimit, valueDimension);
+    const auto initialized = engine.Init(sampleCount, layout.valueCount,
+        memoryLimit, layout.valueDimension);
+    const auto batch = engine.expectedBatch();
+    const auto complexPoints = batch * (sampleCount / 2 + 1);
+    if(!engine.isReady())
+        return initialized;
 
-            auto batch = fft_engine -> expectedBatch();
-            auto cPoints = batch * (tSeriesLength/2 + 1);
-            if( fft_engine -> isReady() )
-            {
-                auto maxRamBuffers = maxRam.value_or(0) / (sizeof(float) * 2 * cPoints);
-                auto neededBuffers = (VFSize + batch - 1)/batch;//all the full buffers and one partially filled
-                automaticBufferedExport = maxRam.has_value() &&
-                    neededBuffers <= maxRamBuffers;
-                bufferedExport = forceBufferedExport || automaticBufferedExport;
-                const std::size_t activeBuffers { std::min<std::size_t>(2, neededBuffers) };
-                for( std::size_t i = 0; i < activeBuffers; i++ )
-                {
-                    buffers[i] = std::make_unique<GPUBuffer> ();
-                    buffers[i] -> nSize = 2 * cPoints;
-                    buffers[i] -> realPoints = batch;
-                    buffers[i] -> transformData =
-                        std::make_unique<float[]>(buffers[i]->nSize);
-                }
-
-                //and allocate space for ram buffer
-                if(bufferedExport && neededBuffers > 2 && maxRamBuffers > 2)
-                {
-                    CollectorBuffer.cnt = std::min(neededBuffers - 2, maxRamBuffers - 2);
-                    CollectorBuffer.data = std::make_unique<float[]>( 2 * cPoints * CollectorBuffer.cnt );
-                    CollectorBuffer.occup = 0;
-                }
-            }
-
-            return res;
-        });
-
-        auto it = ++filesMeta.cbegin();
-        auto end = filesMeta.cend();
-        std::string badFiles {};
-        for(; it != end; ++it)
-        {
-            const auto& head = it -> second.header(0).value().get();
-            if ( head.pointDimension() != expDim ||
-                 head.pointCount()    != expCnt ||
-                 head.meshType()       != meshType    )
-            {
-                if(!badFiles.empty()) badFiles += ", ";
-                std::format_to(std::back_inserter(badFiles), "\"{}\"",
-                    pathToUtf8(it->second.path()));
-            }
-        }
-
-        if( !badFiles.empty() )
-        {
-            std::cout << "Following files have incompatible grids: " << badFiles << "\n";
-            return 1;
-        }
-
-        const auto totSize =  VFSize * tSeriesLength;
-        std::cout << "Found " << totSize << " values to be handled (" << printMemSize( sizeof(float) * totSize ) << " of data in single precision).\n"; 
-    }
-
-    
-    //work on time array to set some more options
-    double trueStep{ (times.back() - times.front())/(tSeriesLength - 1) };
+    const auto bufferBytes = sizeof(float) * 2 * complexPoints;
+    const auto ramBufferCount = options.maxRam.value_or(0) / bufferBytes;
+    const auto requiredBuffers =
+        (layout.valueCount + batch - 1) / batch;
+    automaticBufferedExport = options.maxRam.has_value() &&
+        requiredBuffers <= ramBufferCount;
+    bufferedExport = options.forceBufferedExport || automaticBufferedExport;
+    const auto activeBuffers = std::min<std::size_t>(2, requiredBuffers);
+    for(std::size_t index{}; index < activeBuffers; ++index)
     {
-        std::vector<double> distances(++times.begin(), times.end());
-        auto dIt = distances.begin();
-        auto tIt = times.cbegin(); auto tEnd = --times.cend();
-        while( tIt != tEnd )
-            *dIt++ -= *tIt++ ;
-
-        //TODO: evaluate as candidates for loop merger if compiler doesn't do that itself
-        auto avTstep = Average(distances);
-        auto maxTstep = std::max_element(distances.begin(), distances.end());
-        auto minTstep = std::min_element(distances.begin(), distances.end());
-
-        for(auto& x: distances) //square the distances for next step
-            x *= x;
-        auto TstepDisp = std::sqrt( Average(distances) - avTstep * avTstep );
-
-        //output info about time steps
-        std::cout << "Input array has even time step of " << trueStep << " seconds. Average time step is " << avTstep << " seconds, and time step dispersion is "
-                        << TstepDisp << " seconds. \n";
-
-        //find and report outliers ( >3 sigma )
-        std::string outliers {};
-        tIt = times.cbegin(); tEnd = times.cend();
-        auto fIt = filesMeta.cbegin();
-        double expectedTime = *tIt;
-        for(; tIt != tEnd; ++tIt)
-        {
-            if( std::abs( *tIt - expectedTime ) > 3 * TstepDisp )
-            {
-                if( !outliers.empty() ) outliers += ", ";
-                std::format_to(std::back_inserter(outliers),
-                    "\"{}\" (dt/disp={})", pathToUtf8(fIt->second.path()),
-                    (*tIt - expectedTime) / TstepDisp);
-            }
-
-            ++fIt; expectedTime += trueStep;
-        }
-        if(!outliers.empty())
-            std::cout << "Following files found to be far away from expected times: " << outliers << ";\n";
-
-        //and then check if we still need to reinterpolate
-        //abort interpolation iff dispersion is less than 5 rounding errors of float and there are no outliers
-        if( !no_reinterp && ( outliers.empty() && TstepDisp <= 5 * std::numeric_limits<float>::epsilon() * trueStep ) )
-            no_reinterp = true;
+        buffers[index] = std::make_unique<GPUBuffer>();
+        buffers[index]->nSize = 2 * complexPoints;
+        buffers[index]->realPoints = batch;
+        buffers[index]->transformData =
+            std::make_unique<float[]>(buffers[index]->nSize);
     }
+    if(bufferedExport && requiredBuffers > 2 && ramBufferCount > 2)
+    {
+        collector.count = std::min(requiredBuffers - 2, ramBufferCount - 2);
+        collector.data =
+            std::make_unique<float[]>(2 * complexPoints * collector.count);
+    }
+    return initialized;
+}
+
+int batchMain(int argc, char** argv)
+{
+    auto parsed = parseCommandLine(argc, argv);
+    if(!parsed)
+        return parsed.error();
+    auto options = std::move(*parsed);
+    if(!validateInputFiles(options.inputFiles))
+        return 1;
+
+    auto selectedEngine = createEngine(options);
+    if(!selectedEngine)
+        return selectedEngine.error();
+    auto fft_engine = std::move(*selectedEngine);
+    const auto tSeriesLength = options.inputFiles.size();
+    bool bufferedExport { false };
+    bool automaticBufferedExport { false };
+
+    //evaluation monitors
+    std::atomic<std::size_t> progVar{};
+    std::atomic<std::size_t> expectProg{options.inputFiles.size()};
+    std::thread MonitorThread{};
+
+    auto prefetched = prefetchMetadata(options);
+    if(!prefetched)
+        return prefetched.error();
+    auto filesMeta = std::move(*prefetched);
+
+    auto preparedTimeline = prepareTimeline(filesMeta);
+    if(!preparedTimeline)
+        return preparedTimeline.error();
+    auto times = std::move(*preparedTimeline);
+
+    auto checkedLayout = validateFieldLayouts(filesMeta);
+    if(!checkedLayout)
+        return checkedLayout.error();
+    const auto layout = *checkedLayout;
+    const auto VFSize = layout.valueCount;
+    const auto valueDimension = layout.valueDimension;
+    const auto meshType = layout.meshType;
+    std::array<std::unique_ptr<GPUBuffer>, 2> buffers;
+    CollectorBuffer collector;
+    auto engineInit = std::async(std::launch::async, [&]
+    {
+        return initializeEngineAndBuffers(*fft_engine, options, layout,
+            tSeriesLength, buffers, collector, bufferedExport,
+            automaticBufferedExport);
+    });
+
+    const auto sampling = analyzeSampling(times, filesMeta,
+                                           options.disableReinterpolation);
+    const auto trueStep = sampling.step;
 
     //wait here for the selected engine to initialize and buffers to be created
     engineInit.get();
     if( !fft_engine -> isReady() )
     {
-        std::cerr << "Failed to initialize the " << engineName << " FFT engine, quitting!\n";
+        std::cerr << "Failed to initialize the " << options.engineName
+                  << " FFT engine, quitting!\n";
         return -1;
     }
-    if(automaticBufferedExport && !forceBufferedExport)
+    if(automaticBufferedExport && !options.forceBufferedExport)
         std::cout << "The complete spectrum fits within --max-ram; using the "
                      "in-memory sequential export path.\n";
     //initialize interpolation
-    if( !no_reinterp && !fft_engine -> InitInterp(times.data()) )
+    if(!sampling.disableReinterpolation &&
+       !fft_engine->InitInterp(times.data()))
             std::cerr << "Failed to initialize an interpolation!\n";
 
     //stuff for streaming buffers to gpu
     std::mutex rotLock; //mutex to acomplish buffer rotation
     std::condition_variable gpuRotate;
-    const float norm { no_norm? 1.0f : (float)std::sqrt( trueStep ) };//scaling to get value in amplitude/sqrt(Hz)
+    const float norm { options.disableNormalization
+        ? 1.0f : static_cast<float>(std::sqrt(trueStep)) };
     const double frequencyIncrement =
         FFTUtil::frequencyIncrement(tSeriesLength, trueStep);
 
@@ -1284,9 +1315,9 @@ int batchMain(int argc, char** argv)
     //after this main thread works with I/O
     const auto BatchSize = fft_engine -> expectedBatch();
     const auto frequencyCount = tSeriesLength / 2 + 1;
-    const auto outputPath = pathFromUtf8(oFileName);
+    const auto outputPath = pathFromUtf8(options.outputFile);
     auto head = filesMeta.front().second.header(0).value().get();
-    transformHeader(head, TimeRegExStr);
+    transformHeader(head, options.timeRegex);
     std::optional<VField::OVFStreamWriter> spectrumWriter;
     if(!bufferedExport)
     {
@@ -1331,12 +1362,12 @@ int batchMain(int argc, char** argv)
                                     meshType, progVar))
                 exportFailed = true;
         }
-        else if(CollectorBuffer.occup < CollectorBuffer.cnt)
+        else if(collector.occupied < collector.count)
         {
             std::copy_n(buff -> transformData.get(),
                     frequencyCount * buff ->realPoints * 2,
-                    CollectorBuffer.data.get() + CollectorBuffer.occup * buff -> nSize );
-            CollectorBuffer.occup++;
+                    collector.data.get() + collector.occupied * buff -> nSize );
+            collector.occupied++;
         }
         else
             tmpFile.write((char*)buff -> transformData.get(), frequencyCount *
@@ -1585,7 +1616,7 @@ int batchMain(int argc, char** argv)
 
     expectProg = frequencyCount * VFSize * 2;
     progVar = 0;
-    if(bufferedExport && !cInfo.isRedirected) MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &oFileName]()
+    if(bufferedExport && !cInfo.isRedirected) MonitorThread = std::thread([&progVar, &expectProg, &monitorOn, &options]()
         {
             CMDMonitor monitor(std::cout);
             while(true)
@@ -1594,7 +1625,7 @@ int batchMain(int argc, char** argv)
                 std::this_thread::sleep_for(150ms);
 
                 auto curVal = progVar.load();
-                monitor.update("Exporting spectrum into \""s + oFileName + "\": " + printMemSize( sizeof(float) * curVal ) + 
+                monitor.update("Exporting spectrum into \""s + options.outputFile + "\": " + printMemSize( sizeof(float) * curVal ) +
                     '/' + printMemSize( sizeof(float) * expectProg ) );
                 if(curVal >= expectProg)
                 return;
@@ -1608,10 +1639,10 @@ int batchMain(int argc, char** argv)
         bool exported{};
         if(BatchSize < VFSize) exported = exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[1] -> transformData.get(), buffers[0] -> transformData.get(),
                             head, frequencyCount, frequencyIncrement, progVar,
-                            CollectorBuffer.data.get(), CollectorBuffer.occup,
+                            collector.data.get(), collector.occupied,
                             coordinateData );
         else exported = exportSpectrum( outputPath, segmentDescriptor, tmpPath, buffers[0] -> transformData.get(), nullptr, head, frequencyCount, frequencyIncrement,
-                             progVar, CollectorBuffer.data.get(), CollectorBuffer.occup,
+                             progVar, collector.data.get(), collector.occupied,
                              coordinateData );
         std::filesystem::remove(tmpPath);
         if(!exported)
@@ -1637,7 +1668,7 @@ int batchMain(int argc, char** argv)
         return -1;
     }
     if(bufferedExport && !cInfo.isRedirected) MonitorThread.join();
-    else std::cout << "Exported a " << printMemSize( sizeof(float) * expectProg ) << " spectrum into \"" + oFileName + "\"\n";
+    else std::cout << "Exported a " << printMemSize( sizeof(float) * expectProg ) << " spectrum into \"" + options.outputFile + "\"\n";
 
     return 0;
 }
