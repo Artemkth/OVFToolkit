@@ -126,7 +126,7 @@ namespace VField {
 
 } // namespace VField
 
-/** @brief Implementation helpers used to derive the public OVF dictionary. */
+/** @cond */
 namespace DictionaryHelpers{
   /** OVF parameter shorthand used by compile-time helpers. */
   using Parameter      = VField::OVFParameter;
@@ -412,6 +412,7 @@ namespace DictionaryHelpers{
       return result;
    }
 }
+/** @endcond */
 
 namespace VField {
 

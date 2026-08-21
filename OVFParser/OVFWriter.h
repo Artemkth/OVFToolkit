@@ -75,7 +75,9 @@ namespace VField {
         OVFSegmentSink() = default;
         OVFSegmentSink(const OVFSegmentSink&) = delete;
         OVFSegmentSink& operator=(const OVFSegmentSink&) = delete;
+        /** @brief Move a sink while preserving its segment progress and error. */
         OVFSegmentSink(OVFSegmentSink&&) noexcept = default;
+        /** @brief Replace this sink with another sink's segment state. */
         OVFSegmentSink& operator=(OVFSegmentSink&&) noexcept = default;
 
         /** @brief Append a contiguous, point-major rank-two view. */
@@ -110,11 +112,17 @@ namespace VField {
             return *this;
         }
 
+        /** @return Number of complete points appended to this segment. */
         [[nodiscard]] std::size_t pointsWritten() const noexcept;
+        /** @return Number of declared points still expected by this segment. */
         [[nodiscard]] std::size_t pointsRemaining() const noexcept;
+        /** @return Whether every declared point has been written. */
         [[nodiscard]] bool complete() const noexcept;
+        /** @return Whether the sink has not retained a writing error. */
         [[nodiscard]] bool good() const noexcept;
+        /** @return The same status as good(). */
         [[nodiscard]] explicit operator bool() const noexcept { return good(); }
+        /** @return The first retained writing error, if any. */
         [[nodiscard]] const std::optional<WriteError>& error() const noexcept
         { return error_; }
     };
@@ -135,10 +143,13 @@ namespace VField {
 
       public:
         OVFStreamWriter() = default;
+        /** @brief Close the prepared output if it is still open. */
         ~OVFStreamWriter();
         OVFStreamWriter(const OVFStreamWriter&) = delete;
         OVFStreamWriter& operator=(const OVFStreamWriter&) = delete;
+        /** @brief Transfer ownership of a prepared output and all segment sinks. */
         OVFStreamWriter(OVFStreamWriter&&) noexcept;
+        /** @brief Replace this writer with another prepared output. */
         OVFStreamWriter& operator=(OVFStreamWriter&&) noexcept;
 
         /** @brief Prepare all binary segments and return their sequential sinks. */
@@ -147,8 +158,11 @@ namespace VField {
                  std::span<const OVFHeader> headers,
                  std::size_t scalarSizeBytes = sizeof(float));
 
+        /** @return Number of prepared output segments. */
         [[nodiscard]] std::size_t segmentCount() const noexcept;
+        /** @return Mutable sequential sink for segment @p index. */
         [[nodiscard]] OVFSegmentSink& segment(std::size_t index);
+        /** @return Immutable sequential sink for segment @p index. */
         [[nodiscard]] const OVFSegmentSink& segment(std::size_t index) const;
 
         /** @brief Flush and validate that every declared point was written. */
