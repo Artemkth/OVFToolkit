@@ -20,22 +20,25 @@ if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING_ENABLED)
     target_link_libraries( math-ovftoolkit "${Mathematica_WSTP_LIBRARIES}" ovfparser uuid )
     target_include_directories( math-ovftoolkit PRIVATE "${Mathematica_WSTP_INCLUDE_DIR}" )
 
-    # Keep the conventional prefix installation for command-line use.
-    install(TARGETS math-ovftoolkit
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-
     if(Mathematica_USERBASE_DIR AND
        NOT Mathematica_USERBASE_DIR MATCHES "-NOTFOUND$")
         set(OVFTOOLKIT_WOLFRAM_APPLICATION_DIR
             "${Mathematica_USERBASE_DIR}/Applications"
             CACHE PATH "Per-user Wolfram Applications installation directory")
 
-        # This is an additional copy; it does not alter the normal prefix
-        # installation above or ovfparser's root installation rules.
+        # WSTP executables belong in the per-user Wolfram Applications directory.
         install(TARGETS math-ovftoolkit
             RUNTIME DESTINATION "${OVFTOOLKIT_WOLFRAM_APPLICATION_DIR}"
-            COMPONENT Wolfram
-            EXCLUDE_FROM_ALL)
+            COMPONENT Wolfram)
+
+        # The installed executable uses $ORIGIN to locate shared libraries.
+        # Wolfram 15 no longer reliably supplies WSTP to external link programs,
+        # so install the WSTP runtime beside the executable.
+        if(EXISTS "${Mathematica_WSTP_LIBRARY}")
+            install(FILES "${Mathematica_WSTP_LIBRARY}"
+                DESTINATION "${OVFTOOLKIT_WOLFRAM_APPLICATION_DIR}"
+                COMPONENT Wolfram)
+        endif()
 
         get_target_property(_ovftoolkit_parser_type ovfparser TYPE)
         if(_ovftoolkit_parser_type STREQUAL "SHARED_LIBRARY")
