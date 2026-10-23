@@ -31,10 +31,10 @@ if(NOT OVFTOOLKIT_CUFFT_FOUND)
 endif()
 
 set(MUMAX3_SOURCE_DIR "" CACHE PATH "Existing mumax3 source checkout")
-set(MUMAX3_CUDA13_FIX e0e52bb03b1a68156add5e76e38d02239751653c)
+set(MUMAX3_CUDA13_FIX e4dbb6b873a3d217b4cf12f6342c82e60ede8e85)
 set(MUMAX3_RELEASE_TAG v3.12 CACHE STRING
     "Mumax3 release used with CUDA versions older than 13")
-set(MUMAX3_CUDA13_REF bugfix/CUDA13.0 CACHE STRING
+set(MUMAX3_CUDA13_REF dev CACHE STRING
     "Mumax3 Git ref used with CUDA 13 or newer")
 
 set(_mumax_gopath_source "")
