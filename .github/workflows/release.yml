@@ -1,0 +1,339 @@
+name: Publish Python package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      publish_testpypi:
+        description: Publish the validated distributions to TestPyPI
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    name: Verify release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Match tag and project versions
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          ref_type = os.environ["GITHUB_REF_TYPE"]
+          package_version = tomllib.loads(
+              Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+          match = re.search(r"project\(OVFToolkit VERSION ([0-9]+\.[0-9]+\.[0-9]+)", cmake)
+          if match is None:
+              raise SystemExit("Could not determine the CMake project version")
+          cmake_version = match.group(1)
+          expected_tag = f"v{package_version}"
+          if cmake_version != package_version:
+              raise SystemExit(
+                  f"Release mismatch: package={package_version}, "
+                  f"CMake={cmake_version}"
+              )
+          if ref_type == "tag" and ref_name != expected_tag:
+              raise SystemExit(
+                  f"Release mismatch: tag={ref_name}; expected {expected_tag}"
+              )
+          print(f"Verified OVFToolkit {package_version}; release tag is {expected_tag}")
+          PY
+      - name: Require the tagged commit to belong to master
+        run: git merge-base --is-ancestor "$GITHUB_SHA" "origin/master"
+
+  build-sdist:
+    name: Build source distribution
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Build sdist
+        run: |
+          python -m pip install build
+          python -m build --sdist --outdir dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-source-bundle:
+    name: Build standalone source bundle
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Archive source with populated submodules
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          archive="$GITHUB_WORKSPACE/dist/OVFToolkit-${version}-source.tar.gz"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          tar \
+            --exclude='./.git' \
+            --exclude='*/.git' \
+            --exclude='./dist' \
+            --transform="s,^\.,OVFToolkit-${version}," \
+            -czf "$archive" .
+          if tar -tzf "$archive" | grep -Eq '(^|/)\.git(/|$)'; then
+            echo "Source archive contains Git metadata" >&2
+            exit 1
+          fi
+          tar -tzf "$archive" | head -n 20
+      - uses: actions/upload-artifact@v6
+        with:
+          name: source-bundle
+          path: dist/*-source.tar.gz
+          if-no-files-found: error
+
+  locate-windows-artifact:
+    name: Locate successful Windows package
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      portable-artifact-name: ${{ steps.find.outputs.portable-artifact-name }}
+      run-id: ${{ steps.find.outputs.run-id }}
+      wheel-artifact-name: ${{ steps.find.outputs.wheel-artifact-name }}
+    steps:
+      - name: Find portable artifact for tagged commit
+        id: find
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "ci.yml",
+                head_sha: context.sha,
+                status: "success",
+                per_page: 100,
+              },
+            );
+            if (runs.length === 0) {
+              core.setFailed(`No successful ci.yml run found for ${context.sha}`);
+              return;
+            }
+            for (const run of runs) {
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                  per_page: 100,
+                },
+              );
+              const portable = artifacts.find(
+                item => !item.expired &&
+                  item.name.endsWith("windows-x64-cuda12.9-static-portable"),
+              );
+              const wheel = artifacts.find(
+                item => !item.expired &&
+                  item.name.endsWith("windows-x64-cp312-abi3-wheel"),
+              );
+              if (portable && wheel) {
+                core.setOutput("run-id", String(run.id));
+                core.setOutput("portable-artifact-name", portable.name);
+                core.setOutput("wheel-artifact-name", wheel.name);
+                return;
+              }
+            }
+            core.setFailed(
+              `No successful Windows package set found for ${context.sha}`,
+            );
+
+  stage-windows-wheel:
+    name: Stage tested Windows ABI3 wheel
+    needs: locate-windows-artifact
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download wheel from matching Windows CI build
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.locate-windows-artifact.outputs.wheel-artifact-name }}
+          path: wheelhouse
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.locate-windows-artifact.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-wheel-windows-x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  build-wheels:
+    name: Build ${{ matrix.platform }} ABI3 wheel
+    needs: verify-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: manylinux-x86_64
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==4.1.1
+      - name: Build and test wheel
+        env:
+          CIBW_BUILD: "cp312-*"
+          CIBW_SKIP: "*-musllinux_* *-win32"
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_CONFIG_SETTINGS: >-
+            wheel.py-api=cp312
+            cmake.define.OVFTOOLKIT_PYTHON_STABLE_ABI=ON
+          CIBW_BEFORE_ALL_LINUX: >-
+            if command -v dnf >/dev/null 2>&1;
+            then dnf install -y boost-devel;
+            else yum install -y boost-devel;
+            fi
+        run: python -m cibuildwheel --output-dir wheelhouse
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-wheel-${{ matrix.platform }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  check-distributions:
+    name: Check distributions
+    needs: [build-sdist, build-wheels, stage-windows-wheel]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Validate package metadata
+        run: |
+          python -m pip install twine
+          python -m twine check --strict dist/*
+          ls -lh dist
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_testpypi }}
+    needs: check-distributions
+    runs-on: ubuntu-24.04
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/ovftoolkit
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check-distributions
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ovftoolkit
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-github-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-source-bundle
+      - check-distributions
+      - locate-windows-artifact
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          # The sdist is published to PyPI but is redundant on GitHub beside
+          # the standalone, submodule-complete source bundle below.
+          pattern: release-wheel-*
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v6
+        with:
+          name: source-bundle
+          path: release-assets
+      - name: Download portable Windows tools
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.locate-windows-artifact.outputs.portable-artifact-name }}
+          path: release-assets
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.locate-windows-artifact.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Create GitHub Release and attach artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OVFToolkit $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag

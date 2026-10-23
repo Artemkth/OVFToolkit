@@ -1,1 +1,11 @@
-/build/
+build*/
+.vs/
+CMakeFiles/
+.ipynb_checkpoints/
+*.out/
+/site/
+/.cache/
+/.venv-docs/
+/docs/help/generated/
+/dist/
+/wheelhouse/

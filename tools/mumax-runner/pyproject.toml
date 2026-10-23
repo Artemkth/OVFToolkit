@@ -1,15 +1,15 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ovftoolkit-mumax-runner"
-version = "0.2.1"
+version = "0.3.0"
 description = "Authenticated socket controller and interactive terminal for mumax3"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
-license-files = ["LICENSE"]
+license-files = ["LICENSE*", "NOTICE"]
 authors = [
     { name = "Artem Bondarenko" },
 ]
@@ -30,3 +30,6 @@ mumax-runner = "ovftoolkit_mumax.runner:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ovftoolkit_mumax = ["mumax-slave", "mumax-slave.exe"]

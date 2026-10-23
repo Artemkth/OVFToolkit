@@ -26,7 +26,11 @@ class FFTEngine
         //len tells the length of fft sets
         //maxBatch is the size of the original dataset
         //suggests maximum memory to be used 
-        virtual bool Init( std::size_t t_len, std::size_t dataSize, std::size_t maxMem ) = 0;
+        //batchMultiple constrains batches to whole logical records (for OVF,
+        //one record contains Vdim independent scalar transforms).
+        virtual bool Init(std::size_t t_len, std::size_t dataSize,
+                          std::size_t maxMem,
+                          std::size_t batchMultiple = 1) = 0;
 
         //function to run a transform with given data and padding for it,
         //will pad out the data in gpu memory with reinitializing for new array

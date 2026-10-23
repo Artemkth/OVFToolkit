@@ -1,0 +1,14 @@
+// Geometry, mesh dimensions, and cell size are initialized from the OVF file.
+ext_InitGeomFromOVF("@GEOMETRY_FILE@")
+
+// Permalloy-like parameters used by the original geometry experiment.
+Msat  = 850e3
+Aex   = 12e-12
+alpha = 0.01
+
+m = Uniform(1, 0, 0)
+minimize()
+
+SaveAs(geom, "geometry.ovf")
+SaveAs(m, "magnetization.ovf")
+SaveAs(B_demag, "B_demag.ovf")

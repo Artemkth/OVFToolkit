@@ -1,0 +1,25 @@
+Nlat := 256
+Nz   := 2
+dLat := 2.5e-9
+dZ   := 10e-9
+
+SetMesh(
+    // x       y          z
+    Nlat,     Nlat,     Nz,      // grid cells
+    dLat,     dLat,     dZ,      // cell size (m)
+    0,        0,        0)       // periodic repetitions
+
+
+Msat  = 830e3  // A/m
+Aex   = 13e-12 // J/m
+alpha = 0.01
+
+diam       := Nlat * dLat
+EdgeSmooth  = 8
+SetGeom(Cylinder(diam, Inf))
+SaveAs(geom, "cyl-geometry.ovf")
+
+m = Vortex(1, 1)
+minimize()
+
+@EXPERIMENT@

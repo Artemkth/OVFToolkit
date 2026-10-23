@@ -1,0 +1,14 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -329,6 +329,9 @@ if (BUILD_SHARED_LIBS)
+   add_definitions (-DFFTW_DLL)
+ endif ()
+ 
+ add_library (${fftw3_lib} ${SOURCEFILES})
++if (BUILD_SHARED_LIBS)
++  target_compile_definitions (${fftw3_lib} INTERFACE FFTW_DLL)
++endif ()
+ target_include_directories (${fftw3_lib} INTERFACE $<INSTALL_INTERFACE:include>)
+ if (MSVC)
+   if (CMAKE_C_COMPILER_ID STREQUAL "Clang")

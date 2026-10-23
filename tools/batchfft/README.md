@@ -61,7 +61,8 @@ for example `512M`, `1.5G`, or `4G`. With FFTW, the default workspace limit is
 the smaller of 4 GiB and 95% of currently available physical memory. With
 cuFFT, the default transform limit is 95% of currently available GPU memory.
 `--max-ram` also controls how much transformed output can be retained on the
-host before it is staged through the temporary file.
+host. If every padded transform batch fits within that limit, BatchFFT keeps
+the complete spectrum in memory and uses the legacy sequential exporter.
 
 ## Sampling and output
 
@@ -86,10 +87,15 @@ adjacent real/imaginary pair, the header value dimension is doubled, and
 available value labels and units are expanded accordingly. The DC component
 is the first segment and the Nyquist component is included for even `N`.
 
-The temporary `.batchfft-temp` file is created in the current working
-directory and removed after a successful transform. Run the utility from a
-location with enough free storage and avoid running two instances from the
-same directory.
+By default, transformed point batches are written directly into prepared
+frequency segments using positioned writes, so no full-size placeholder data
+or temporary spectrum is written. FFT batches are rounded down to whole input
+value vectors (`Vdim`) and each output chunk therefore contains complete mesh
+points. If `--max-ram` can hold the complete padded spectrum, the former
+in-memory sequential export strategy is selected automatically. Pass
+`--buffered-export` to force the former strategy for larger spectra; it then
+creates `.batchfft-temp` in the current working directory as needed and removes
+it after a successful transform.
 
 ## Options
 
@@ -103,6 +109,7 @@ same directory.
     --max-vram SIZE      GPU transform limit (CUDA builds only)
     --time-regex REGEX   Timestamp extraction pattern
     --no-norm            Disable sqrt(dt) normalization
+    --buffered-export    Use temporary-file and sequential output
     --no-reinterp        Disable timestamp dejittering
 ```
 
@@ -121,3 +128,23 @@ cmake --build build --parallel --target ovf-batchfft
 
 CMake reports the backends it found during configuration. The executable is
 installed into the normal binary directory by `cmake --install build`.
+`OVFTOOLKIT_USE_CUFFT` and `OVFTOOLKIT_USE_FFTW` each accept `AUTO`, `ON`, or
+`OFF`. `AUTO` discovers an available backend, `ON` requires it, and `OFF`
+prevents its discovery. Release packaging should set both explicitly so that a
+binary cannot acquire an unintended backend from the build environment.
+
+## Distribution and licensing
+
+The original OVFToolkit source for this tool is MIT-licensed, but the license
+requirements of a linked executable depend on its FFT backend:
+
+- a CUDA-only binary remains under the MIT license for OVFToolkit code and is
+  also subject to NVIDIA's terms for any CUDA redistributables;
+- an FFTW-linked binary using FFTW under its GPL terms must be distributed
+  under GPL-3.0-or-later with its complete corresponding source; and
+- a binary containing both FFTW and cuFFT is not published by this project.
+  OVFToolkit has no FFTW copyright-holder exception for CUDA. Obtain legal
+  review or a commercial FFTW license before distributing such a binary.
+
+Static versus dynamic linking does not change the FFTW licensing requirement.
+See the repository's [licensing guide](../../LICENSING.md) before packaging.

@@ -1,4 +1,8 @@
 find_package(HDF5 COMPONENTS C QUIET)
+# VTK 9.3 ships a legacy Finddouble-conversion module that records only one
+# library path.  Load the package's configuration-aware imported target first
+# so multi-config builds select matching Debug and Release archives.
+find_package(double-conversion CONFIG QUIET)
 find_package(VTK COMPONENTS CommonCore CommonDataModel IOXML QUIET)
 
 if(NOT HDF5_FOUND OR NOT VTK_FOUND OR NOT Boost_PROGRAM_OPTIONS_FOUND)
@@ -46,5 +50,5 @@ if(WIN32)
     set_target_properties(ovf-convert PROPERTIES LINK_FLAGS "wsetargv.obj")
 endif()
 
-install(TARGETS ovf-convert RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+ovftoolkit_install_executable(ovf-convert)
 install(FILES README.md DESTINATION "${CMAKE_INSTALL_DOCDIR}/ovf-convert")

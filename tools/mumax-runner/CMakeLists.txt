@@ -1,107 +1,246 @@
+if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "OFF")
+    return()
+endif()
+
 find_program(OVFTOOLKIT_GO_EXECUTABLE NAMES go)
+find_package(Git QUIET)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
-set(_mumax_runner_default OFF)
-if(OVFTOOLKIT_GO_EXECUTABLE AND Python3_Interpreter_FOUND AND
-   OVFTOOLKIT_CUFFT_FOUND)
-    set(_mumax_runner_default ON)
-endif()
-option(OVFTOOLKIT_BUILD_MUMAX_RUNNER
-    "Build the GPL-licensed interactive mumax3 runner" ${_mumax_runner_default})
-
-if(NOT OVFTOOLKIT_BUILD_MUMAX_RUNNER)
+if(NOT OVFTOOLKIT_GO_EXECUTABLE OR NOT Git_FOUND OR
+   NOT Python3_Interpreter_FOUND OR NOT OVFTOOLKIT_CUFFT_FOUND)
+    if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "ON")
+        if(NOT OVFTOOLKIT_GO_EXECUTABLE)
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires Go")
+        elseif(NOT Python3_Interpreter_FOUND)
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires Python 3")
+        elseif(NOT Git_FOUND)
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires Git")
+        else()
+            message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires CUDA/cuFFT")
+        endif()
+    endif()
     if(NOT OVFTOOLKIT_GO_EXECUTABLE)
         message(STATUS "Mumax runner disabled: Go was not found")
     elseif(NOT Python3_Interpreter_FOUND)
         message(STATUS "Mumax runner disabled: Python 3 was not found")
+    elseif(NOT Git_FOUND)
+        message(STATUS "Mumax runner disabled: Git was not found")
     elseif(NOT OVFTOOLKIT_CUFFT_FOUND)
         message(STATUS "Mumax runner disabled: CUDA/cuFFT was not found")
     endif()
     return()
 endif()
 
-if(NOT OVFTOOLKIT_GO_EXECUTABLE)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires Go")
-endif()
-if(NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires Python 3")
-endif()
-if(NOT OVFTOOLKIT_CUFFT_FOUND)
-    message(FATAL_ERROR "OVFTOOLKIT_BUILD_MUMAX_RUNNER requires CUDA")
-endif()
-
-set(MUMAX3_SOURCE_DIR "" CACHE PATH "Existing mumax3 source checkout")
-set(MUMAX3_CUDA13_FIX e4dbb6b873a3d217b4cf12f6342c82e60ede8e85)
-set(MUMAX3_RELEASE_TAG v3.12 CACHE STRING
-    "Mumax3 release used with CUDA versions older than 13")
+set(MUMAX3_SOURCE_DIR "" CACHE PATH
+    "Existing mumax3 checkout, or an empty/missing directory to clone into")
+set(_mumax_cuda13_fix e4dbb6b873a3d217b4cf12f6342c82e60ede8e85)
 set(MUMAX3_CUDA13_REF dev CACHE STRING
-    "Mumax3 Git ref used with CUDA 13 or newer")
+    "Mumax3 Git ref used when CUDA 13 or newer requires a newer source")
+set(_mumax_repository https://github.com/mumax/3.git)
 
-set(_mumax_gopath_source "")
-if(NOT MUMAX3_SOURCE_DIR AND DEFINED ENV{GOPATH})
-    set(_mumax_gopath_source "$ENV{GOPATH}/src/github.com/mumax/3")
-    if(EXISTS "${_mumax_gopath_source}/go.mod")
-        set(MUMAX3_SOURCE_DIR "${_mumax_gopath_source}")
-        message(STATUS
-            "Mumax runner: using explicit GOPATH checkout at ${MUMAX3_SOURCE_DIR}")
+function(_mumax_is_source dir out_var)
+    set(_is_source FALSE)
+    if(EXISTS "${dir}/go.mod")
+        file(STRINGS "${dir}/go.mod" _module_line
+            REGEX "^module[ \t]+github.com/mumax/3$")
+        if(_module_line)
+            set(_is_source TRUE)
+        endif()
     endif()
+    set(${out_var} "${_is_source}" PARENT_SCOPE)
+endfunction()
+
+function(_mumax_directory_is_empty dir out_var)
+    set(_is_empty FALSE)
+    if(IS_DIRECTORY "${dir}")
+        file(GLOB _entries LIST_DIRECTORIES TRUE "${dir}/*" "${dir}/.*")
+        list(FILTER _entries EXCLUDE REGEX "[/\\\\]\\.\\.?$")
+        if(NOT _entries)
+            set(_is_empty TRUE)
+        endif()
+    endif()
+    set(${out_var} "${_is_empty}" PARENT_SCOPE)
+endfunction()
+
+function(_mumax_has_cuda13_fix dir out_var)
+    set(_has_fix FALSE)
+    if(EXISTS "${dir}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" merge-base --is-ancestor
+                "${_mumax_cuda13_fix}" HEAD
+            WORKING_DIRECTORY "${dir}"
+            RESULT_VARIABLE _ancestor_result
+            ERROR_QUIET)
+        if(_ancestor_result EQUAL 0)
+            set(_has_fix TRUE)
+        endif()
+    elseif(EXISTS "${dir}/cuda/cu/context.go")
+        file(READ "${dir}/cuda/cu/context.go" _context_source)
+        if(_context_source MATCHES "cuCtxCreate_v2")
+            set(_has_fix TRUE)
+        endif()
+    endif()
+    set(${out_var} "${_has_fix}" PARENT_SCOPE)
+endfunction()
+
+# Normalize external Windows paths before using them in CMake strings or go.work.
+# In particular, this prevents C:\Users\... from being interpreted as a \U escape.
+set(_mumax_explicit_hint FALSE)
+set(_mumax_clone_required FALSE)
+if(MUMAX3_SOURCE_DIR)
+    set(_mumax_explicit_hint TRUE)
+    cmake_path(CONVERT "${MUMAX3_SOURCE_DIR}" TO_CMAKE_PATH_LIST
+        MUMAX3_SOURCE_DIR NORMALIZE)
+    set(MUMAX3_SOURCE_DIR "${MUMAX3_SOURCE_DIR}" CACHE PATH
+        "Existing mumax3 checkout, or an empty/missing directory to clone into"
+        FORCE)
+
+    _mumax_is_source("${MUMAX3_SOURCE_DIR}" _mumax_valid_source)
+    if(NOT _mumax_valid_source)
+        _mumax_directory_is_empty("${MUMAX3_SOURCE_DIR}" _mumax_empty_hint)
+        if(NOT EXISTS "${MUMAX3_SOURCE_DIR}" OR _mumax_empty_hint)
+            set(_mumax_clone_required TRUE)
+        else()
+            message(FATAL_ERROR
+                "MUMAX3_SOURCE_DIR is nonempty but does not contain mumax3: "
+                "${MUMAX3_SOURCE_DIR}. The directory was not modified.")
+        endif()
+    endif()
+endif()
+
+# GOPATH is discovery-only. Never use it as a clone or update destination.
+if(NOT _mumax_explicit_hint AND DEFINED ENV{GOPATH} AND NOT "$ENV{GOPATH}" STREQUAL "")
+    cmake_path(CONVERT "$ENV{GOPATH}" TO_CMAKE_PATH_LIST
+        _mumax_gopath_roots NORMALIZE)
+    foreach(_mumax_gopath_root IN LISTS _mumax_gopath_roots)
+        cmake_path(APPEND _mumax_gopath_root "src" "github.com" "mumax" "3"
+            OUTPUT_VARIABLE _mumax_gopath_source)
+        _mumax_is_source("${_mumax_gopath_source}" _mumax_valid_source)
+        if(_mumax_valid_source)
+            set(MUMAX3_SOURCE_DIR "${_mumax_gopath_source}")
+            message(STATUS
+                "Mumax runner: using read-only GOPATH checkout at "
+                "${MUMAX3_SOURCE_DIR}")
+            break()
+        endif()
+    endforeach()
 endif()
 
 if(NOT MUMAX3_SOURCE_DIR)
-    include(FetchContent)
-    if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
-        set(_mumax_git_ref "${MUMAX3_CUDA13_REF}")
-    else()
-        set(_mumax_git_ref "${MUMAX3_RELEASE_TAG}")
+    cmake_path(SET MUMAX3_SOURCE_DIR NORMALIZE
+        "${CMAKE_CURRENT_BINARY_DIR}/mumax3-src")
+    _mumax_is_source("${MUMAX3_SOURCE_DIR}" _mumax_valid_source)
+    if(NOT _mumax_valid_source)
+        _mumax_directory_is_empty("${MUMAX3_SOURCE_DIR}" _mumax_empty_default)
+        if(NOT EXISTS "${MUMAX3_SOURCE_DIR}" OR _mumax_empty_default)
+            set(_mumax_clone_required TRUE)
+        else()
+            message(FATAL_ERROR
+                "The build-managed mumax3 directory is nonempty but invalid: "
+                "${MUMAX3_SOURCE_DIR}. It was not modified; remove it manually "
+                "or provide MUMAX3_SOURCE_DIR.")
+        endif()
     endif()
-    message(STATUS "Mumax runner: fetching mumax3 ${_mumax_git_ref}")
-    set(_mumax_fetch_source_argument)
-    if(_mumax_gopath_source)
-        list(APPEND _mumax_fetch_source_argument SOURCE_DIR "${_mumax_gopath_source}")
-        message(STATUS "Mumax runner: populating explicit GOPATH at ${_mumax_gopath_source}")
-    endif()
-    FetchContent_Declare(mumax3
-        GIT_REPOSITORY https://github.com/mumax/3.git
-        GIT_TAG "${_mumax_git_ref}"
-        GIT_SHALLOW FALSE
-        ${_mumax_fetch_source_argument}
-        SOURCE_SUBDIR _ovftoolkit_no_cmake_subdirectory)
-    FetchContent_MakeAvailable(mumax3)
-    set(MUMAX3_SOURCE_DIR "${mumax3_SOURCE_DIR}")
-else()
-    message(STATUS "Mumax runner: using mumax3 source at ${MUMAX3_SOURCE_DIR}")
 endif()
 
-if(NOT EXISTS "${MUMAX3_SOURCE_DIR}/go.mod")
-    message(FATAL_ERROR "MUMAX3_SOURCE_DIR does not contain a go.mod")
-endif()
-
-file(STRINGS "${MUMAX3_SOURCE_DIR}/go.mod" _mumax_module_line
-    REGEX "^module[ \t]+github.com/mumax/3$")
-if(NOT _mumax_module_line)
-    message(FATAL_ERROR
-        "MUMAX3_SOURCE_DIR is not the current github.com/mumax/3 module")
-endif()
-
-find_package(Git QUIET)
-if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13 AND Git_FOUND AND
-   EXISTS "${MUMAX3_SOURCE_DIR}/.git")
+if(_mumax_clone_required)
+    message(STATUS "Mumax runner: cloning mumax3 into ${MUMAX3_SOURCE_DIR}")
+    cmake_path(GET MUMAX3_SOURCE_DIR PARENT_PATH _mumax_clone_parent)
+    file(MAKE_DIRECTORY "${_mumax_clone_parent}")
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" merge-base --is-ancestor
-            "${MUMAX3_CUDA13_FIX}" HEAD
-        WORKING_DIRECTORY "${MUMAX3_SOURCE_DIR}"
-        RESULT_VARIABLE _mumax_has_cuda13_fix
-        ERROR_QUIET)
-    if(NOT _mumax_has_cuda13_fix EQUAL 0)
+        COMMAND "${GIT_EXECUTABLE}" clone "${_mumax_repository}"
+            "${MUMAX3_SOURCE_DIR}"
+        RESULT_VARIABLE _mumax_clone_result
+        OUTPUT_VARIABLE _mumax_clone_output
+        ERROR_VARIABLE _mumax_clone_error)
+    if(NOT _mumax_clone_result EQUAL 0)
         message(FATAL_ERROR
-            "CUDA ${CMAKE_CUDA_COMPILER_VERSION} requires mumax3 commit "
-            "${MUMAX3_CUDA13_FIX} or a descendant")
+            "Could not clone mumax3 into ${MUMAX3_SOURCE_DIR}:\n"
+            "${_mumax_clone_output}${_mumax_clone_error}")
     endif()
-elseif(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
-    file(READ "${MUMAX3_SOURCE_DIR}/cuda/cu/context.go" _mumax_context_source)
-    if(NOT _mumax_context_source MATCHES "cuCtxCreate_v2")
+
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0
+        WORKING_DIRECTORY "${MUMAX3_SOURCE_DIR}"
+        RESULT_VARIABLE _mumax_describe_result
+        OUTPUT_VARIABLE _mumax_latest_tag
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_VARIABLE _mumax_describe_error)
+    if(NOT _mumax_describe_result EQUAL 0 OR NOT _mumax_latest_tag)
         message(FATAL_ERROR
-            "The supplied non-Git mumax3 source lacks the CUDA 13 context fix")
+            "Could not determine the latest mumax3 tag: ${_mumax_describe_error}")
+    endif()
+
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" checkout "${_mumax_latest_tag}"
+        WORKING_DIRECTORY "${MUMAX3_SOURCE_DIR}"
+        RESULT_VARIABLE _mumax_checkout_result
+        OUTPUT_VARIABLE _mumax_checkout_output
+        ERROR_VARIABLE _mumax_checkout_error)
+    if(NOT _mumax_checkout_result EQUAL 0)
+        message(FATAL_ERROR
+            "Could not check out mumax3 tag ${_mumax_latest_tag}:\n"
+            "${_mumax_checkout_output}${_mumax_checkout_error}")
+    endif()
+    message(STATUS "Mumax runner: checked out latest tag ${_mumax_latest_tag}")
+
+    if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+        _mumax_has_cuda13_fix("${MUMAX3_SOURCE_DIR}" _mumax_compatible)
+        if(NOT _mumax_compatible)
+            message(STATUS
+                "Mumax runner: ${_mumax_latest_tag} lacks CUDA 13 support; "
+                "using ${MUMAX3_CUDA13_REF}")
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" checkout "${MUMAX3_CUDA13_REF}"
+                WORKING_DIRECTORY "${MUMAX3_SOURCE_DIR}"
+                RESULT_VARIABLE _mumax_cuda13_checkout_result
+                OUTPUT_VARIABLE _mumax_cuda13_checkout_output
+                ERROR_VARIABLE _mumax_cuda13_checkout_error)
+            if(NOT _mumax_cuda13_checkout_result EQUAL 0)
+                message(FATAL_ERROR
+                    "Could not check out mumax3 ${MUMAX3_CUDA13_REF}:\n"
+                    "${_mumax_cuda13_checkout_output}"
+                    "${_mumax_cuda13_checkout_error}")
+            endif()
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" pull --ff-only origin
+                    "${MUMAX3_CUDA13_REF}"
+                WORKING_DIRECTORY "${MUMAX3_SOURCE_DIR}"
+                RESULT_VARIABLE _mumax_cuda13_pull_result
+                OUTPUT_VARIABLE _mumax_cuda13_pull_output
+                ERROR_VARIABLE _mumax_cuda13_pull_error)
+            if(NOT _mumax_cuda13_pull_result EQUAL 0)
+                message(FATAL_ERROR
+                    "Could not update mumax3 ${MUMAX3_CUDA13_REF}:\n"
+                    "${_mumax_cuda13_pull_output}${_mumax_cuda13_pull_error}")
+            endif()
+        endif()
+    endif()
+else()
+    message(STATUS "Mumax runner: using existing source at ${MUMAX3_SOURCE_DIR}")
+endif()
+
+_mumax_is_source("${MUMAX3_SOURCE_DIR}" _mumax_valid_source)
+if(NOT _mumax_valid_source)
+    message(FATAL_ERROR
+        "MUMAX3_SOURCE_DIR is not the github.com/mumax/3 Go module: "
+        "${MUMAX3_SOURCE_DIR}")
+endif()
+
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+    _mumax_has_cuda13_fix("${MUMAX3_SOURCE_DIR}" _mumax_compatible)
+    if(NOT _mumax_compatible)
+        if(_mumax_clone_required)
+            message(FATAL_ERROR
+                "Current mumax3 ${MUMAX3_CUDA13_REF} is not compatible with CUDA "
+                "${CMAKE_CUDA_COMPILER_VERSION}; expected commit "
+                "${_mumax_cuda13_fix} or a descendant.")
+        else()
+            message(FATAL_ERROR
+                "CUDA ${CMAKE_CUDA_COMPILER_VERSION} requires mumax3 commit "
+                "${_mumax_cuda13_fix} or a descendant. The existing source at "
+                "${MUMAX3_SOURCE_DIR} was not modified.")
+        endif()
     endif()
 endif()
 
@@ -135,6 +274,47 @@ add_custom_command(
     VERBATIM)
 add_custom_target(mumax-runner ALL DEPENDS "${_mumax_slave}")
 
+set(_mumax_python_sources
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/__init__.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/__main__.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ovftoolkit_mumax/runner.py")
+set(_mumax_package_build_dir "${CMAKE_CURRENT_BINARY_DIR}/python-package")
+set(_mumax_package_source_dir
+    "${_mumax_package_build_dir}/src/ovftoolkit_mumax")
+set(_mumax_wheel_dir "${CMAKE_CURRENT_BINARY_DIR}/wheel")
+set(_mumax_wheel_stamp "${_mumax_wheel_dir}/wheel.stamp")
+
+add_custom_command(
+    OUTPUT "${_mumax_wheel_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "${_mumax_package_source_dir}" "${_mumax_wheel_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/setup.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+        "${CMAKE_CURRENT_SOURCE_DIR}/NOTICE"
+        "${_mumax_package_build_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        ${_mumax_python_sources} "${_mumax_package_source_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_mumax_slave}" "${_mumax_package_source_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${MUMAX3_SOURCE_DIR}/LICENSE"
+        "${_mumax_package_build_dir}/LICENSE.mumax3"
+    COMMAND "${Python3_EXECUTABLE}" -m pip wheel
+        --no-deps --no-build-isolation
+        --wheel-dir "${_mumax_wheel_dir}"
+        "${_mumax_package_build_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_mumax_wheel_stamp}"
+    DEPENDS
+        pyproject.toml setup.py README.md LICENSE NOTICE
+        "${MUMAX3_SOURCE_DIR}/LICENSE"
+        ${_mumax_python_sources} "${_mumax_slave}"
+    COMMENT "Building ovftoolkit-mumax-runner Python wheel"
+    VERBATIM)
+add_custom_target(mumax-runner-wheel ALL DEPENDS "${_mumax_wheel_stamp}")
+
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     add_test(NAME MumaxSocketIPC
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/socket-smoke.py"
@@ -142,10 +322,10 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     set_tests_properties(MumaxSocketIPC PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-install(PROGRAMS "${_mumax_slave}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(PROGRAMS src/ovftoolkit_mumax/runner.py
-    DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME mumax-runner)
-install(FILES LICENSE README.md
+install(DIRECTORY "${_mumax_wheel_dir}/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/python"
+    FILES_MATCHING PATTERN "*.whl")
+install(FILES LICENSE NOTICE README.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/mumax-runner")
 install(FILES "${MUMAX3_SOURCE_DIR}/LICENSE"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/mumax-runner"

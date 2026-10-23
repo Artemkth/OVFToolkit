@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 def main() -> int:
     if len(sys.argv) != 3:
         return 2
-    if subprocess.run(
+    if shutil.which("nvidia-smi") is None or subprocess.run(
         ["nvidia-smi", "-L"], stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, check=False
     ).returncode != 0:

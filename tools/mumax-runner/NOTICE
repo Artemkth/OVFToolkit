@@ -1,0 +1,18 @@
+OVFToolkit mumax runner
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Copyright (c) 2020-2026 Artem Bondarenko
+
+The source in this directory is distributed under version 3 of the GNU
+General Public License, or (at your option) any later version. The complete
+GPLv3 text is in LICENSE.
+
+The generated mumax-slave executable incorporates mumax3. Mumax3 grants an
+additional permission under GPLv3 section 7 for linking or combining with
+NVIDIA CUDA libraries. Preserve mumax3's complete LICENSE, including that
+permission, with any distributed binary and corresponding source:
+
+https://github.com/mumax/3/blob/master/LICENSE
+
+Record and distribute the exact mumax3 revision used for the build. A moving
+master branch is not an adequate corresponding-source reference.

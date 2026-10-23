@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 
 #versioning
-project(OVFToolkit VERSION 0.2.1 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
+project(OVFToolkit VERSION 0.3.0 DESCRIPTION "Vector field files interface library" LANGUAGES CXX C)
 
 #TODO: add some more checks
 # C++ standard
@@ -12,10 +12,41 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CheckCXXSourceCompiles)
 include(GNUInstallDirs)
 
-option(OVFTOOLKIT_BUILD_TOOLS "Build OVFToolkit command-line tools" ON)
-option(OVFTOOLKIT_BUILD_DOCS "Configure the Doxygen documentation target" ON)
-option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
-    "Build the Wolfram Language WSTP binding when Mathematica is available" ON)
+function(ovftoolkit_install_executable target)
+    install(TARGETS ${target}
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    if(WIN32)
+        # vcpkg's app-local deployment places the complete runtime DLL closure
+        # beside each executable after it is built.  Install that closure rather
+        # than scanning the host system or relying on incomplete imported-target
+        # metadata from some packages.
+        install(DIRECTORY "$<TARGET_FILE_DIR:${target}>/"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            FILES_MATCHING PATTERN "*.dll")
+    endif()
+endfunction()
+
+macro(ovftoolkit_tristate_option name description)
+    set(${name} AUTO CACHE STRING "${description}: AUTO, ON, or OFF")
+    set_property(CACHE ${name} PROPERTY STRINGS AUTO ON OFF)
+    string(TOUPPER "${${name}}" ${name})
+    if(NOT ${name} MATCHES "^(AUTO|ON|OFF)$")
+        message(FATAL_ERROR "${name} must be AUTO, ON, or OFF")
+    endif()
+endmacro()
+
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_TOOLS
+    "Build OVFToolkit command-line tools")
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_DOCS
+    "Configure the Doxygen documentation target")
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_WOLFRAM_BINDING
+    "Build the Wolfram Language WSTP binding")
+ovftoolkit_tristate_option(OVFTOOLKIT_BUILD_MUMAX_RUNNER
+    "Build the GPL-licensed interactive mumax3 runner")
+ovftoolkit_tristate_option(OVFTOOLKIT_USE_FFTW
+    "Use the FFTW CPU backend for Fourier analysis tools")
+ovftoolkit_tristate_option(OVFTOOLKIT_USE_CUFFT
+    "Use the NVIDIA cuFFT backend for Fourier analysis tools")
 
 check_cxx_source_compiles([=[
     #include <cstddef>
@@ -77,11 +108,29 @@ endif()
 find_package(Threads REQUIRED)
 # The parser only needs Boost headers. Command-line tools additionally use
 # program_options, which should not be a build dependency of Python wheels.
-cmake_policy(SET CMP0167 NEW)
-if(OVFTOOLKIT_BUILD_TOOLS)
-    find_package(Boost 1.58.0 REQUIRED COMPONENTS program_options)
-else()
-    find_package(Boost 1.58.0 REQUIRED)
+# Use CMake's FindBoost module so header-only distro packages remain usable;
+# manylinux's boost-devel does not ship BoostConfig.cmake.
+cmake_policy(PUSH)
+cmake_policy(SET CMP0167 OLD)
+find_package(Boost 1.58.0 REQUIRED)
+set(OVFTOOLKIT_BUILD_TOOLS_ENABLED OFF)
+if(NOT OVFTOOLKIT_BUILD_TOOLS STREQUAL "OFF")
+    find_package(Boost 1.58.0 COMPONENTS program_options QUIET)
+    if(Boost_PROGRAM_OPTIONS_FOUND)
+        set(OVFTOOLKIT_BUILD_TOOLS_ENABLED ON)
+    elseif(OVFTOOLKIT_BUILD_TOOLS STREQUAL "ON")
+        message(FATAL_ERROR
+            "OVFTOOLKIT_BUILD_TOOLS=ON requires Boost.Program_options")
+    else()
+        message(STATUS
+            "Command-line tools disabled: Boost.Program_options was not found")
+    endif()
+endif()
+cmake_policy(POP)
+if(OVFTOOLKIT_BUILD_MUMAX_RUNNER STREQUAL "ON" AND
+   NOT OVFTOOLKIT_BUILD_TOOLS_ENABLED)
+    message(FATAL_ERROR
+        "OVFTOOLKIT_BUILD_MUMAX_RUNNER=ON requires command-line tools")
 endif()
 
 #library build file
@@ -91,18 +140,47 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 #find interfaces for Mathematica
-if(OVFTOOLKIT_BUILD_WOLFRAM_BINDING)
-    set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/external/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
-    find_package(Mathematica COMPONENTS WSTP)
+set(OVFTOOLKIT_BUILD_WOLFRAM_BINDING_ENABLED OFF)
+if(NOT OVFTOOLKIT_BUILD_WOLFRAM_BINDING STREQUAL "OFF")
+    set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/FindMathematica/CMake/Mathematica" ${CMAKE_MODULE_PATH})
+    find_package(Mathematica COMPONENTS WSTP QUIET)
+    if(Mathematica_WSTP_FOUND)
+        set(OVFTOOLKIT_BUILD_WOLFRAM_BINDING_ENABLED ON)
+    elseif(OVFTOOLKIT_BUILD_WOLFRAM_BINDING STREQUAL "ON")
+        message(FATAL_ERROR
+            "OVFTOOLKIT_BUILD_WOLFRAM_BINDING=ON requires Mathematica WSTP")
+    else()
+        message(STATUS "Wolfram binding disabled: Mathematica WSTP was not found")
+    endif()
 endif()
 
 #find fftw frameworks and other components for time fourier of magnetization files
-if(OVFTOOLKIT_BUILD_TOOLS)
+if(OVFTOOLKIT_BUILD_TOOLS_ENABLED)
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/externals/findFFTW" ${CMAKE_MODULE_PATH})
 # Try to find either CPU FFTW or CUDA/cuFFT for Fourier analysis.  The
 # threaded FFTW companion library is optional; the serial float library is
 # sufficient for the CPU backend.
-find_package(FFTW COMPONENTS FLOAT_LIB OPTIONAL_COMPONENTS FLOAT_THREADS_LIB)
+set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW::Float)
+set(FFTW_FLOAT_LIB_FOUND OFF)
+set(FFTW_FLOAT_THREADS_LIB_FOUND OFF)
+if(NOT OVFTOOLKIT_USE_FFTW STREQUAL "OFF")
+    find_package(FFTW COMPONENTS FLOAT_LIB
+        OPTIONAL_COMPONENTS FLOAT_THREADS_LIB)
+
+    # Prefer a configuration-aware package target when one is available.  The
+    # legacy FindFFTW module exposes a single library path, which can make a
+    # multi-config generator link a Debug archive into Release targets.
+    find_package(FFTW3f CONFIG QUIET)
+    if(TARGET FFTW3::fftw3f)
+        set(OVFTOOLKIT_FFTW_FLOAT_TARGET FFTW3::fftw3f)
+    endif()
+
+    if(OVFTOOLKIT_USE_FFTW STREQUAL "ON" AND NOT FFTW_FLOAT_LIB_FOUND)
+        message(FATAL_ERROR
+            "OVFTOOLKIT_USE_FFTW=ON requires the single-precision FFTW library")
+    endif()
+endif()
+
 if(FFTW_VERSION)
     set(OVFTOOLKIT_FFTW_VERSION "${FFTW_VERSION}")
 endif()
@@ -115,9 +193,11 @@ if(NOT OVFTOOLKIT_FFTW_VERSION AND FFTW_FLOAT_LIB_FOUND AND FFTW_INCLUDE_DIRS)
     endif()
 endif()
 include(CheckLanguage)
-CHECK_LANGUAGE(CUDA)
 set(OVFTOOLKIT_CUFFT_FOUND OFF)
-IF(CMAKE_CUDA_COMPILER)
+if(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF")
+    check_language(CUDA)
+endif()
+IF(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF" AND CMAKE_CUDA_COMPILER)
     # CUDA 12 rejects GCC 15 by default. Using an older G++ only for nvcc can
     # mix incompatible C++ runtimes at the final G++ 15 link, so keep one host
     # toolchain throughout and explicitly allow the unsupported combination.
@@ -157,9 +237,19 @@ IF(CMAKE_CUDA_COMPILER)
             set(OVFTOOLKIT_CUFFT_FOUND ON)
         endif()
     ENDIF()
-ELSE()
+ELSEIF(NOT OVFTOOLKIT_USE_CUFFT STREQUAL "OFF")
     MESSAGE(STATUS "Cuda was not found!")
 ENDIF()
+if(OVFTOOLKIT_USE_CUFFT STREQUAL "ON" AND NOT OVFTOOLKIT_CUFFT_FOUND)
+    if(NOT CMAKE_CUDA_COMPILER)
+        message(FATAL_ERROR
+            "OVFTOOLKIT_USE_CUFFT=ON requires a CUDA compiler")
+    else()
+        message(FATAL_ERROR
+            "OVFTOOLKIT_USE_CUFFT=ON found CUDA compiler "
+            "${CMAKE_CUDA_COMPILER}, but could not find cuFFT")
+    endif()
+endif()
 set(BUILD_FFUTIL OFF)
 if((FFTW_FLOAT_LIB_FOUND OR OVFTOOLKIT_CUFFT_FOUND) AND Boost_PROGRAM_OPTIONS_FOUND)
     set(BUILD_FFUTIL ON)
@@ -229,7 +319,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     include(CTest)
 endif()
 
-if(OVFTOOLKIT_BUILD_TOOLS)
+if(OVFTOOLKIT_BUILD_TOOLS_ENABLED)
     add_subdirectory(tools)
 endif()
 
@@ -255,9 +345,15 @@ if(NOT OVFTOOLKIT_HAS_STD_MDSPAN)
         DESTINATION "${CMAKE_INSTALL_DOCDIR}"
         RENAME LICENSE-mdspan)
 endif()
-install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(FILES
+    LICENSE
+    LICENSING.md
+    THIRD_PARTY_NOTICES.md
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(DIRECTORY LICENSES/
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/licenses")
 
-if(OVFTOOLKIT_BUILD_DOCS)
+if(NOT OVFTOOLKIT_BUILD_DOCS STREQUAL "OFF")
     add_subdirectory(docs)
 endif()
 

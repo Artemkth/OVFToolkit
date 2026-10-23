@@ -1,0 +1,26 @@
+PROJECT_NAME           = "OVFToolkit"
+PROJECT_BRIEF          = "C++ interfaces for OOMMF vector-field files"
+OUTPUT_DIRECTORY       = docs/help/generated/cpp-api
+CREATE_SUBDIRS         = NO
+
+INPUT                  = OVFParser/OVFHeader.h \
+                         OVFParser/OVFDictionary.h \
+                         OVFParser/VField.h \
+                         OVFParser/OVFParser.h \
+                         OVFParser/OVFWriter.h \
+                         docs/cpp-mainpage.md
+FILE_PATTERNS          = *.h *.md
+RECURSIVE              = NO
+USE_MDFILE_AS_MAINPAGE = docs/cpp-mainpage.md
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_AS_ERROR          = YES
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = .
+GENERATE_TREEVIEW      = YES
+SEARCHENGINE           = YES
+GENERATE_LATEX         = NO
+QUIET                  = YES

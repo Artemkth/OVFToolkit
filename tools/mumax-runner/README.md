@@ -22,9 +22,11 @@ python -m pip install ovftoolkit-mumax-runner
 mumax-runner
 ```
 
-The package does not download or bundle CUDA or mumax3. Install the
-`mumax-slave` executable built by OVFToolkit beside the launcher or somewhere
-on `PATH`. Programmatic use is available through:
+The platform-specific package bundles the `mumax-slave` executable built by
+OVFToolkit beside the Python controller. The private slave is started by the
+controller with authenticated socket arguments and is not installed on
+`PATH`. CUDA and the NVIDIA driver remain external runtime requirements.
+Programmatic use is available through:
 
 ```python
 from ovftoolkit_mumax import MumaxEngine

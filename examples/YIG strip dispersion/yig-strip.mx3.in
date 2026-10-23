@@ -1,0 +1,34 @@
+// YIG strip with absorbing end regions.
+// Values between @...@ are filled by YIGStripDispersion.ipynb.
+
+Nx := @NX@
+Ny := @NY@
+Nz := @NZ@
+
+totalLength  := @TOTAL_LENGTH@
+activeLength := @ACTIVE_LENGTH@
+stripWidth   := @STRIP_WIDTH@
+thickness    := @THICKNESS@
+
+SetMesh(
+    Nx, Ny, Nz,
+    totalLength/Nx, stripWidth/Ny, thickness/Nz,
+    0, @PBC_Y@, 0)
+
+// The mesh itself is the rectangular YIG strip. Region 1 comprises both
+// absorbing end pads; region 0 is the active centre.
+SetGeom(Universe())
+activeRegion := Rect(activeLength, Inf)
+DefRegion(1, Universe().Sub(activeRegion))
+
+// YIG parameters. The cubic axes describe a (111)-oriented film.
+Msat   = @MSAT@
+Aex    = @AEX@
+alpha  = @ALPHA@
+Kc1    = @KC1@
+Kc2    = @KC2@
+anisC1 = Vector(1, 1, 1)
+anisC2 = Vector(-1, 1, 0)
+alpha.SetRegion(1, @ABSORBER_ALPHA@)
+
+@EXPERIMENT@
